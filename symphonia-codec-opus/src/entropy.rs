@@ -373,7 +373,7 @@ impl<'a> Decoder<'a> {
             .data
             .len()
             .checked_sub(next_offset)
-            .and_then(|idx| self.data.get(idx))
+            .and_then(|i| self.data.get(i))
             .copied()
             .unwrap_or(0);
         self.backward_bytes_read = next_offset;
