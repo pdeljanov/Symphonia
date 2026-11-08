@@ -51,6 +51,8 @@ mod entropy;
 mod header;
 mod packet;
 mod silk;
+#[cfg(test)]
+mod test_vectors;
 mod toc;
 
 pub use decoder::OpusDecoder;
