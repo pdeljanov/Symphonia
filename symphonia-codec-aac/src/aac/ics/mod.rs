@@ -43,7 +43,7 @@ const POW43_TABLE_LEN: usize = 8192;
 
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
+    pub static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
         let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
         table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
@@ -177,6 +177,7 @@ impl IcsInfo {
         self.prev_window_shape = prev_window_shape;
     }
 
+    #[inline(always)]
     fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
@@ -358,6 +359,7 @@ impl Ics {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn get_bands(&self) -> &'static [usize] {
         if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
@@ -430,7 +432,7 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = aot == AudioObjectType::Lc;
+        let is_aac_lc = matches!(aot, AudioObjectType::Lc | AudioObjectType::ErAacLc);
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 
@@ -446,6 +448,7 @@ impl Ics {
         Ok(())
     }
 
+    #[inline]
     pub fn synth_channel(&mut self, dsp: &mut dsp::Dsp, rate_idx: usize, dst: &mut [f32]) {
         let bands = self.get_bands();
 
@@ -524,16 +527,14 @@ fn decode_quads_signed<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    // Table of dequantized samples for all possible quantized values.
-    let iquant = [-scale, 0.0, scale];
-
     for out in dst.chunks_exact_mut(4) {
         let (a, b, c, d) = cb.read_quant(bs)?;
 
-        out[0] = iquant[a as usize];
-        out[1] = iquant[b as usize];
-        out[2] = iquant[c as usize];
-        out[3] = iquant[d as usize];
+        // The quantized values 0, 1, and 2 represent -1, 0, and 1.
+        out[0] = (a as f32 - 1.0) * scale;
+        out[1] = (b as f32 - 1.0) * scale;
+        out[2] = (c as f32 - 1.0) * scale;
+        out[3] = (d as f32 - 1.0) * scale;
     }
     Ok(())
 }

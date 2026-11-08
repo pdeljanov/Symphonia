@@ -397,7 +397,11 @@ impl AudioSpecificConfig {
             _ => {}
         };
 
-        if asc.sbr_ps_info.is_some() && (bs.bits_left() >= 16) {
+        // Explicit backward-compatible SBR/PS signalling (ISO/IEC 14496-3, 1.6.5). Check for the
+        // sync extension after the object type specific configuration regardless of whether the
+        // SBR or PS audio object types were used. This handles the common case of an AAC-LC audio
+        // object type with an explicit SBR extension (e.g., DAB+).
+        if bs.bits_left() >= 16 {
             let sync = bs.read_bits_leq32(11)?;
 
             if sync == 0x2B7 {
@@ -405,7 +409,8 @@ impl AudioSpecificConfig {
                 if ext_otype == AudioObjectType::Sbr {
                     asc.sbr_present = bs.read_bool()?;
                     if asc.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        let ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        asc.sbr_ps_info = Some((ext_srate, None));
                         if bs.bits_left() >= 12 {
                             let sync = bs.read_bits_leq32(11)?;
                             if sync == 0x548 {
@@ -415,9 +420,11 @@ impl AudioSpecificConfig {
                     }
                 }
                 if ext_otype == AudioObjectType::Ps {
+                    asc.ps_present = true;
                     asc.sbr_present = bs.read_bool()?;
                     if asc.sbr_present {
-                        let _ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        let ext_srate = Self::read_sampling_frequency(&mut bs)?;
+                        asc.sbr_ps_info = Some((ext_srate, None));
                     }
                     let _ext_channels = bs.read_bits_leq32(4)?;
                 }
