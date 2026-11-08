@@ -387,8 +387,8 @@ mod tests {
         let mut old_band_e = [[0.0_f32; MAX_BANDS]; MAX_CHANNELS];
         for (c, ch_row) in old_band_e.iter_mut().enumerate() {
             for (b, slot) in ch_row.iter_mut().enumerate() {
-                let idx = c * MAX_BANDS + b;
-                *slot = -12.0 + (idx as f32) * 0.25;
+                let i = c * MAX_BANDS + b;
+                *slot = -12.0 + (i as f32) * 0.25;
             }
         }
 
@@ -441,8 +441,8 @@ mod tests {
         let mut old_band_e = [[0.0_f32; MAX_BANDS]; MAX_CHANNELS];
         for (c, ch_row) in old_band_e.iter_mut().enumerate() {
             for (b, slot) in ch_row.iter_mut().enumerate() {
-                let idx = (c * MAX_BANDS + b) as isize;
-                *slot = 0.25 * ((idx - 10) as f32);
+                let i = (c * MAX_BANDS + b) as isize;
+                *slot = 0.25 * ((i - 10) as f32);
             }
         }
 

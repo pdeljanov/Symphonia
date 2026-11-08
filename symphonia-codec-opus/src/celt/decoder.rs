@@ -148,13 +148,13 @@ fn comb_filter_iir_in_place(
     let xfade_len = if same_filter { 0 } else { overlap.min(n) };
 
     for (i, &w) in CELT_WINDOW.iter().enumerate().take(xfade_len) {
-        let idx = history_offset + i;
-        let x0 = signal_buf[idx - period1 + 2];
+        let pos = history_offset + i;
+        let x0 = signal_buf[pos - period1 + 2];
         let f = w * w;
         let one_minus_f = 1.0_f32 - f;
-        let p0 = idx - period0;
+        let p0 = pos - period0;
 
-        signal_buf[idx] = signal_buf[idx]
+        signal_buf[pos] = signal_buf[pos]
             + (one_minus_f * g00) * signal_buf[p0]
             + (one_minus_f * g01) * (signal_buf[p0 + 1] + signal_buf[p0 - 1])
             + (one_minus_f * g02) * (signal_buf[p0 + 2] + signal_buf[p0 - 2])
@@ -173,9 +173,9 @@ fn comb_filter_iir_in_place(
     }
 
     for i in xfade_len..n {
-        let idx = history_offset + i;
-        let x0 = signal_buf[idx - period1 + 2];
-        signal_buf[idx] = signal_buf[idx] + g10 * x2 + g11 * (x1 + x3) + g12 * (x0 + x4);
+        let pos = history_offset + i;
+        let x0 = signal_buf[pos - period1 + 2];
+        signal_buf[pos] = signal_buf[pos] + g10 * x2 + g11 * (x1 + x3) + g12 * (x0 + x4);
         x4 = x3;
         x3 = x2;
         x2 = x1;
@@ -418,20 +418,14 @@ impl Decoder {
         self.validate_band_and_buffer_bounds(out_samples, out_ch0, &out_ch1)?;
 
         // Check for packet loss or 1-byte DTX/PLC frame (except 1-byte [0xFF] silence).
-        if external_dec.is_none() {
-            match data {
-                None => {
-                    return self.conceal_frame_planar(frame_size_48k, out_ch0, out_ch1, accum);
-                }
-                Some(bytes) if bytes.is_empty() || (bytes.len() == 1 && bytes[0] != 0xFF) => {
-                    return self.conceal_frame_planar(frame_size_48k, out_ch0, out_ch1, accum);
-                }
-                _ => {}
-            }
-        } else if let Some(bytes) = data {
-            if bytes.is_empty() {
-                return self.conceal_frame_planar(frame_size_48k, out_ch0, out_ch1, accum);
-            }
+        let should_conceal = match (external_dec.is_none(), data) {
+            (true, None) => true,
+            (true, Some(bytes)) => bytes.is_empty() || (bytes.len() == 1 && bytes[0] != 0xFF),
+            (false, Some(bytes)) => bytes.is_empty(),
+            (false, None) => false,
+        };
+        if should_conceal {
+            return self.conceal_frame_planar(frame_size_48k, out_ch0, out_ch1, accum);
         }
 
         match external_dec {
@@ -504,12 +498,10 @@ impl Decoder {
 
         let total_bits = (len as i32) * 8;
         let tell = dec.tell();
-        let silence = if tell >= total_bits {
-            true
-        } else if tell == 1 {
-            dec.decode_symbol_logp(15)? != 0
-        } else {
-            false
+        let silence = match tell {
+            t if t >= total_bits => true,
+            1 => dec.decode_symbol_logp(15)? != 0,
+            _ => false,
         };
 
         let mut x_norm = [0.0_f32; MAX_CHANNELS * MAX_FRAME_SIZE];
@@ -820,70 +812,13 @@ impl Decoder {
         let out_offset = DECODE_BUFFER_SIZE - n;
         let mut freq0 = [0.0_f32; MAX_FRAME_SIZE];
 
-        if cc == 2 && c == 1 {
-            // Mono stream duplicated to stereo output channels.
-            denormalise_bands(
-                &x_norm[..n],
-                &mut freq0[..n],
-                &self.old_band_e[0],
-                start,
-                eff_end,
-                lm,
-                self.downsample,
-                silence,
-            );
-            mdct_backward_frame(
-                &freq0[..n],
-                &mut self.decode_mem[0][out_offset..(out_offset + n + OVERLAP)],
-                lm,
-                is_transient,
-            );
-            mdct_backward_frame(
-                &freq0[..n],
-                &mut self.decode_mem[1][out_offset..(out_offset + n + OVERLAP)],
-                lm,
-                is_transient,
-            );
-        } else if cc == 1 && c == 2 {
-            // Stereo stream downmixed to mono output channel in the MDCT domain.
-            let mut freq1 = [0.0_f32; MAX_FRAME_SIZE];
-            denormalise_bands(
-                &x_norm[..n],
-                &mut freq0[..n],
-                &self.old_band_e[0],
-                start,
-                eff_end,
-                lm,
-                self.downsample,
-                silence,
-            );
-            denormalise_bands(
-                &x_norm[n..(2 * n)],
-                &mut freq1[..n],
-                &self.old_band_e[1],
-                start,
-                eff_end,
-                lm,
-                self.downsample,
-                silence,
-            );
-            for (f0, &f1) in freq0[..n].iter_mut().zip(freq1[..n].iter()) {
-                *f0 = 0.5_f32 * (*f0 + f1);
-            }
-            mdct_backward_frame(
-                &freq0[..n],
-                &mut self.decode_mem[0][out_offset..(out_offset + n + OVERLAP)],
-                lm,
-                is_transient,
-            );
-        } else {
-            // Matched channel counts (mono-to-mono or stereo-to-stereo).
-            for ch in 0..cc {
-                let ch_x = &x_norm[(ch * n)..((ch + 1) * n)];
+        match (cc, c) {
+            (2, 1) => {
+                // Mono stream duplicated to stereo output channels.
                 denormalise_bands(
-                    ch_x,
+                    &x_norm[..n],
                     &mut freq0[..n],
-                    &self.old_band_e[ch],
+                    &self.old_band_e[0],
                     start,
                     eff_end,
                     lm,
@@ -892,10 +827,71 @@ impl Decoder {
                 );
                 mdct_backward_frame(
                     &freq0[..n],
-                    &mut self.decode_mem[ch][out_offset..(out_offset + n + OVERLAP)],
+                    &mut self.decode_mem[0][out_offset..(out_offset + n + OVERLAP)],
                     lm,
                     is_transient,
                 );
+                mdct_backward_frame(
+                    &freq0[..n],
+                    &mut self.decode_mem[1][out_offset..(out_offset + n + OVERLAP)],
+                    lm,
+                    is_transient,
+                );
+            }
+            (1, 2) => {
+                // Stereo stream downmixed to mono output channel in the MDCT domain.
+                let mut freq1 = [0.0_f32; MAX_FRAME_SIZE];
+                denormalise_bands(
+                    &x_norm[..n],
+                    &mut freq0[..n],
+                    &self.old_band_e[0],
+                    start,
+                    eff_end,
+                    lm,
+                    self.downsample,
+                    silence,
+                );
+                denormalise_bands(
+                    &x_norm[n..(2 * n)],
+                    &mut freq1[..n],
+                    &self.old_band_e[1],
+                    start,
+                    eff_end,
+                    lm,
+                    self.downsample,
+                    silence,
+                );
+                for (f0, &f1) in freq0[..n].iter_mut().zip(freq1[..n].iter()) {
+                    *f0 = 0.5_f32 * (*f0 + f1);
+                }
+                mdct_backward_frame(
+                    &freq0[..n],
+                    &mut self.decode_mem[0][out_offset..(out_offset + n + OVERLAP)],
+                    lm,
+                    is_transient,
+                );
+            }
+            _ => {
+                // Matched channel counts (mono-to-mono or stereo-to-stereo).
+                for ch in 0..cc {
+                    let ch_x = &x_norm[(ch * n)..((ch + 1) * n)];
+                    denormalise_bands(
+                        ch_x,
+                        &mut freq0[..n],
+                        &self.old_band_e[ch],
+                        start,
+                        eff_end,
+                        lm,
+                        self.downsample,
+                        silence,
+                    );
+                    mdct_backward_frame(
+                        &freq0[..n],
+                        &mut self.decode_mem[ch][out_offset..(out_offset + n + OVERLAP)],
+                        lm,
+                        is_transient,
+                    );
+                }
             }
         }
 
@@ -1184,21 +1180,22 @@ impl Decoder {
             );
 
             // Attenuate if the IIR synthesis energy exceeds the reference energy `s1`.
-            let mut s2 = 0.0_f32;
-            for &sample in extrap_slice.iter() {
-                s2 += sample * sample;
-            }
-            if s1 <= 0.2_f32 * s2 || s2.is_nan() {
-                extrap_slice.fill(0.0_f32);
-            } else if s1 < s2 {
-                let ratio = ((s1 + 1.0_f32) / (s2 + 1.0_f32)).sqrt();
-                for (sample, &w) in extrap_slice[..OVERLAP].iter_mut().zip(CELT_WINDOW.iter()) {
-                    let tmp_g = 1.0_f32 - w * (1.0_f32 - ratio);
-                    *sample *= tmp_g;
+            let s2 = extrap_slice
+                .iter()
+                .fold(0.0_f32, |acc, &sample| acc + sample * sample);
+            match (s1 <= 0.2_f32 * s2 || s2.is_nan(), s1 < s2) {
+                (true, _) => extrap_slice.fill(0.0_f32),
+                (false, true) => {
+                    let ratio = ((s1 + 1.0_f32) / (s2 + 1.0_f32)).sqrt();
+                    for (sample, &w) in extrap_slice[..OVERLAP].iter_mut().zip(CELT_WINDOW.iter()) {
+                        let tmp_g = 1.0_f32 - w * (1.0_f32 - ratio);
+                        *sample *= tmp_g;
+                    }
+                    for sample in extrap_slice[OVERLAP..extrapolation_len].iter_mut() {
+                        *sample *= ratio;
+                    }
                 }
-                for sample in extrap_slice[OVERLAP..extrapolation_len].iter_mut() {
-                    *sample *= ratio;
-                }
+                (false, false) => {}
             }
         }
 
@@ -1498,11 +1495,11 @@ mod tests {
 
     fn assert_f32_slice_close(actual: &[f32], expected: &[f32], tol: f32) {
         assert_eq!(actual.len(), expected.len());
-        for (idx, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
+        for (i, (&a, &e)) in actual.iter().zip(expected.iter()).enumerate() {
             let diff = (a - e).abs();
             assert!(
                 diff <= tol,
-                "sample {idx} mismatch: actual={a:.8e}, expected={e:.8e}, diff={diff:.8e} > tol={tol:.8e}"
+                "sample {i} mismatch: actual={a:.8e}, expected={e:.8e}, diff={diff:.8e} > tol={tol:.8e}"
             );
         }
         return;
@@ -1554,25 +1551,30 @@ mod tests {
         }
 
         // 2. Conceal 6 consecutive 20 ms lost frames:
-        //    - f = 0..4 use pitch-based LPC extrapolation (plc_duration = 0, 8, 16, 24, 32 < 40).
-        //    - f = 5 transitions to spectral LCG noise concealment (plc_duration = 40 >= 40).
-        for f in 0..6 {
+        //    - i = 0..4 use pitch-based LPC extrapolation (plc_duration = 0, 8, 16, 24, 32 < 40).
+        //    - i = 5 transitions to spectral LCG noise concealment (plc_duration = 40 >= 40).
+        for i in 0..6 {
             let written = dec
                 .conceal_frame_planar(960, &mut out, None, false)
                 .expect("conceal lost frame");
             assert_eq!(written, 960);
-            if f == 0 {
-                assert_eq!(dec.final_range(), PLC_RNG_0);
-                assert_f32_slice_close(&out[..8], &PLC_HEAD_0, 2e-5);
-                assert_f32_slice_close(&out[952..960], &PLC_TAIL_0, 2e-5);
-            } else if f == 1 {
-                assert_eq!(dec.final_range(), PLC_RNG_1);
-                assert_f32_slice_close(&out[..8], &PLC_HEAD_1, 2e-5);
-                assert_f32_slice_close(&out[952..960], &PLC_TAIL_1, 2e-5);
-            } else if f == 5 {
-                assert_eq!(dec.final_range(), PLC_RNG_5);
-                assert_f32_slice_close(&out[..8], &PLC_HEAD_5, 2e-5);
-                assert_f32_slice_close(&out[952..960], &PLC_TAIL_5, 2e-5);
+            match i {
+                0 => {
+                    assert_eq!(dec.final_range(), PLC_RNG_0);
+                    assert_f32_slice_close(&out[..8], &PLC_HEAD_0, 2e-5);
+                    assert_f32_slice_close(&out[952..960], &PLC_TAIL_0, 2e-5);
+                }
+                1 => {
+                    assert_eq!(dec.final_range(), PLC_RNG_1);
+                    assert_f32_slice_close(&out[..8], &PLC_HEAD_1, 2e-5);
+                    assert_f32_slice_close(&out[952..960], &PLC_TAIL_1, 2e-5);
+                }
+                5 => {
+                    assert_eq!(dec.final_range(), PLC_RNG_5);
+                    assert_f32_slice_close(&out[..8], &PLC_HEAD_5, 2e-5);
+                    assert_f32_slice_close(&out[952..960], &PLC_TAIL_5, 2e-5);
+                }
+                _ => {}
             }
         }
 

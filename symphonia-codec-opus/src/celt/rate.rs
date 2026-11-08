@@ -360,11 +360,13 @@ fn interpolate_and_partition_bits(
         let mut done = false;
         for j in (start..end).rev() {
             let tmp = bits1[j] + ((mid * bits2[j]) >> ALLOC_STEPS);
-            if tmp >= thresh[j] || done {
-                done = true;
-                psum += tmp.min(cap[j]);
-            } else if tmp >= alloc_floor {
-                psum += alloc_floor;
+            match (tmp >= thresh[j] || done, tmp >= alloc_floor) {
+                (true, _) => {
+                    done = true;
+                    psum += tmp.min(cap[j]);
+                }
+                (false, true) => psum += alloc_floor,
+                (false, false) => {}
             }
         }
         if psum > total {
@@ -491,11 +493,14 @@ fn interpolate_and_partition_bits(
             if n == 2 {
                 offset += (den << BITRES) >> 2;
             }
-            if bits[j] + offset < (den * 2) << BITRES {
-                offset += nc_log_n >> 2;
-            } else if bits[j] + offset < (den * 3) << BITRES {
-                offset += nc_log_n >> 3;
-            }
+            offset += match (
+                bits[j] + offset < (den * 2) << BITRES,
+                bits[j] + offset < (den * 3) << BITRES,
+            ) {
+                (true, _) => nc_log_n >> 2,
+                (false, true) => nc_log_n >> 3,
+                (false, false) => 0,
+            };
 
             let num = (bits[j] + offset + (den << (BITRES - 1))).max(0);
             let mut ebits_j = (num / den) >> BITRES;
@@ -630,11 +635,13 @@ pub fn clt_compute_allocation(
             }
             bits_j += offsets[j];
 
-            if bits_j >= thresh[j] || done {
-                done = true;
-                psum += bits_j.min(cap[j]);
-            } else if bits_j >= (c << BITRES) {
-                psum += c << BITRES;
+            match (bits_j >= thresh[j] || done, bits_j >= (c << BITRES)) {
+                (true, _) => {
+                    done = true;
+                    psum += bits_j.min(cap[j]);
+                }
+                (false, true) => psum += c << BITRES,
+                (false, false) => {}
             }
         }
 
