@@ -134,13 +134,11 @@ pub(crate) const fn sub_sat32(a: i32, b: i32) -> i32 {
 #[inline(always)]
 pub(crate) fn lshift_sat32(a: i32, shift: u32) -> i32 {
     if shift >= 31 {
-        if a > 0 {
-            return i32::MAX;
-        } else if a < 0 {
-            return i32::MIN;
-        } else {
-            return 0;
-        }
+        return match a.cmp(&0) {
+            std::cmp::Ordering::Greater => i32::MAX,
+            std::cmp::Ordering::Less => i32::MIN,
+            std::cmp::Ordering::Equal => 0,
+        };
     }
     return ((a as i64) << shift).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
 }
@@ -167,20 +165,14 @@ pub(crate) fn inverse32_var_q(b32: i32, q_res: i32) -> i32 {
     let lshift = 61 - b_headrm - q_res;
     if lshift <= 0 {
         return lshift_sat32(result, (-lshift) as u32);
-    } else if lshift < 32 {
-        return result >> lshift;
-    } else {
-        return 0;
     }
+    return result.checked_shr(lshift as u32).unwrap_or(0);
 }
 
 /// Approximates `(a32 << q_res) / b32` (`silk_DIV32_varQ` in `silk/Inlines.h`).
 #[inline]
 pub(crate) fn div32_var_q(a32: i32, b32: i32, q_res: i32) -> i32 {
-    if b32 == 0 || q_res < 0 {
-        return 0;
-    }
-    if a32 == 0 {
+    if b32 == 0 || q_res < 0 || a32 == 0 {
         return 0;
     }
 
@@ -201,11 +193,8 @@ pub(crate) fn div32_var_q(a32: i32, b32: i32, q_res: i32) -> i32 {
     let lshift = 29 + a_headrm - b_headrm - q_res;
     if lshift < 0 {
         return lshift_sat32(result, (-lshift) as u32);
-    } else if lshift < 32 {
-        return result >> lshift;
-    } else {
-        return 0;
     }
+    return result.checked_shr(lshift as u32).unwrap_or(0);
 }
 
 /// Decoded SILK header flags for a single Opus frame (10, 20, 40, or 60 ms).
@@ -228,16 +217,16 @@ impl SilkHeaderFlags {
         return self.lbrr_flags[0] || (self.num_channels > 1 && self.lbrr_flags[1]);
     }
 
-    /// Returns `true` if SILK sub-frame `frame_idx` (`0..num_silk_frames`) has LBRR data
+    /// Returns `true` if SILK sub-frame `i` (`0..num_silk_frames`) has LBRR data
     /// in either the mid (mono) or side channel.
     #[inline]
-    pub fn has_frame_lbrr(&self, frame_idx: usize) -> bool {
-        if frame_idx >= self.num_silk_frames {
+    pub fn has_frame_lbrr(&self, i: usize) -> bool {
+        if i >= self.num_silk_frames {
             return false;
         }
 
-        return self.per_frame_lbrr[0][frame_idx]
-            || (self.num_channels > 1 && self.per_frame_lbrr[1][frame_idx]);
+        return self.per_frame_lbrr[0][i]
+            || (self.num_channels > 1 && self.per_frame_lbrr[1][i]);
     }
 }
 
@@ -290,8 +279,24 @@ pub struct SilkChannelFramePair {
 #[derive(Debug, Default)]
 pub struct DecodedOpusFrame {
     pub header: SilkHeaderFlags,
-    pub lbrr_frames: Vec<SilkChannelFramePair>,
-    pub regular_frames: Vec<SilkChannelFramePair>,
+    pub lbrr_frames: [SilkChannelFramePair; MAX_SILK_FRAMES],
+    pub num_lbrr_frames: usize,
+    pub regular_frames: [SilkChannelFramePair; MAX_SILK_FRAMES],
+    pub num_regular_frames: usize,
+}
+
+impl DecodedOpusFrame {
+    /// Returns the slice of active decoded LBRR frame pairs (`0..num_lbrr_frames`).
+    #[inline]
+    pub fn active_lbrr_frames(&self) -> &[SilkChannelFramePair] {
+        return &self.lbrr_frames[..self.num_lbrr_frames];
+    }
+
+    /// Returns the slice of active decoded regular frame pairs (`0..num_regular_frames`).
+    #[inline]
+    pub fn active_regular_frames(&self) -> &[SilkChannelFramePair] {
+        return &self.regular_frames[..self.num_regular_frames];
+    }
 }
 
 /// SILK Frame Conditional Coding Mode (RFC 6716 Section 4.2.7).
@@ -335,7 +340,7 @@ impl Default for ChannelState {
 }
 
 impl ChannelState {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         return Self {
             last_gain_index: 10,
             prev_nlsf_q15: [0; MAX_LPC_ORDER],

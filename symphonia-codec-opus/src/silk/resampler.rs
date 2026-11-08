@@ -105,57 +105,61 @@ impl ResamplerState {
         self.fs_out_khz = (fs_hz_out / 1000) as usize;
         self.batch_size = self.fs_in_khz * RESAMPLER_MAX_BATCH_SIZE_MS;
 
-        let mut up2x = 0i32;
-        if fs_hz_out > fs_hz_in {
-            if fs_hz_out == fs_hz_in * 2 {
-                self.mode = ResamplerMode::Up2Hq;
-            } else {
-                self.mode = ResamplerMode::IirFir;
-                up2x = 1;
-            }
-        } else if fs_hz_out < fs_hz_in {
-            self.mode = if fs_hz_out * 4 == fs_hz_in * 3 {
+        let (mode, up2x) = match (fs_hz_in, fs_hz_out) {
+            (in_hz, out_hz) if out_hz == in_hz => (ResamplerMode::Copy, 0),
+            (in_hz, out_hz) if out_hz == in_hz * 2 => (ResamplerMode::Up2Hq, 0),
+            (in_hz, out_hz) if out_hz > in_hz => (ResamplerMode::IirFir, 1),
+            (in_hz, out_hz) if out_hz * 4 == in_hz * 3 => (
                 ResamplerMode::DownFir {
                     fir_fracs: 3,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR0,
                     coefs: &RESAMPLER_3_4_COEFS,
-                }
-            } else if fs_hz_out * 3 == fs_hz_in * 2 {
+                },
+                0,
+            ),
+            (in_hz, out_hz) if out_hz * 3 == in_hz * 2 => (
                 ResamplerMode::DownFir {
                     fir_fracs: 2,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR0,
                     coefs: &RESAMPLER_2_3_COEFS,
-                }
-            } else if fs_hz_out * 2 == fs_hz_in {
+                },
+                0,
+            ),
+            (in_hz, out_hz) if out_hz * 2 == in_hz => (
                 ResamplerMode::DownFir {
                     fir_fracs: 1,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR1,
                     coefs: &RESAMPLER_1_2_COEFS,
-                }
-            } else if fs_hz_out * 3 == fs_hz_in {
+                },
+                0,
+            ),
+            (in_hz, out_hz) if out_hz * 3 == in_hz => (
                 ResamplerMode::DownFir {
                     fir_fracs: 1,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR2,
                     coefs: &RESAMPLER_1_3_COEFS,
-                }
-            } else if fs_hz_out * 4 == fs_hz_in {
+                },
+                0,
+            ),
+            (in_hz, out_hz) if out_hz * 4 == in_hz => (
                 ResamplerMode::DownFir {
                     fir_fracs: 1,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR2,
                     coefs: &RESAMPLER_1_4_COEFS,
-                }
-            } else if fs_hz_out * 6 == fs_hz_in {
+                },
+                0,
+            ),
+            (in_hz, out_hz) if out_hz * 6 == in_hz => (
                 ResamplerMode::DownFir {
                     fir_fracs: 1,
                     fir_order: RESAMPLER_DOWN_ORDER_FIR2,
                     coefs: &RESAMPLER_1_6_COEFS,
-                }
-            } else {
-                return Err(Error::UnsupportedConfig.into());
-            };
-        } else {
-            self.mode = ResamplerMode::Copy;
-        }
+                },
+                0,
+            ),
+            _ => return Err(Error::UnsupportedConfig.into()),
+        };
+        self.mode = mode;
 
         let fs_in_i32 = fs_hz_in as i32;
         let fs_out_i32 = fs_hz_out as i32;
@@ -236,7 +240,7 @@ impl ResamplerState {
     ///
     /// Internal state `s_iir` is in Q10 format.
     pub(crate) fn up2_hq(s_iir: &mut [i32; 6], out: &mut [i16], input: &[i16]) {
-        for (k, &sample) in input.iter().enumerate() {
+        for (i, &sample) in input.iter().enumerate() {
             let in32 = (sample as i32) << 10;
 
             // Even output sample all-pass cascade
@@ -255,7 +259,7 @@ impl ResamplerState {
             let out32_even = s_iir[2].wrapping_add(x2);
             s_iir[2] = out32_2.wrapping_add(x2);
 
-            out[2 * k] = sat16(rshift_round(out32_even, 10));
+            out[2 * i] = sat16(rshift_round(out32_even, 10));
 
             // Odd output sample all-pass cascade
             let y3 = in32.wrapping_sub(s_iir[3]);
@@ -273,7 +277,7 @@ impl ResamplerState {
             let out32_odd = s_iir[5].wrapping_add(x5);
             s_iir[5] = out32_4.wrapping_add(x5);
 
-            out[2 * k + 1] = sat16(rshift_round(out32_odd, 10));
+            out[2 * i + 1] = sat16(rshift_round(out32_odd, 10));
         }
     }
 
@@ -305,14 +309,13 @@ impl ResamplerState {
                 let c0 = &RESAMPLER_FRAC_FIR_12[table_index];
                 let c1 = &RESAMPLER_FRAC_FIR_12[11 - table_index];
 
-                let mut res_q15 = (b[0] as i32) * (c0[0] as i32);
-                res_q15 = res_q15.wrapping_add((b[1] as i32) * (c0[1] as i32));
-                res_q15 = res_q15.wrapping_add((b[2] as i32) * (c0[2] as i32));
-                res_q15 = res_q15.wrapping_add((b[3] as i32) * (c0[3] as i32));
-                res_q15 = res_q15.wrapping_add((b[4] as i32) * (c1[3] as i32));
-                res_q15 = res_q15.wrapping_add((b[5] as i32) * (c1[2] as i32));
-                res_q15 = res_q15.wrapping_add((b[6] as i32) * (c1[1] as i32));
-                res_q15 = res_q15.wrapping_add((b[7] as i32) * (c1[0] as i32));
+                let res_q15 = b[..4]
+                    .iter()
+                    .zip(c0.iter())
+                    .chain(b[4..8].iter().zip(c1.iter().rev()))
+                    .fold(0i32, |acc, (&s, &c)| {
+                        acc.wrapping_add((s as i32) * (c as i32))
+                    });
 
                 out[out_idx] = sat16(rshift_round(res_q15, 15));
                 out_idx += 1;
@@ -333,9 +336,9 @@ impl ResamplerState {
 
     /// 2nd-order AR filter (`silk_resampler_private_AR2`), producing Q8 output.
     fn ar2(s_iir: &mut [i32], out_q8: &mut [i32], input: &[i16], a_q14: &[i16]) {
-        for (k, &sample) in input.iter().enumerate() {
+        for (i, &sample) in input.iter().enumerate() {
             let out32 = s_iir[0].wrapping_add((sample as i32) << 8);
-            out_q8[k] = out32;
+            out_q8[i] = out32;
             let out32_shifted = out32 << 2;
             s_iir[0] = mla_q16_i16(s_iir[1], out32_shifted, a_q14[0]);
             s_iir[1] = mul_q16_i16(out32_shifted, a_q14[1]);
@@ -374,58 +377,44 @@ impl ResamplerState {
 
             match fir_order {
                 RESAMPLER_DOWN_ORDER_FIR0 => {
+                    let half_order = RESAMPLER_DOWN_ORDER_FIR0 / 2;
                     while index_q16 < max_index_q16 {
                         let buf_ptr = &buf[(index_q16 >> 16) as usize..];
                         let interpol_ind =
                             mul_q16_i16(index_q16 & 0xFFFF, fir_fracs as i16) as usize;
 
-                        let c0 = &fir_coefs[(RESAMPLER_DOWN_ORDER_FIR0 / 2) * interpol_ind..];
-                        let mut res_q6 = mul_q16_i16(buf_ptr[0], c0[0]);
-                        for tap in 1..9 {
-                            res_q6 = mla_q16_i16(res_q6, buf_ptr[tap], c0[tap]);
-                        }
+                        let c0 =
+                            &fir_coefs[half_order * interpol_ind..half_order * (interpol_ind + 1)];
+                        let c1_start = half_order * (fir_fracs - 1 - interpol_ind);
+                        let c1 = &fir_coefs[c1_start..c1_start + half_order];
 
-                        let c1 = &fir_coefs
-                            [(RESAMPLER_DOWN_ORDER_FIR0 / 2) * (fir_fracs - 1 - interpol_ind)..];
-                        for tap in 0..9 {
-                            res_q6 = mla_q16_i16(res_q6, buf_ptr[17 - tap], c1[tap]);
-                        }
-
-                        out[out_idx] = sat16(rshift_round(res_q6, 6));
-                        out_idx += 1;
-                        index_q16 += index_increment_q16;
-                    }
-                }
-                RESAMPLER_DOWN_ORDER_FIR1 => {
-                    while index_q16 < max_index_q16 {
-                        let buf_ptr = &buf[(index_q16 >> 16) as usize..];
-                        let mut res_q6 =
-                            mul_q16_i16(buf_ptr[0].wrapping_add(buf_ptr[23]), fir_coefs[0]);
-                        for tap in 1..12 {
-                            res_q6 = mla_q16_i16(
-                                res_q6,
-                                buf_ptr[tap].wrapping_add(buf_ptr[23 - tap]),
-                                fir_coefs[tap],
-                            );
-                        }
+                        let res_q6 = buf_ptr[..half_order]
+                            .iter()
+                            .zip(c0.iter())
+                            .chain(
+                                buf_ptr[half_order..RESAMPLER_DOWN_ORDER_FIR0]
+                                    .iter()
+                                    .rev()
+                                    .zip(c1.iter()),
+                            )
+                            .fold(0i32, |acc, (&s, &c)| mla_q16_i16(acc, s, c));
 
                         out[out_idx] = sat16(rshift_round(res_q6, 6));
                         out_idx += 1;
                         index_q16 += index_increment_q16;
                     }
                 }
-                RESAMPLER_DOWN_ORDER_FIR2 => {
+                RESAMPLER_DOWN_ORDER_FIR1 | RESAMPLER_DOWN_ORDER_FIR2 => {
+                    let half_order = fir_order / 2;
                     while index_q16 < max_index_q16 {
                         let buf_ptr = &buf[(index_q16 >> 16) as usize..];
-                        let mut res_q6 =
-                            mul_q16_i16(buf_ptr[0].wrapping_add(buf_ptr[35]), fir_coefs[0]);
-                        for tap in 1..18 {
-                            res_q6 = mla_q16_i16(
-                                res_q6,
-                                buf_ptr[tap].wrapping_add(buf_ptr[35 - tap]),
-                                fir_coefs[tap],
-                            );
-                        }
+                        let res_q6 = (0..half_order).fold(0i32, |acc, i| {
+                            mla_q16_i16(
+                                acc,
+                                buf_ptr[i].wrapping_add(buf_ptr[fir_order - 1 - i]),
+                                fir_coefs[i],
+                            )
+                        });
 
                         out[out_idx] = sat16(rshift_round(res_q6, 6));
                         out_idx += 1;

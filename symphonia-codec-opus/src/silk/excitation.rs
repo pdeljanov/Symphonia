@@ -54,29 +54,30 @@ impl Decoder {
         frame.rate_level = rate_level as u8;
 
         // 1. Decode pulse counts and LSB shift counts for every 16-sample shell block
-        for block in 0..num_blocks {
+        for i in 0..num_blocks {
             let (pulse_count, lsb_count) = self.decode_block_pulse_count(decoder, rate_level)?;
-            frame.pulse_counts[block] = pulse_count;
-            frame.lsb_counts[block] = lsb_count;
+            frame.pulse_counts[i] = pulse_count;
+            frame.lsb_counts[i] = lsb_count;
         }
 
         // 2. Decode shell pulse locations via depth-first recursive binary splits (16 -> 8 -> 4 -> 2 -> 1)
         let mut pulses_buf = [0i16; MAX_SHELL_BLOCKS * SHELL_BLOCK_SAMPLES];
-        for block in 0..num_blocks {
-            let block_pulses =
-                &mut pulses_buf[block * SHELL_BLOCK_SAMPLES..(block + 1) * SHELL_BLOCK_SAMPLES];
-            let pulse_count = frame.pulse_counts[block];
+        let active_pulses = &mut pulses_buf[..num_blocks * SHELL_BLOCK_SAMPLES];
+        for (block_pulses, &pulse_count) in active_pulses
+            .chunks_exact_mut(SHELL_BLOCK_SAMPLES)
+            .zip(frame.pulse_counts[..num_blocks].iter())
+        {
             if pulse_count > 0 {
                 Self::decode_shell_partition(decoder, block_pulses, pulse_count)?;
             }
         }
 
         // 3. Decode LSBs for blocks where escape value 17 was encountered
-        for block in 0..num_blocks {
-            let n_lsbs = frame.lsb_counts[block];
+        for (block_pulses, &n_lsbs) in active_pulses
+            .chunks_exact_mut(SHELL_BLOCK_SAMPLES)
+            .zip(frame.lsb_counts[..num_blocks].iter())
+        {
             if n_lsbs > 0 {
-                let block_pulses =
-                    &mut pulses_buf[block * SHELL_BLOCK_SAMPLES..(block + 1) * SHELL_BLOCK_SAMPLES];
                 for pulse in block_pulses.iter_mut() {
                     let mut abs_q = *pulse;
                     for _ in 0..n_lsbs {
@@ -90,12 +91,12 @@ impl Decoder {
         }
 
         // 4. Decode signs for all non-zero pulses in blocks with pulse_count > 0 or lsb_count > 0
-        for block in 0..num_blocks {
-            let pulse_count = frame.pulse_counts[block];
-            let lsb_count = frame.lsb_counts[block];
+        for ((block_pulses, &pulse_count), &lsb_count) in active_pulses
+            .chunks_exact_mut(SHELL_BLOCK_SAMPLES)
+            .zip(frame.pulse_counts[..num_blocks].iter())
+            .zip(frame.lsb_counts[..num_blocks].iter())
+        {
             if pulse_count > 0 || lsb_count > 0 {
-                let block_pulses =
-                    &mut pulses_buf[block * SHELL_BLOCK_SAMPLES..(block + 1) * SHELL_BLOCK_SAMPLES];
                 self.decode_block_excitation_signs(
                     decoder,
                     block_pulses,
@@ -241,41 +242,42 @@ impl Decoder {
         let sample_count = frame.sample_count;
         let mut rand_seed = frame.lcg_seed as i32;
 
-        for i in 0..sample_count {
+        for (&pulse_i16, dst_exc) in frame.pulses[..sample_count]
+            .iter()
+            .zip(frame.exc_q14[..sample_count].iter_mut())
+        {
             rand_seed = rand_seed
                 .wrapping_mul(LCG_MULTIPLIER)
                 .wrapping_add(LCG_INCREMENT);
 
-            let pulse = frame.pulses[i] as i32;
-            let mut exc = pulse << 14;
-            if exc > 0 {
-                exc -= QUANT_LEVEL_ADJUST_Q14;
-            } else if exc < 0 {
-                exc += QUANT_LEVEL_ADJUST_Q14;
-            }
-            exc += offset_q14;
+            let pulse = pulse_i16 as i32;
+            let base_exc = pulse << 14;
+            let adjusted_exc = match base_exc.cmp(&0) {
+                std::cmp::Ordering::Greater => base_exc - QUANT_LEVEL_ADJUST_Q14,
+                std::cmp::Ordering::Less => base_exc + QUANT_LEVEL_ADJUST_Q14,
+                std::cmp::Ordering::Equal => 0,
+            } + offset_q14;
 
-            if rand_seed < 0 {
-                exc = -exc;
-            }
-
-            frame.exc_q14[i] = exc;
+            *dst_exc = if rand_seed < 0 {
+                -adjusted_exc
+            } else {
+                adjusted_exc
+            };
             rand_seed = rand_seed.wrapping_add(pulse);
         }
 
         if let Some(raw_subfr_len) = sample_count.checked_div(frame.num_subframes) {
             let subfr_len = raw_subfr_len.min(MAX_SUBFRAME_SAMPLES);
-            for (s, subframe) in frame.subframes[..frame.num_subframes]
+            for (subframe, exc_chunk) in frame.subframes[..frame.num_subframes]
                 .iter_mut()
-                .enumerate()
+                .zip(frame.exc_q14[..sample_count].chunks_exact(subfr_len))
             {
-                let start = s * subfr_len;
                 subframe.excitation_len = subfr_len;
-                for i in 0..subfr_len {
-                    let exc_q14 = frame.exc_q14[start + i];
-                    subframe.excitation_q14[i] = exc_q14;
-                    subframe.excitation[i] = exc_q14 as f32;
-                }
+                subframe.excitation_q14[..subfr_len].copy_from_slice(exc_chunk);
+                subframe.excitation[..subfr_len]
+                    .iter_mut()
+                    .zip(exc_chunk.iter())
+                    .for_each(|(dst, &exc_q14)| *dst = exc_q14 as f32);
             }
         }
     }

@@ -2426,161 +2426,78 @@ mod tests {
         assert_eq!(*icdf.last().unwrap(), 256, "{name}: last element must be 256");
 
         let mut prev = 0u32;
-        for (idx, &cum) in icdf.iter().enumerate().skip(1) {
-            if allow_trailing_zero_pdf && idx == icdf.len() - 1 {
-                assert!(cum >= prev, "{name}[{idx}]: cumulative value decreased");
+        for (i, &cum) in icdf.iter().enumerate().skip(1) {
+            if allow_trailing_zero_pdf && i == icdf.len() - 1 {
+                assert!(cum >= prev, "{name}[{i}]: cumulative value decreased");
             } else {
                 assert!(
                     cum > prev,
-                    "{name}[{idx}]: cumulative probability must strictly increase ({prev} -> {cum})"
+                    "{name}[{i}]: cumulative probability must strictly increase ({prev} -> {cum})"
                 );
             }
             prev = cum;
         }
     }
 
+    macro_rules! assert_valid_icdfs {
+        ($($table:ident),+ $(,)?) => {
+            $(
+                assert_valid_icdf(stringify!($table), &$table, false);
+            )+
+        };
+    }
+
     #[test]
     fn icdf_tables_invariants() {
-        // Header iCDFs
-        assert_valid_icdf("ICDF_FRAME_TYPE_VAD_INACTIVE", &ICDF_FRAME_TYPE_VAD_INACTIVE, false);
-        assert_valid_icdf("ICDF_FRAME_TYPE_VAD_ACTIVE", &ICDF_FRAME_TYPE_VAD_ACTIVE, false);
-        assert_valid_icdf(
-            "ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE",
-            &ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO",
-            &ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE",
-            &ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE,
-            false,
-        );
-        assert_valid_icdf("ICDF_STEREO_MID_ONLY", &ICDF_STEREO_MID_ONLY, false);
-        assert_valid_icdf(
-            "ICDF_PER_FRAME_LBRR_FLAGS_40_MS",
-            &ICDF_PER_FRAME_LBRR_FLAGS_40_MS,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_PER_FRAME_LBRR_FLAGS_60_MS",
-            &ICDF_PER_FRAME_LBRR_FLAGS_60_MS,
-            false,
+        assert_valid_icdfs!(
+            // Header iCDFs
+            ICDF_FRAME_TYPE_VAD_INACTIVE,
+            ICDF_FRAME_TYPE_VAD_ACTIVE,
+            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE,
+            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO,
+            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE,
+            ICDF_STEREO_MID_ONLY,
+            ICDF_PER_FRAME_LBRR_FLAGS_40_MS,
+            ICDF_PER_FRAME_LBRR_FLAGS_60_MS,
+            // Gain iCDFs
+            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE,
+            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
+            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
+            ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB,
+            ICDF_DELTA_QUANTIZATION_GAIN,
+            // LSF iCDFs
+            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
+            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
+            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
+            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED,
+            ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION,
+            ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX,
+            // LTP iCDFs
+            ICDF_PRIMARY_PITCH_LAG_HIGH_PART,
+            ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND,
+            ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND,
+            ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND,
+            ICDF_RELATIVE_DELTA_PITCH_LAG,
+            ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS,
+            ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS,
+            ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS,
+            ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS,
+            ICDF_PERIODICITY_INDEX,
+            ICDF_LTP_FILTER_INDEX_0,
+            ICDF_LTP_FILTER_INDEX_1,
+            ICDF_LTP_FILTER_INDEX_2,
+            ICDF_LTP_SCALING_PARAMETER,
+            // Excitation iCDFs
+            ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED,
+            ICDF_RATE_LEVEL_UNVOICED,
+            ICDF_RATE_LEVEL_VOICED,
+            ICDF_EXCITATION_LSB,
         );
 
-        // Gain iCDFs
-        assert_valid_icdf(
-            "ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE",
-            &ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED",
-            &ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED",
-            &ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB",
-            &ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB,
-            false,
-        );
-        assert_valid_icdf("ICDF_DELTA_QUANTIZATION_GAIN", &ICDF_DELTA_QUANTIZATION_GAIN, false);
-
-        // LSF iCDFs
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED",
-            &ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED",
-            &ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED",
-            &ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED",
-            &ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION",
-            &ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION,
-            false,
-        );
         for (i, row) in ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX.iter().enumerate() {
             assert_valid_icdf(&format!("ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[{i}]"), row, false);
         }
-        assert_valid_icdf(
-            "ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX",
-            &ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX,
-            false,
-        );
 
-        // LTP iCDFs
-        assert_valid_icdf("ICDF_PRIMARY_PITCH_LAG_HIGH_PART", &ICDF_PRIMARY_PITCH_LAG_HIGH_PART, false);
-        assert_valid_icdf(
-            "ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND",
-            &ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND",
-            &ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND",
-            &ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND,
-            false,
-        );
-        assert_valid_icdf("ICDF_RELATIVE_DELTA_PITCH_LAG", &ICDF_RELATIVE_DELTA_PITCH_LAG, false);
-        assert_valid_icdf(
-            "ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS",
-            &ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS",
-            &ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS",
-            &ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS,
-            false,
-        );
-        assert_valid_icdf(
-            "ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS",
-            &ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS,
-            false,
-        );
-        assert_valid_icdf("ICDF_PERIODICITY_INDEX", &ICDF_PERIODICITY_INDEX, false);
-        assert_valid_icdf("ICDF_LTP_FILTER_INDEX_0", &ICDF_LTP_FILTER_INDEX_0, false);
-        assert_valid_icdf("ICDF_LTP_FILTER_INDEX_1", &ICDF_LTP_FILTER_INDEX_1, false);
-        assert_valid_icdf("ICDF_LTP_FILTER_INDEX_2", &ICDF_LTP_FILTER_INDEX_2, false);
-        assert_valid_icdf("ICDF_LTP_SCALING_PARAMETER", &ICDF_LTP_SCALING_PARAMETER, false);
-
-        // Excitation iCDFs
-        assert_valid_icdf(
-            "ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED",
-            &ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED,
-            false,
-        );
-        assert_valid_icdf("ICDF_RATE_LEVEL_UNVOICED", &ICDF_RATE_LEVEL_UNVOICED, false);
-        assert_valid_icdf("ICDF_RATE_LEVEL_VOICED", &ICDF_RATE_LEVEL_VOICED, false);
         for (i, row) in ICDF_PULSE_COUNT.iter().enumerate() {
             // Rate level 10 has probability 0 for symbol 17 per RFC 6716 Table 46
             assert_valid_icdf(&format!("ICDF_PULSE_COUNT[{i}]"), row, i == 10);
@@ -2597,7 +2514,6 @@ mod tests {
         for (i, row) in ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS.iter().enumerate() {
             assert_valid_icdf(&format!("SPLIT_2[{i}]"), row, false);
         }
-        assert_valid_icdf("ICDF_EXCITATION_LSB", &ICDF_EXCITATION_LSB, false);
 
         for (sig, sig_table) in ICDF_EXCITATION_SIGN.iter().enumerate() {
             for (q, q_table) in sig_table.iter().enumerate() {
@@ -2611,19 +2527,19 @@ mod tests {
     #[test]
     fn lsf_stage_two_selector_bounds() {
         for row in CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND.iter() {
-            for &idx in row.iter() {
+            for &sel in row.iter() {
                 assert!(
-                    (idx as usize) < 8,
-                    "NB/MB Stage-2 codebook selector {idx} must be in 0..8 (a..h)"
+                    (sel as usize) < 8,
+                    "NB/MB Stage-2 codebook selector {sel} must be in 0..8 (a..h)"
                 );
             }
         }
 
         for row in CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND.iter() {
-            for &idx in row.iter() {
+            for &sel in row.iter() {
                 assert!(
-                    (8..16).contains(&(idx as usize)),
-                    "WB Stage-2 codebook selector {idx} must be in 8..16 (i..p)"
+                    (8..16).contains(&(sel as usize)),
+                    "WB Stage-2 codebook selector {sel} must be in 8..16 (i..p)"
                 );
             }
         }
