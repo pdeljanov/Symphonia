@@ -31,7 +31,6 @@ use symphonia_core::meta::{Chapter, RawValue, StandardTag, Tag, Visual};
 use symphonia_core::units::Time;
 use symphonia_core::util::text;
 
-use lazy_static::lazy_static;
 use log::{debug, warn};
 use smallvec::{SmallVec, smallvec};
 
