@@ -5,6 +5,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::string::String;
+#[cfg(not(feature = "std"))]
+use alloc::string::ToString;
+
 use symphonia_core::errors::Error;
 
 use crate::atoms::{Atom, AtomHeader, AtomIterator, ReadAtom, Result};
@@ -55,7 +59,7 @@ impl Atom for HdlrAtom {
             b"subt" => HandlerType::Subtitle,
             b"text" => HandlerType::Text,
             hdlr => {
-                warn!("unknown handler type '{}'", std::str::from_utf8(hdlr).unwrap_or("????"));
+                warn!("unknown handler type '{}'", core::str::from_utf8(hdlr).unwrap_or("????"));
                 HandlerType::Other(*hdlr)
             }
         };

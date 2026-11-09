@@ -5,9 +5,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::io::{ReadBitsLtr, vlc::*};
+use alloc::{boxed::Box, vec::Vec};
 
-use lazy_static::lazy_static;
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
+use once_cell::race::OnceBox;
+
+use symphonia_core::io::vlc::*;
+use symphonia_core::io::{MediaResult, ReadBitsLtr};
 
 #[rustfmt::skip]
 const SPECTRUM_CODEBOOK1_LENS: [u8; 81] = [
@@ -500,7 +506,7 @@ pub struct QuadsCodebook {
 
 impl QuadsCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u8, u8, u8, u8)> {
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> MediaResult<(u8, u8, u8, u8)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| AAC_QUADS[cw as usize])
     }
 }
@@ -522,7 +528,7 @@ pub struct PairsCodebook {
 
 impl PairsCodebook {
     #[inline(always)]
-    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(f32, f32)> {
+    pub fn read_dequant<B: ReadBitsLtr>(&self, bs: &mut B) -> MediaResult<(f32, f32)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }
@@ -543,7 +549,7 @@ pub struct EscapeCodebook {
 
 impl EscapeCodebook {
     #[inline(always)]
-    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> std::io::Result<(u16, u16)> {
+    pub fn read_quant<B: ReadBitsLtr>(&self, bs: &mut B) -> MediaResult<(u16, u16)> {
         bs.read_codebook(&self.codebook).map(|(cw, _)| self.values[cw as usize])
     }
 }
@@ -624,46 +630,55 @@ fn escape_pair<const MOD: usize>(cw: usize) -> (u16, u16) {
     ((cw / MOD) as u16, (cw % MOD) as u16)
 }
 
-lazy_static! {
-    pub static ref QUADS: [QuadsCodebook; 4] = [
+pub static QUADS: OnceBox<[QuadsCodebook; 4]> = OnceBox::new();
+
+pub fn init_quads() -> Box<[QuadsCodebook; 4]> {
+    Box::new([
         make_basic_codebook(&SPECTRUM_TABLES[0]),
         make_basic_codebook(&SPECTRUM_TABLES[1]),
         make_basic_codebook(&SPECTRUM_TABLES[2]),
         make_basic_codebook(&SPECTRUM_TABLES[3]),
-    ];
+    ])
 }
 
-lazy_static! {
-    pub static ref PAIRS: [PairsCodebook; 6] = [
+pub static PAIRS: OnceBox<[PairsCodebook; 6]> = OnceBox::new();
+
+pub fn init_pairs() -> Box<[PairsCodebook; 6]> {
+    Box::new([
         make_value_codebook(&SPECTRUM_TABLES[4], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[5], signed_pair::<9>),
         make_value_codebook(&SPECTRUM_TABLES[6], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[7], unsigned_pair::<8>),
         make_value_codebook(&SPECTRUM_TABLES[8], unsigned_pair::<13>),
         make_value_codebook(&SPECTRUM_TABLES[9], unsigned_pair::<13>),
-    ];
+    ])
 }
 
-lazy_static! {
-    pub static ref ESC: EscapeCodebook =
-        make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>);
+pub static ESC: OnceBox<EscapeCodebook> = OnceBox::new();
+
+pub fn init_esc() -> Box<EscapeCodebook> {
+    Box::new(make_value_codebook(&SPECTRUM_TABLES[10], escape_pair::<17>))
 }
 
-lazy_static! {
-    pub static ref SCALEFACTORS: Codebook<Entry8x16> = {
-        assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
+pub static SCALEFACTORS: OnceBox<Codebook<Entry8x16>> = OnceBox::new();
 
-        let len = SCF_CODEBOOK_CODES.len() as u8;
+pub fn init_scalefactors() -> Box<Codebook<Entry8x16>> {
+    assert_eq!(SCF_CODEBOOK_CODES.len(), SCF_CODEBOOK_LENS.len());
 
-        // Generate the values for the codebook.
-        let values: Vec<u8> = (0..len).collect();
+    let len = SCF_CODEBOOK_CODES.len() as u8;
 
-        // Generate the codebook.
-        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+    // Generate the values for the codebook.
+    let values: Vec<u8> = (0..len).collect();
 
-        // Read in 8-bit blocks.
-        builder.bits_per_read(8);
+    // Generate the codebook.
+    let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-        builder.make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values).expect("valid static codebook data")
-    };
+    // Read in 8-bit blocks.
+    builder.bits_per_read(8);
+
+    Box::new(
+        builder
+            .make(&SCF_CODEBOOK_CODES, &SCF_CODEBOOK_LENS, &values)
+            .expect("valid static codebook data"),
+    )
 }

@@ -13,11 +13,29 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+default = ["std"]
+
+# Enable standard-library I/O support. Disable for `no_std` (default-features = false).
+std = ["symphonia-core/std", "symphonia-common/std", "num-traits/std"]
+
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std", "symphonia-common/no_std", "num-traits/libm"]
+
 [dependencies]
 log = { workspace = true }
-lazy_static = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
-symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
+num-traits = { version = "0.2.19", default-features = false }
+once_cell = { version = "1.21", default-features = false, features = ["alloc", "race"] }
+
+[dependencies.symphonia-core]
+version = "0.6.1"
+path = "../symphonia-core"
+default-features = false
+
+[dependencies.symphonia-common]
+version = "0.6.1"
+path = "../symphonia-common"
+default-features = false
 
 [lints]
 workspace = true

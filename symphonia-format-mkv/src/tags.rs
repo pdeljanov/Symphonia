@@ -5,7 +5,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{ops::Deref, rc::Rc, sync::Arc};
+use core::ops::Deref;
+
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+#[cfg(feature = "std")]
+use std::sync::Arc;
+
+#[cfg(not(feature = "std"))]
+use alloc::string::ToString;
+#[cfg(not(feature = "std"))]
+use alloc::sync::Arc;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
 
 use symphonia_core::meta::{RawTag, RawTagSubField, RawValue, StandardTag};
 
@@ -17,7 +30,7 @@ pub struct Target {
     /// The target type value.
     pub value: u64,
     /// The target type name, if explicitly specified.
-    pub name: Option<Rc<Box<str>>>,
+    pub name: Option<Arc<Box<str>>>,
 }
 
 /// Describes the context in-which a tag exists.

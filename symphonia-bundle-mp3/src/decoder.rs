@@ -16,6 +16,8 @@ use symphonia_core::io::FiniteStream;
 use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
 
+use alloc::boxed::Box;
+
 #[cfg(feature = "mp1")]
 use symphonia_core::codecs::audio::well_known::CODEC_ID_MP1;
 #[cfg(feature = "mp2")]

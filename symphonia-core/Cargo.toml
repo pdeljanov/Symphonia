@@ -14,7 +14,13 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = []
+default = ["std"]
+
+# Enable standard-library support.
+std = ["num-traits/std", "num-complex/std"]
+
+# Enable no_std support.
+no_std = ["dep:hashbrown", "dep:embedded-io", "num-traits/libm"]
 
 # SIMD support.
 opt-simd-sse = ["rustfft/sse"]
@@ -35,9 +41,12 @@ exp-video-codecs = []
 [dependencies]
 bitflags = "2.4.2"
 bytemuck = "1.7"
-lazy_static = { workspace = true }
+embedded-io = { version = "0.7", default-features = false, optional = true }
+hashbrown = { version = "0.17", default-features = false, features = ["alloc", "default-hasher"], optional = true }
 log = { workspace = true }
-num-complex = "0.4"
+num-complex = { version = "0.4", default-features = false }
+num-traits = { version = "0.2.19", default-features = false }
+once_cell = { version = "1.21", default-features = false, features = ["alloc", "race"] }
 smallvec = { workspace = true }
 
 [dependencies.rustfft]

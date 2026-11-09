@@ -18,8 +18,44 @@ version.workspace = true
 all-features = true
 
 [features]
+# Enable standard-library support. Disable for `no_std` (default-features = false).
+std = [
+    "symphonia-core/std",
+    "symphonia-metadata/std",
+    "symphonia-bundle-flac/std",
+    "symphonia-bundle-mp3/std",
+    "symphonia-codec-aac/std",
+    "symphonia-codec-adpcm/std",
+    "symphonia-codec-alac/std",
+    "symphonia-codec-pcm/std",
+    "symphonia-codec-vorbis/std",
+    "symphonia-format-riff/std",
+    "symphonia-format-ogg/std",
+    "symphonia-format-isomp4/std",
+    "symphonia-format-mkv/std",
+    "symphonia-format-caf/std",
+]
+
+# Enable no_std support with `default-features = false`.
+no_std = [
+    "symphonia-core/no_std",
+    "symphonia-metadata/no_std",
+    "symphonia-bundle-flac?/no_std",
+    "symphonia-bundle-mp3?/no_std",
+    "symphonia-codec-aac?/no_std",
+    "symphonia-codec-adpcm?/no_std",
+    "symphonia-codec-alac?/no_std",
+    "symphonia-codec-pcm?/no_std",
+    "symphonia-codec-vorbis?/no_std",
+    "symphonia-format-riff?/no_std",
+    "symphonia-format-ogg?/no_std",
+    "symphonia-format-isomp4?/no_std",
+    "symphonia-format-mkv?/no_std",
+    "symphonia-format-caf?/no_std",
+]
+
 # Only royalty-free open standard codecs and formats are enabled by default.
-default = ["opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["std", "opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
 
 # Feature flags to enable specific codecs, container, and standalone metadata formats.
 aac = ["dep:symphonia-codec-aac"]
@@ -98,11 +134,12 @@ exp-subtitle-codecs = ["symphonia-core/exp-subtitle-codecs"]
 exp-video-codecs = ["symphonia-core/exp-video-codecs"]
 
 [dependencies]
-lazy_static = { workspace = true }
+once_cell = { version = "1.21", default-features = false, features = ["alloc", "race"] }
 
 [dependencies.symphonia-core]
 version = "0.6.1"
 path = "../symphonia-core"
+default-features = false
 
 [dependencies.symphonia-metadata]
 version = "0.6.1"
@@ -114,6 +151,7 @@ default-features = false
 version = "0.6.1"
 path = "../symphonia-bundle-flac"
 optional = true
+default-features = false
 
 [dependencies.symphonia-bundle-mp3]
 version = "0.6.1"
@@ -126,26 +164,31 @@ default-features = false
 version = "0.6.1"
 path = "../symphonia-codec-aac"
 optional = true
+default-features = false
 
 [dependencies.symphonia-codec-adpcm]
 version = "0.6.1"
 path = "../symphonia-codec-adpcm"
 optional = true
+default-features = false
 
 [dependencies.symphonia-codec-alac]
 version = "0.6.1"
 path = "../symphonia-codec-alac"
 optional = true
+default-features = false
 
 [dependencies.symphonia-codec-pcm]
 version = "0.6.1"
 path = "../symphonia-codec-pcm"
 optional = true
+default-features = false
 
 [dependencies.symphonia-codec-vorbis]
 version = "0.6.1"
 path = "../symphonia-codec-vorbis"
 optional = true
+default-features = false
 
 [dependencies.symphonia-format-riff]
 version = "0.6.1"
@@ -158,21 +201,25 @@ default-features = false
 version = "0.6.1"
 path = "../symphonia-format-ogg"
 optional = true
+default-features = false
 
 [dependencies.symphonia-format-isomp4]
 version = "0.6.1"
 path = "../symphonia-format-isomp4"
 optional = true
+default-features = false
 
 [dependencies.symphonia-format-mkv]
 version = "0.6.1"
 path = "../symphonia-format-mkv"
 optional = true
+default-features = false
 
 [dependencies.symphonia-format-caf]
 version = "0.6.1"
 path = "../symphonia-format-caf"
 optional = true
+default-features = false
 
 [lints]
 workspace = true

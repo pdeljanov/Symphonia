@@ -7,10 +7,13 @@
 
 //! The `errors` module defines the common error type.
 
-use std::error;
-use std::fmt;
+use core::error;
+use core::fmt;
+use core::result;
+
+use crate::io::MediaError;
+#[cfg(feature = "std")]
 use std::io;
-use std::result;
 
 /// `SeekErrorKind` is a list of generic reasons why a seek may fail.
 #[non_exhaustive]
@@ -42,7 +45,14 @@ impl SeekErrorKind {
 #[derive(Debug)]
 pub enum Error {
     /// An IO error occured while reading, writing, or seeking the stream.
+    ///
+    /// The payload is a `std::io::Error` under the `std` feature, or a [`MediaError`] on `no_std`
+    /// targets.
+    #[cfg(feature = "std")]
     IoError(std::io::Error),
+    /// An IO error occured while reading, writing, or seeking the stream.
+    #[cfg(not(feature = "std"))]
+    IoError(MediaError),
     /// The stream contained malformed data and could not be decoded or demuxed.
     DecodeError(&'static str),
     /// The stream could not be seeked.
@@ -79,7 +89,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
+impl core::error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::IoError(ref err) => Some(err),
@@ -92,9 +102,17 @@ impl std::error::Error for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
         Error::IoError(err)
+    }
+}
+
+impl From<MediaError> for Error {
+    /// Converts a [`MediaError`] from the `io` module into an [`Error`].
+    fn from(err: MediaError) -> Error {
+        Error::IoError(err.into())
     }
 }
 

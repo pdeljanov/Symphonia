@@ -11,6 +11,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::ReadBitsLtr;
 use symphonia_core::io::vlc::{Codebook, Entry8x16};
@@ -21,8 +26,8 @@ use crate::aac::codebooks;
 use crate::aac::common::*;
 use crate::aac::dsp;
 
-use lazy_static::lazy_static;
 use log::debug;
+use once_cell::race::OnceBox;
 
 mod gain;
 mod ltp;
@@ -41,44 +46,47 @@ const NORMAL_SCALE_MIN: i16 = -100;
 /// The length of the `POW43` table.
 const POW43_TABLE_LEN: usize = 8192;
 
-lazy_static! {
-    /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
+/// Pre-computed table of y = x^(4/3).
+static POW43_TABLE: OnceBox<[f32; POW43_TABLE_LEN]> = OnceBox::new();
+
+/// Builds the `POW43_TABLE` on first use.
+fn init_pow43_table() -> Box<[f32; POW43_TABLE_LEN]> {
+    let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
 }
 
 /// The length of the `NORMAL_SCF_TABLE` table.
 const NORMAL_SCF_TABLE_LEN: usize = 256;
 
-lazy_static! {
-    /// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
-    /// This table is indexed relative to -100, the minimum encoded scale factor value for normal
-    /// bands. Therefore, an input of 0 corresponds to -100.
-    static ref NORMAL_SCF_TABLE: Box<[f32; NORMAL_SCF_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
-            .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
-            .collect();
+/// Pre-computed table of y = 2^(0.25 * (x - 156)) for decoding scale factors for normal bands.
+/// This table is indexed relative to -100, the minimum encoded scale factor value for normal
+/// bands. Therefore, an input of 0 corresponds to -100.
+static NORMAL_SCF_TABLE: OnceBox<[f32; NORMAL_SCF_TABLE_LEN]> = OnceBox::new();
 
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
+/// Builds the `NORMAL_SCF_TABLE` on first use.
+fn init_normal_scf_table() -> Box<[f32; NORMAL_SCF_TABLE_LEN]> {
+    let table: Vec<f32> = (0..NORMAL_SCF_TABLE_LEN)
+        .map(|i| 2.0f32.powf(0.25 * f32::from(i as i16 - 56 + NORMAL_SCALE_MIN)))
+        .collect();
+
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
 }
 
 /// The length of the `INTENSITY_SCF_TABLE` table.
 const INTENSITY_SCF_TABLE_LEN: usize = 256;
 
-lazy_static! {
-    /// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
-    /// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
-    /// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
-    static ref INTENSITY_SCF_TABLE: Box<[f32; INTENSITY_SCF_TABLE_LEN]> = {
-        let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
-            .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
-            .collect();
+/// Pre-computed table of y = 0.5^(0.25 * (x - 155)) for decoding scale factors for intensity
+/// coded bands. This table is indexed relative to -155, the minimum encoded scale factor value
+/// for intensity coded bands. Therefore, an input of 0 corresponds to -155.
+static INTENSITY_SCF_TABLE: OnceBox<[f32; INTENSITY_SCF_TABLE_LEN]> = OnceBox::new();
 
-        table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
-    };
+/// Builds the `INTENSITY_SCF_TABLE` on first use.
+fn init_intensity_scf_table() -> Box<[f32; INTENSITY_SCF_TABLE_LEN]> {
+    let table: Vec<f32> = (0..INTENSITY_SCF_TABLE_LEN)
+        .map(|i| 0.5f32.powf(0.25 * f32::from(i as i16 + INTENSITY_SCALE_MIN)))
+        .collect();
+
+    table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
 }
 
 #[derive(Clone)]
@@ -313,10 +321,13 @@ impl Ics {
         let mut scf_noise = i16::from(self.global_gain) - 90 - NORMAL_SCALE_MIN;
         let mut scf_normal = i16::from(self.global_gain);
 
-        let scf_cb: &Codebook<Entry8x16> = &codebooks::SCALEFACTORS;
+        let scf_cb: &Codebook<Entry8x16> =
+            codebooks::SCALEFACTORS.get_or_init(codebooks::init_scalefactors);
+        let table_normal_scf: &[f32; NORMAL_SCF_TABLE_LEN] =
+            NORMAL_SCF_TABLE.get_or_init(init_normal_scf_table);
 
-        let table_normal_scf: &[f32; NORMAL_SCF_TABLE_LEN] = &NORMAL_SCF_TABLE;
-        let table_intensity_scf: &[f32; 256] = &INTENSITY_SCF_TABLE;
+        let table_intensity_scf: &[f32; 256] =
+            INTENSITY_SCF_TABLE.get_or_init(init_intensity_scf_table);
 
         for g in 0..self.info.window_groups {
             for sfb in 0..self.info.max_sfb {
@@ -388,17 +399,72 @@ impl Ics {
                         NOISE_HCB => decode_noise(lcg, scale, dst),
                         INTENSITY_HCB2 => (),
                         INTENSITY_HCB => (),
-                        1 => decode_quads_signed(bs, &codebooks::QUADS[0], scale, dst)?,
-                        2 => decode_quads_signed(bs, &codebooks::QUADS[1], scale, dst)?,
-                        3 => decode_quads_unsigned(bs, &codebooks::QUADS[2], scale, dst)?,
-                        4 => decode_quads_unsigned(bs, &codebooks::QUADS[3], scale, dst)?,
-                        5 => decode_pairs_signed(bs, &codebooks::PAIRS[0], scale, dst)?,
-                        6 => decode_pairs_signed(bs, &codebooks::PAIRS[1], scale, dst)?,
-                        7 => decode_pairs_unsigned(bs, &codebooks::PAIRS[2], scale, dst)?,
-                        8 => decode_pairs_unsigned(bs, &codebooks::PAIRS[3], scale, dst)?,
-                        9 => decode_pairs_unsigned(bs, &codebooks::PAIRS[4], scale, dst)?,
-                        10 => decode_pairs_unsigned(bs, &codebooks::PAIRS[5], scale, dst)?,
-                        11 => decode_pairs_unsigned_escape(bs, &codebooks::ESC, scale, dst)?,
+                        1 => decode_quads_signed(
+                            bs,
+                            &codebooks::QUADS.get_or_init(codebooks::init_quads)[0],
+                            scale,
+                            dst,
+                        )?,
+                        2 => decode_quads_signed(
+                            bs,
+                            &codebooks::QUADS.get_or_init(codebooks::init_quads)[1],
+                            scale,
+                            dst,
+                        )?,
+                        3 => decode_quads_unsigned(
+                            bs,
+                            &codebooks::QUADS.get_or_init(codebooks::init_quads)[2],
+                            scale,
+                            dst,
+                        )?,
+                        4 => decode_quads_unsigned(
+                            bs,
+                            &codebooks::QUADS.get_or_init(codebooks::init_quads)[3],
+                            scale,
+                            dst,
+                        )?,
+                        5 => decode_pairs_signed(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[0],
+                            scale,
+                            dst,
+                        )?,
+                        6 => decode_pairs_signed(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[1],
+                            scale,
+                            dst,
+                        )?,
+                        7 => decode_pairs_unsigned(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[2],
+                            scale,
+                            dst,
+                        )?,
+                        8 => decode_pairs_unsigned(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[3],
+                            scale,
+                            dst,
+                        )?,
+                        9 => decode_pairs_unsigned(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[4],
+                            scale,
+                            dst,
+                        )?,
+                        10 => decode_pairs_unsigned(
+                            bs,
+                            &codebooks::PAIRS.get_or_init(codebooks::init_pairs)[5],
+                            scale,
+                            dst,
+                        )?,
+                        11 => decode_pairs_unsigned_escape(
+                            bs,
+                            codebooks::ESC.get_or_init(codebooks::init_esc),
+                            scale,
+                            dst,
+                        )?,
                         _ => unreachable!(),
                     }
                 }
@@ -578,7 +644,7 @@ fn decode_pairs_unsigned_escape<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    let iquant: &[f32; POW43_TABLE_LEN] = &POW43_TABLE;
+    let iquant: &[f32; POW43_TABLE_LEN] = POW43_TABLE.get_or_init(init_pow43_table);
 
     for out in dst.chunks_exact_mut(2) {
         let (a, b) = cb.read_quant(bs)?;

@@ -5,6 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::vec::Vec;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::io::{
     ReadBitsRtl,
@@ -299,7 +304,7 @@ impl VorbisCodebook {
 
                 let num = bs.read_bits_leq32(num_bits)?;
 
-                code_lens.extend(std::iter::repeat_n(cur_len as u8, num as usize));
+                code_lens.extend(core::iter::repeat_n(cur_len as u8, num as usize));
 
                 cur_len += 1;
                 cur_entry += num;

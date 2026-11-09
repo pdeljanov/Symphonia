@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::ops::{Deref, DerefMut, Range, RangeBounds};
+use alloc::vec::Vec;
+
+use core::ops::{Deref, DerefMut, Range, RangeBounds};
 
 use smallvec::SmallVec;
 
@@ -81,7 +83,7 @@ impl<S: Sample> AudioBuffer<S> {
         // As a matter of practicality, it is not possible to allocate more than usize::MAX bytes
         // of audio samples.
         assert!(
-            capacity <= (usize::MAX / (std::mem::size_of::<S>() * num_channels)),
+            capacity <= (usize::MAX / (core::mem::size_of::<S>() * num_channels)),
             "capacity too large"
         );
 
@@ -541,15 +543,15 @@ impl<S: Sample + SampleBytes> AudioBufferBytes<S> for AudioBuffer<S> {
     where
         Sout: SampleBytes,
     {
-        std::mem::size_of::<Sout::RawType>() * self.capacity()
+        core::mem::size_of::<Sout::RawType>() * self.capacity()
     }
 
     fn max_byte_len_per_plane(&self) -> usize {
-        std::mem::size_of::<S::RawType>() * self.capacity()
+        core::mem::size_of::<S::RawType>() * self.capacity()
     }
 }
 
-impl<S: Sample> std::ops::Index<Position> for AudioBuffer<S> {
+impl<S: Sample> core::ops::Index<Position> for AudioBuffer<S> {
     type Output = [S];
 
     fn index(&self, index: Position) -> &Self::Output {
@@ -557,13 +559,13 @@ impl<S: Sample> std::ops::Index<Position> for AudioBuffer<S> {
     }
 }
 
-impl<S: Sample> std::ops::IndexMut<Position> for AudioBuffer<S> {
+impl<S: Sample> core::ops::IndexMut<Position> for AudioBuffer<S> {
     fn index_mut(&mut self, index: Position) -> &mut Self::Output {
         self.plane_by_position_mut(index).expect("index out of bounds")
     }
 }
 
-impl<S: Sample> std::ops::Index<usize> for AudioBuffer<S> {
+impl<S: Sample> core::ops::Index<usize> for AudioBuffer<S> {
     type Output = [S];
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -571,7 +573,7 @@ impl<S: Sample> std::ops::Index<usize> for AudioBuffer<S> {
     }
 }
 
-impl<S: Sample> std::ops::IndexMut<usize> for AudioBuffer<S> {
+impl<S: Sample> core::ops::IndexMut<usize> for AudioBuffer<S> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.plane_mut(index).expect("index out of bounds")
     }

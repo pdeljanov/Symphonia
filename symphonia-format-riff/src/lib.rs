@@ -13,6 +13,15 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(any(feature = "aiff", feature = "wav"), macro_use)]
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-format-riff: enable either the `std` feature (default) or the `no_std` feature"
+);
 
 mod common;
 

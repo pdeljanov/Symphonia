@@ -7,7 +7,9 @@
 
 //! Video decoder specific support.
 
-use std::fmt;
+use alloc::{boxed::Box, vec::Vec};
+
+use core::fmt;
 
 #[cfg(feature = "exp-video-codecs")]
 use crate::codecs::CodecInfo;

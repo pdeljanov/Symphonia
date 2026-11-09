@@ -5,7 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::VecDeque;
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 use symphonia_core::errors::{Result, decode_error};
 use symphonia_core::formats::Track;

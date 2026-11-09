@@ -7,7 +7,9 @@
 
 //! Audio decoder specific support.
 
-use std::fmt;
+use alloc::boxed::Box;
+
+use core::fmt;
 
 use crate::audio::sample::SampleFormat;
 use crate::audio::{Channels, GenericAudioBufferRef};

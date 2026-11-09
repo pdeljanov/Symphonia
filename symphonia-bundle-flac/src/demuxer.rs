@@ -5,6 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom};
 
 use symphonia_core::support_format;
@@ -28,6 +31,20 @@ use symphonia_metadata::embedded::flac::*;
 use log::{debug, info};
 
 use super::parser::PacketParser;
+
+/// Returns true if the provided error is an unexpected end-of-stream from the underlying source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == MediaErrorKind::Eof)
+}
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 /// The FLAC start of stream marker: "fLaC" in ASCII.
 const FLAC_STREAM_MARKER: [u8; 4] = *b"fLaC";
@@ -357,10 +374,7 @@ impl FormatReader for FlacReader<'_> {
             // this case the UnexpectedEof error should be passed-on to the caller.
             let sync = match self.parser.resync(&mut self.reader) {
                 Ok(sync) => sync,
-                Err(Error::IoError(err))
-                    if err.kind() == std::io::ErrorKind::UnexpectedEof
-                        && track.num_frames.is_none() =>
-                {
+                Err(err) if is_unexpected_eof(&err) && track.num_frames.is_none() => {
                     return seek_error(SeekErrorKind::OutOfRange);
                 }
                 Err(err) => return Err(err),

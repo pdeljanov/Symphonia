@@ -7,6 +7,7 @@
 
 #![warn(rust_2018_idioms)]
 #![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 //! # Project Symphonia
 //!
@@ -117,6 +118,11 @@
 //! decoder or the [`FormatReader`][core::formats::FormatReader] trait for a demuxer trait and
 //! register with the appropriate registry or probe!
 
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!("symphonia: enable either the `std` feature (default) or the `no_std` feature");
+
 pub mod default {
     //! The `default` module provides convenience functions and registries to get an implementer
     //! up-and-running as quickly as possible, and to reduce boiler-plate. Using the `default`
@@ -185,26 +191,14 @@ pub mod default {
         pub use symphonia_metadata::embedded;
     }
 
-    use lazy_static::lazy_static;
+    use once_cell::race::OnceBox;
 
     use symphonia_core::codecs::registry::CodecRegistry;
     use symphonia_core::formats::probe::Probe;
 
-    lazy_static! {
-        static ref CODEC_REGISTRY: CodecRegistry = {
-            let mut registry = CodecRegistry::new();
-            register_enabled_codecs(&mut registry);
-            registry
-        };
-    }
+    static CODEC_REGISTRY: OnceBox<CodecRegistry> = OnceBox::new();
 
-    lazy_static! {
-        static ref PROBE: Probe = {
-            let mut probe: Probe = Default::default();
-            register_enabled_formats(&mut probe);
-            probe
-        };
-    }
+    static PROBE: OnceBox<Probe> = OnceBox::new();
 
     /// Gets the default `CodecRegistry`. This registry pre-registers all the codecs selected by the
     /// `feature` flags in the includer's `Cargo.toml`. If `features` is not set, the default set of
@@ -213,7 +207,11 @@ pub mod default {
     /// This function is lazy and does not instantiate the `CodecRegistry` until the first call to
     /// this function.
     pub fn get_codecs() -> &'static CodecRegistry {
-        &CODEC_REGISTRY
+        CODEC_REGISTRY.get_or_init(|| {
+            let mut registry = CodecRegistry::new();
+            register_enabled_codecs(&mut registry);
+            alloc::boxed::Box::new(registry)
+        })
     }
 
     /// Gets the default `Probe`. This registry pre-registers all the formats selected by the
@@ -223,7 +221,11 @@ pub mod default {
     /// This function is lazy and does not instantiate the `Probe` until the first call to this
     /// function.
     pub fn get_probe() -> &'static Probe {
-        &PROBE
+        PROBE.get_or_init(|| {
+            let mut probe: Probe = Default::default();
+            register_enabled_formats(&mut probe);
+            alloc::boxed::Box::new(probe)
+        })
     }
 
     /// Registers all the codecs selected by the `feature` flags in the includer's `Cargo.toml` on
@@ -231,6 +233,8 @@ pub mod default {
     /// is registered.
     ///
     /// Use this function to easily populate a custom registry with all enabled codecs.
+    // Unused when no codec feature flags are enabled.
+    #[allow(unused_variables)]
     pub fn register_enabled_codecs(registry: &mut CodecRegistry) {
         #[cfg(feature = "aac")]
         registry.register_audio_decoder::<codecs::AacDecoder>();
@@ -259,6 +263,8 @@ pub mod default {
     /// registered.
     ///
     /// Use this function to easily populate a custom probe with all enabled formats.
+    // Unused when no format feature flags are enabled.
+    #[allow(unused_variables)]
     pub fn register_enabled_formats(probe: &mut Probe) {
         // Formats
         #[cfg(feature = "aac")]

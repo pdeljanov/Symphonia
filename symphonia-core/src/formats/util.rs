@@ -7,6 +7,8 @@
 
 //! Helper utilities for implementing media demuxers.
 
+use alloc::vec::Vec;
+
 use crate::units::Timestamp;
 
 /// A `SeekPoint` is a mapping between a sample or frame number to byte offset within a media

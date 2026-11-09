@@ -5,8 +5,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::BTreeMap;
-use std::io::{Seek, SeekFrom};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{decode_error, reset_error, seek_error, unsupported_error};
@@ -16,6 +17,9 @@ use symphonia_core::formats::well_known::FORMAT_ID_OGG;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog, MetadataSideData};
 use symphonia_core::support_format;
+
+#[cfg(feature = "std")]
+use std::io::{Seek, SeekFrom};
 
 use log::{debug, info, warn};
 
@@ -27,6 +31,17 @@ use super::physical;
 
 const OGG_FORMAT_INFO: FormatInfo =
     FormatInfo { format: FORMAT_ID_OGG, short_name: "ogg", long_name: "Ogg" };
+
+/// Returns true if the provided error is an unexpected end-of-stream from the underlying source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == MediaErrorKind::Eof)
+}
 
 /// OGG demultiplexer.
 ///
@@ -145,7 +160,7 @@ impl<'s> OggReader<'s> {
 
             match self.read_page() {
                 Ok(_) => (),
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(err) if is_unexpected_eof(&err) => {
                     // Check that all logical streams have read their last page.
                     if self.have_all_streams_read_last_page() {
                         // All streams read their last page. End of stream has been reached.
@@ -153,7 +168,7 @@ impl<'s> OggReader<'s> {
                     }
 
                     // A stream did not reach its last page. Consider this an unexpected EOF.
-                    return Err(Error::IoError(err));
+                    return Err(err);
                 }
                 Err(err) => return Err(err),
             }
@@ -278,14 +293,14 @@ impl<'s> OggReader<'s> {
                 }
                 _ => match self.read_page() {
                     Ok(_) => (),
-                    Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    Err(err) if is_unexpected_eof(&err) => {
                         // If all streams have read their last page, then the seek was out-of-range.
                         if self.have_all_streams_read_last_page() {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
 
                         // If a stream did not read its last page then this is an unexpected EOF.
-                        return Err(Error::IoError(err));
+                        return Err(err);
                     }
                     Err(err) => return Err(err),
                 },

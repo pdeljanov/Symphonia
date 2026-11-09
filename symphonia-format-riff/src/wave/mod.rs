@@ -5,7 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom};
+
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;

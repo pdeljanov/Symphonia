@@ -11,59 +11,65 @@
 mod info {
     //! RIFF INFO chunk metadata format reading.
 
-    use std::collections::HashMap;
-    use std::str;
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use core::str;
 
-    use lazy_static::lazy_static;
+    use once_cell::race::OnceBox;
+
+    #[cfg(feature = "std")]
+    use std::collections::HashMap;
+    #[cfg(not(feature = "std"))]
+    use symphonia_core::collections::HashMap;
 
     use symphonia_core::errors::{Result, decode_error};
     use symphonia_core::meta::{MetadataBuilder, RawTag};
 
     use crate::utils::std_tag::*;
 
-    lazy_static! {
-        static ref RIFF_INFO_MAP: RawTagParserMap = {
-            let mut m: RawTagParserMap = HashMap::new();
-            m.insert("ages", parse_rating);
-            m.insert("cmnt", parse_comment);
-            m.insert("comm", parse_comment); // TODO: Same as "cmnt"
-            m.insert("dtim", parse_recording_time);
-            m.insert("genr", parse_genre);
-            m.insert("iart", parse_artist);
-            m.insert("icmt", parse_comment); // TODO: Same as "cmnt"?
-            m.insert("icnt", parse_release_country);
-            m.insert("icop", parse_copyright);
-            m.insert("icrd", parse_recording_date);
-            m.insert("idit", parse_recording_date); // TODO: Actually date of last edit?
-            m.insert("ienc", parse_encoded_by);
-            m.insert("ieng", parse_engineer);
-            m.insert("ifrm", parse_track_total);
-            m.insert("ignr", parse_genre);
-            m.insert("ilng", parse_language);
-            m.insert("imed", parse_media_format);
-            m.insert("imus", parse_composer);
-            m.insert("inam", parse_track_title);
-            m.insert("iprd", parse_album);
-            m.insert("ipro", parse_producer);
-            m.insert("iprt", parse_track_number_exclusive);
-            m.insert("irtd", parse_rating);
-            m.insert("isft", parse_encoder);
-            m.insert("isgn", parse_genre);
-            m.insert("isrf", parse_media_format);
-            m.insert("itch", parse_encoded_by);
-            m.insert("itoc", parse_cdtoc);
-            m.insert("itrk", parse_track_number_exclusive);
-            m.insert("iwri", parse_writer);
-            m.insert("lang", parse_language);
-            m.insert("prt1", parse_part_number_exclusive);
-            m.insert("prt2", parse_part_total);
-            m.insert("titl", parse_track_title); // TODO: Same as "inam"?
-            m.insert("torg", parse_label);
-            m.insert("trck", parse_track_number_exclusive);
-            m.insert("tver", parse_version);
-            m.insert("year", parse_recording_year);
-            m
-        };
+    static RIFF_INFO_MAP: OnceBox<RawTagParserMap> = OnceBox::new();
+
+    fn init_riff_info_map() -> Box<RawTagParserMap> {
+        let mut m: RawTagParserMap = HashMap::new();
+        m.insert("ages", parse_rating);
+        m.insert("cmnt", parse_comment);
+        m.insert("comm", parse_comment); // TODO: Same as "cmnt"
+        m.insert("dtim", parse_recording_time);
+        m.insert("genr", parse_genre);
+        m.insert("iart", parse_artist);
+        m.insert("icmt", parse_comment); // TODO: Same as "cmnt"?
+        m.insert("icnt", parse_release_country);
+        m.insert("icop", parse_copyright);
+        m.insert("icrd", parse_recording_date);
+        m.insert("idit", parse_recording_date); // TODO: Actually date of last edit?
+        m.insert("ienc", parse_encoded_by);
+        m.insert("ieng", parse_engineer);
+        m.insert("ifrm", parse_track_total);
+        m.insert("ignr", parse_genre);
+        m.insert("ilng", parse_language);
+        m.insert("imed", parse_media_format);
+        m.insert("imus", parse_composer);
+        m.insert("inam", parse_track_title);
+        m.insert("iprd", parse_album);
+        m.insert("ipro", parse_producer);
+        m.insert("iprt", parse_track_number_exclusive);
+        m.insert("irtd", parse_rating);
+        m.insert("isft", parse_encoder);
+        m.insert("isgn", parse_genre);
+        m.insert("isrf", parse_media_format);
+        m.insert("itch", parse_encoded_by);
+        m.insert("itoc", parse_cdtoc);
+        m.insert("itrk", parse_track_number_exclusive);
+        m.insert("iwri", parse_writer);
+        m.insert("lang", parse_language);
+        m.insert("prt1", parse_part_number_exclusive);
+        m.insert("prt2", parse_part_total);
+        m.insert("titl", parse_track_title); // TODO: Same as "inam"?
+        m.insert("torg", parse_label);
+        m.insert("trck", parse_track_number_exclusive);
+        m.insert("tver", parse_version);
+        m.insert("year", parse_recording_year);
+        Box::new(m)
     }
 
     /// Parse a RIFF INFO chunk into a `Tag` using the chunk's identifier and a slice containing the
@@ -84,7 +90,10 @@ mod info {
         let key = str::from_utf8(&chunk_id).expect("chunk_id contains only ASCII bytes");
         let value = String::from_utf8_lossy(buf);
 
-        builder.add_mapped_tags(RawTag::new(key, value), &RIFF_INFO_MAP);
+        builder.add_mapped_tags(
+            RawTag::new(key, value),
+            RIFF_INFO_MAP.get_or_init(init_riff_info_map),
+        );
 
         Ok(())
     }
@@ -94,6 +103,7 @@ mod info {
 mod id3 {
     //! RIFF ID3 chunk metadata format reading.
 
+    use alloc::vec::Vec;
     use symphonia_core::errors::Result;
     use symphonia_core::io::ReadBytes;
     use symphonia_core::meta::{MetadataBuilder, MetadataRevision, MetadataSideData};

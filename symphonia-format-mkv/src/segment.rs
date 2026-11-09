@@ -5,10 +5,24 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#[cfg(feature = "std")]
 use std::collections::HashMap;
-use std::num::NonZeroU64;
-use std::rc::Rc;
+
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+use core::num::NonZeroU64;
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
+#[cfg(feature = "std")]
 use std::sync::Arc;
+
+#[cfg(not(feature = "std"))]
+use alloc::sync::Arc;
 
 use symphonia_core::codecs::video::VideoExtraData;
 use symphonia_core::codecs::video::well_known::extra_data::{
@@ -144,8 +158,8 @@ impl From<u64> for MatroskaTicks {
     }
 }
 
-impl std::fmt::Display for MatroskaTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for MatroskaTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -215,8 +229,8 @@ impl From<u64> for SegmentTicks {
     }
 }
 
-impl std::fmt::Display for SegmentTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SegmentTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -275,8 +289,8 @@ impl From<u64> for TrackTicks {
     }
 }
 
-impl std::fmt::Display for TrackTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TrackTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -343,8 +357,8 @@ impl From<Timestamp> for SignedTrackTicks {
     }
 }
 
-impl std::fmt::Display for SignedTrackTicks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SignedTrackTicks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -1330,7 +1344,7 @@ impl TagsElement {
                 is_video,
                 target: tag.targets.as_ref().map(|t| Target {
                     value: t.target_type_value,
-                    name: t.target_type.clone().map(Rc::new),
+                    name: t.target_type.clone().map(Arc::new),
                 }),
             };
 

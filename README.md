@@ -195,6 +195,17 @@ Basic usage examples may be found [`here`](https://github.com/pdeljanov/Symphoni
 
 For a more complete application, see [`symphonia-play`](https://github.com/pdeljanov/Symphonia/blob/main/symphonia-play), a simple music player.
 
+## Embedding without the Standard Library
+
+Symphonia also builds in `no_std` environments by disabling default features and enabling the `no_std` feature together with the codecs and formats you need:
+
+```toml
+[dependencies]
+symphonia = { version = "0.6", default-features = false, features = ["no_std", "vorbis", "ogg"] }
+```
+
+`no_std` builds require `alloc` and are intended for embedded and `wasm32-unknown-unknown` targets. Enable either the `std` feature (default) or the `no_std` feature, not both.
+
 ## Tools
 
 Symphonia provides the following tools for debugging purposes:

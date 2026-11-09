@@ -5,7 +5,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{io::SeekFrom, num::NonZeroU64};
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+use core::num::NonZeroU64;
+#[cfg(feature = "std")]
+use std::io::SeekFrom;
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 use symphonia_core::io::{MediaSource, ReadBytes, SeekBuffered};
 
@@ -469,9 +475,16 @@ pub enum AtomError {
     Other(symphonia_core::errors::Error),
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for AtomError {
     fn from(err: std::io::Error) -> AtomError {
         AtomError::Other(symphonia_core::errors::Error::IoError(err))
+    }
+}
+
+impl From<symphonia_core::io::MediaError> for AtomError {
+    fn from(err: symphonia_core::io::MediaError) -> AtomError {
+        AtomError::Other(symphonia_core::errors::Error::from(err))
     }
 }
 
@@ -482,7 +495,7 @@ impl From<symphonia_core::errors::Error> for AtomError {
 }
 
 /// Atom iterator result.
-pub type Result<T> = std::result::Result<T, AtomError>;
+pub type Result<T> = core::result::Result<T, AtomError>;
 
 /// Convenience function to create a decode error within an `AtomError`.
 pub(crate) fn decode_error<T>(desc: &'static str) -> Result<T> {
@@ -957,14 +970,14 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// Reads a single byte from the stream and returns it or an error.
     #[inline]
     pub(crate) fn read_byte(&mut self) -> Result<u8> {
-        self.ensure_parent_atom_data(std::mem::size_of::<u8>() as u64)?;
+        self.ensure_parent_atom_data(core::mem::size_of::<u8>() as u64)?;
         Ok(self.reader.read_byte()?)
     }
 
     /// Reads two bytes from the stream and returns them in read-order or an error.
     #[inline]
     pub(crate) fn read_double_bytes(&mut self) -> Result<[u8; 2]> {
-        self.ensure_parent_atom_data(std::mem::size_of::<[u8; 2]>() as u64)?;
+        self.ensure_parent_atom_data(core::mem::size_of::<[u8; 2]>() as u64)?;
         Ok(self.reader.read_double_bytes()?)
     }
 
@@ -972,14 +985,14 @@ impl<R: ReadAtom> AtomIterator<R> {
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn read_triple_bytes(&mut self) -> Result<[u8; 3]> {
-        self.ensure_parent_atom_data(std::mem::size_of::<[u8; 3]>() as u64)?;
+        self.ensure_parent_atom_data(core::mem::size_of::<[u8; 3]>() as u64)?;
         Ok(self.reader.read_triple_bytes()?)
     }
 
     /// Reads four bytes from the stream and returns them in read-order or an error.
     #[inline]
     pub(crate) fn read_quad_bytes(&mut self) -> Result<[u8; 4]> {
-        self.ensure_parent_atom_data(std::mem::size_of::<[u8; 4]>() as u64)?;
+        self.ensure_parent_atom_data(core::mem::size_of::<[u8; 4]>() as u64)?;
         Ok(self.reader.read_quad_bytes()?)
     }
 
@@ -1016,7 +1029,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn read_u24(&mut self) -> Result<u32> {
-        let mut buf = [0u8; std::mem::size_of::<u32>()];
+        let mut buf = [0u8; core::mem::size_of::<u32>()];
         buf[0..3].clone_from_slice(&self.read_triple_bytes()?);
         Ok(u32::from_be_bytes(buf) >> 8)
     }
@@ -1048,7 +1061,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// integer or returns an error.
     #[inline]
     pub(crate) fn read_u64(&mut self) -> Result<u64> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let mut buf = [0u8; core::mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(u64::from_be_bytes(buf))
     }
@@ -1058,7 +1071,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn read_i64(&mut self) -> Result<i64> {
-        let mut buf = [0u8; std::mem::size_of::<i64>()];
+        let mut buf = [0u8; core::mem::size_of::<i64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(i64::from_be_bytes(buf))
     }
@@ -1075,7 +1088,7 @@ impl<R: ReadAtom> AtomIterator<R> {
     /// floating-point value.
     #[inline]
     pub(crate) fn read_f64(&mut self) -> Result<f64> {
-        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        let mut buf = [0u8; core::mem::size_of::<u64>()];
         self.read_buf_exact(&mut buf)?;
         Ok(f64::from_be_bytes(buf))
     }

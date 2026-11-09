@@ -13,6 +13,16 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-pcm: enable either the `std` feature (default) or the `no_std` feature"
+);
+
+use alloc::boxed::Box;
 
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};

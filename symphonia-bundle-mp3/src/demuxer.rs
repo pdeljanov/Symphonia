@@ -5,6 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+#[cfg(not(feature = "std"))]
+use num_traits::float::Float;
+
 use symphonia_core::support_format;
 
 use symphonia_core::checksum::Crc16AnsiLe;
@@ -21,9 +26,23 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 use crate::common::{FrameHeader, MpegLayer};
 use crate::header::{self, MAX_MPEG_FRAME_SIZE, MPEG_HEADER_LEN};
 
+#[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom};
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 use log::{debug, info, warn};
+
+/// Returns `true` if the provided error indicates an unexpected end of the underlying media source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::UnexpectedEof
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &MediaError) -> bool {
+    err.kind() == MediaErrorKind::Eof
+}
 
 const MP1_FORMAT_INFO: FormatInfo =
     FormatInfo { format: FORMAT_ID_MP1, short_name: "mp1", long_name: "MPEG Audio Layer 1 Native" };
@@ -162,7 +181,7 @@ impl FormatReader for MpaReader<'_> {
             // Read the next MPEG frame.
             let (header, data) = match read_mpeg_frame(&mut self.reader) {
                 Ok(frame) => frame,
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if is_unexpected_eof(&err) => {
                     // MPEG streams have no well-defined end, so when no more frames can be read,
                     // consider the stream ended.
                     return Ok(None);
@@ -308,7 +327,7 @@ impl FormatReader for MpaReader<'_> {
             // Sync to the next frame.
             let sync = match header::sync_frame(&mut self.reader) {
                 Ok(sync) => sync,
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(Error::IoError(err)) if is_unexpected_eof(&err) => {
                     // MPEG streams have no well-defined end, so if no more frames can be read then
                     // assume the seek position is out-of-range. This would normally only happen if
                     // the duration of the track is unknown, or it is was longer than the track
@@ -357,7 +376,7 @@ impl FormatReader for MpaReader<'_> {
                     if main_data_begin > 0 {
                         // The maximum number of reference frames is limited to the number of frames
                         // read and the number of previous frames recorded.
-                        let max_ref_frames = std::cmp::min(n_parsed, frames.len());
+                        let max_ref_frames = core::cmp::min(n_parsed, frames.len());
 
                         while n_ref_frames < max_ref_frames {
                             ref_frame = &frames[(n_parsed - n_ref_frames - 1) & REF_FRAMES_MASK];

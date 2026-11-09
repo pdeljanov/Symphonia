@@ -14,7 +14,13 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-default = ["ape", "id3v1", "id3v2"]
+default = ["std", "ape", "id3v1", "id3v2"]
+
+# Enable standard-library I/O support. Disable for `no_std` (default-features = false).
+std = ["symphonia-core/std"]
+
+# Enable no_std support with `default-features = false`.
+no_std = ["symphonia-core/no_std"]
 
 # Standalone metadata format readers.
 ape = []
@@ -34,11 +40,15 @@ riff = [
 ]
 
 [dependencies]
-lazy_static = { workspace = true }
 log = { workspace = true }
-regex-lite = "0.1.6"
+once_cell = { version = "1.21", default-features = false, features = ["alloc", "race"] }
+regex = { version = "1", default-features = false, features = ["unicode"] }
 smallvec = { workspace = true }
-symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+
+[dependencies.symphonia-core]
+version = "0.6.1"
+path = "../symphonia-core"
+default-features = false
 
 [lints]
 workspace = true

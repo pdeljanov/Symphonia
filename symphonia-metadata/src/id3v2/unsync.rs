@@ -5,10 +5,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::io;
-
 use symphonia_core::errors::Result;
-use symphonia_core::io::{FiniteStream, ReadBytes};
+use symphonia_core::io::{FiniteStream, MediaResult, ReadBytes};
 
 pub fn read_syncsafe_leq32<B: ReadBytes>(reader: &mut B, bit_width: u8) -> Result<u32> {
     debug_assert!(bit_width <= 32);
@@ -86,7 +84,7 @@ impl<B: ReadBytes + FiniteStream> FiniteStream for UnsyncStream<B> {
 }
 
 impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
-    fn read_byte(&mut self) -> io::Result<u8> {
+    fn read_byte(&mut self) -> MediaResult<u8> {
         let last = self.byte;
 
         self.byte = self.inner.read_byte()?;
@@ -100,24 +98,24 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         Ok(self.byte)
     }
 
-    fn read_double_bytes(&mut self) -> io::Result<[u8; 2]> {
+    fn read_double_bytes(&mut self) -> MediaResult<[u8; 2]> {
         Ok([self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_triple_bytes(&mut self) -> io::Result<[u8; 3]> {
+    fn read_triple_bytes(&mut self) -> MediaResult<[u8; 3]> {
         Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_quad_bytes(&mut self) -> io::Result<[u8; 4]> {
+    fn read_quad_bytes(&mut self) -> MediaResult<[u8; 4]> {
         Ok([self.read_byte()?, self.read_byte()?, self.read_byte()?, self.read_byte()?])
     }
 
-    fn read_buf(&mut self, _: &mut [u8]) -> io::Result<usize> {
+    fn read_buf(&mut self, _: &mut [u8]) -> MediaResult<usize> {
         // Not required.
         unimplemented!();
     }
 
-    fn read_buf_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+    fn read_buf_exact(&mut self, buf: &mut [u8]) -> MediaResult<()> {
         let len = buf.len();
 
         if len > 0 {
@@ -166,12 +164,12 @@ impl<B: ReadBytes + FiniteStream> ReadBytes for UnsyncStream<B> {
         _: &[u8],
         _: usize,
         _: &'a mut [u8],
-    ) -> io::Result<&'a mut [u8]> {
+    ) -> MediaResult<&'a mut [u8]> {
         // Not required.
         unimplemented!();
     }
 
-    fn ignore_bytes(&mut self, count: u64) -> io::Result<()> {
+    fn ignore_bytes(&mut self, count: u64) -> MediaResult<()> {
         for _ in 0..count {
             self.inner.read_byte()?;
         }

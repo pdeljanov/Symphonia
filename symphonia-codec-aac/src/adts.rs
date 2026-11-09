@@ -21,9 +21,26 @@ use symphonia_core::meta::{Metadata, MetadataLog};
 
 use symphonia_common::mpeg::audio::*;
 
+use alloc::{boxed::Box, vec::Vec};
+
+#[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom};
 
 use log::{debug, info};
+
+/// Returns true if the provided error is an unexpected end-of-stream from the underlying source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &Error) -> bool {
+    matches!(err, Error::IoError(e) if e.kind() == MediaErrorKind::Eof)
+}
+
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 const SAMPLES_PER_AAC_PACKET: Duration = Duration::new(1024);
 
@@ -284,7 +301,7 @@ impl FormatReader for AdtsReader<'_> {
         // Parse the header to get the calculated frame size.
         let header = match AdtsHeader::read(&mut self.reader) {
             Ok(header) => header,
-            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(err) if is_unexpected_eof(&err) => {
                 // ADTS streams have no well-defined end, so when no more frames can be read,
                 // consider the stream ended.
                 return Ok(None);
@@ -366,7 +383,7 @@ impl FormatReader for AdtsReader<'_> {
             // Parse the next frame header.
             let header = match AdtsHeader::read(&mut self.reader) {
                 Ok(header) => header,
-                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(err) if is_unexpected_eof(&err) => {
                     // ADTS streams have no well-defined end, so if no more frames can be read then
                     // assume the seek position is out-of-range.
                     return seek_error(SeekErrorKind::OutOfRange);

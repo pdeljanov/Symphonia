@@ -5,9 +5,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::io::vlc::*;
+use alloc::{boxed::Box, vec::Vec};
 
-use lazy_static::lazy_static;
+use once_cell::race::OnceBox;
+
+use symphonia_core::io::vlc::*;
 
 #[rustfmt::skip]
 const MPEG_CODES_0: [u32; 0] = [ ];
@@ -559,54 +561,62 @@ fn mpeg_gen_value(i: u16, wrap: u16) -> u16 {
     ((i / wrap) << 4) | (i % wrap)
 }
 
-lazy_static! {
-    pub static ref CODEBOOK_TABLES: [Codebook<Entry16x16>; 18] = {
-        let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
+static CODEBOOK_TABLES: OnceBox<[Codebook<Entry16x16>; 18]> = OnceBox::new();
 
-        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
-            assert!(table.codes.len() == table.lens.len());
+fn init_codebook_tables() -> Box<[Codebook<Entry16x16>; 18]> {
+    let mut codebooks: [Codebook<Entry16x16>; 18] = Default::default();
 
-            let len = table.codes.len() as u16;
+    for (codebook, table) in codebooks.iter_mut().zip(&MPEG_TABLES) {
+        assert!(table.codes.len() == table.lens.len());
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+        let len = table.codes.len() as u16;
 
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        // Generate values for the codebook.
+        let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
-            // Decode a maximum of 8 bits per read.
-            builder.bits_per_read(8);
+        // Generate the codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-            *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
-        }
+        // Decode a maximum of 8 bits per read.
+        builder.bits_per_read(8);
 
-        codebooks
-    };
+        *codebook =
+            builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
+    }
+
+    Box::new(codebooks)
 }
 
-lazy_static! {
-    pub static ref QUADS_CODEBOOK_TABLE: [Codebook<Entry16x16>; 2] = {
-        let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
+pub(super) fn codebook_tables() -> &'static [Codebook<Entry16x16>; 18] {
+    CODEBOOK_TABLES.get_or_init(init_codebook_tables)
+}
 
-        for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
-            assert!(table.codes.len() == table.lens.len());
+static QUADS_CODEBOOK_TABLE: OnceBox<[Codebook<Entry16x16>; 2]> = OnceBox::new();
 
-            let len = table.codes.len() as u16;
+fn init_quads_codebook_table() -> Box<[Codebook<Entry16x16>; 2]> {
+    let mut codebooks: [Codebook<Entry16x16>; 2] = Default::default();
 
-            // Generate values for the codebook.
-            let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap))
-                                           .collect();
+    for (codebook, table) in codebooks.iter_mut().zip(&MPEG_QUADS_TABLES) {
+        assert!(table.codes.len() == table.lens.len());
 
-            // Generate the codebook.
-            let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
+        let len = table.codes.len() as u16;
 
-            // Decode a maximum of 8 bits per read.
-            builder.bits_per_read(8);
+        // Generate values for the codebook.
+        let values: Vec<u16> = (0..len).map(|i| mpeg_gen_value(i, table.wrap)).collect();
 
-            *codebook = builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
-        }
+        // Generate the codebook.
+        let mut builder = CodebookBuilder::new(BitOrder::Verbatim);
 
-        codebooks
-    };
+        // Decode a maximum of 8 bits per read.
+        builder.bits_per_read(8);
+
+        *codebook =
+            builder.make(table.codes, table.lens, &values).expect("valid static codebook data");
+    }
+
+    Box::new(codebooks)
+}
+
+pub(super) fn quads_codebook_table() -> &'static [Codebook<Entry16x16>; 2] {
+    QUADS_CODEBOOK_TABLE.get_or_init(init_quads_codebook_table)
 }

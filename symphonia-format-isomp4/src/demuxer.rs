@@ -18,16 +18,34 @@ use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 use symphonia_core::units::Time;
 
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
+
+use core::num::NonZero;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
 use std::io::{Seek, SeekFrom};
-use std::num::NonZero;
-use std::sync::Arc;
+#[cfg(not(feature = "std"))]
+use symphonia_core::collections::HashMap;
+#[cfg(not(feature = "std"))]
+use symphonia_core::io::SeekFrom;
 
 use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
 use crate::stream::*;
 
 use log::{debug, info, trace, warn};
+
+/// Returns true if the provided error indicates an unexpected end of the underlying media source.
+#[cfg(feature = "std")]
+fn is_unexpected_eof(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::UnexpectedEof
+}
+
+#[cfg(not(feature = "std"))]
+fn is_unexpected_eof(err: &MediaError) -> bool {
+    err.kind() == MediaErrorKind::Eof
+}
 
 const ISOMP4_FORMAT_INFO: FormatInfo = FormatInfo {
     format: FORMAT_ID_ISOMP4,
@@ -450,8 +468,7 @@ impl<'s> IsoMp4Reader<'s> {
                 Ok(None) => break,
                 // If fragmented, an EOF is the only way to truly detect the end of stream.
                 Err(AtomError::Other(Error::IoError(err)))
-                    if self.moov.is_fragmented()
-                        && err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                    if self.moov.is_fragmented() && is_unexpected_eof(&err) =>
                 {
                     break;
                 }

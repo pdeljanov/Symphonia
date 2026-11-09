@@ -1,1 +1,13 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-opus: enable either the `std` feature (default) or the `no_std` feature"
+);

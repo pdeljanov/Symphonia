@@ -15,6 +15,15 @@
 #![allow(clippy::manual_range_contains)]
 // TODO: Remove this when refactoring AAC.
 #![allow(clippy::needless_range_loop)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(any(feature = "std", feature = "no_std")))]
+compile_error!(
+    "symphonia-codec-aac: enable either the `std` feature (default) or the `no_std` feature"
+);
 
 mod aac;
 mod adts;
