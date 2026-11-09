@@ -144,10 +144,10 @@ impl StreamInfo {
 
         let mut br = BitStreamLtr::new(reader);
 
-        // Read sample rate, valid rates are [1, 655350] Hz.
+        // Read sample rate, valid rates are [1, 1048575] Hz.
         info.sample_rate = br.read_bits_leq32(20)?;
 
-        if info.sample_rate < 1 || info.sample_rate > 655_350 {
+        if info.sample_rate == 0 {
             return decode_error("flac: stream sample rate out of bounds");
         }
 
