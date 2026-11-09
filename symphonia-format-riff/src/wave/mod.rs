@@ -136,11 +136,13 @@ impl<'s> WavReader<'s> {
                     fact = Some(fct.parse(&mut mss)?);
                 }
                 RiffWaveChunks::Ds64(ds) => {
-                    let chunk = ds.parse_and_skip_unread(&mut mss)?;
-
-                    // A ds64 chunk only has meaning in an RF64 or BW64 stream.
+                    // A ds64 chunk only has meaning in an RF64 or BW64 stream. Elsewhere it is
+                    // skipped like any unknown chunk.
                     if is_rf64 {
-                        ds64 = Some(chunk);
+                        ds64 = Some(ds.parse_and_skip_unread(&mut mss)?);
+                    }
+                    else {
+                        mss.ignore_bytes(u64::from(ds.len))?;
                     }
                 }
                 RiffWaveChunks::List(lst) => {
@@ -183,6 +185,7 @@ impl<'s> WavReader<'s> {
                     track.with_codec_params(CodecParameters::Audio(codec_params));
 
                     let Some(packet_info) = packet_info
+
                     else {
                         return decode_error("wav: missing format chunk");
                     };
@@ -198,12 +201,17 @@ impl<'s> WavReader<'s> {
 
                     // Append Data chunk fields to track.
                     if let Some(data_len) = data_len {
-                        append_data_params(&mut track, data_len, &packet_info);
+                        append_data_params(&mut track, data_len, &packet_info)?;
                     }
 
                     // The ds64 sample count is exact, whereas the count derived from the data
-                    // length includes any padding in the last block of compressed audio.
-                    if let Some(ds64) = ds64.as_ref().filter(|ds64| ds64.sample_count > 0) {
+                    // length includes any padding in the last block of compressed audio. It is
+                    // untrusted, so it is only used if the data chunk can hold that many frames.
+                    let max_frames = track.num_frames.unwrap_or(u64::MAX);
+                    if let Some(ds64) = ds64
+                        .as_ref()
+                        .filter(|ds64| ds64.sample_count > 0 && ds64.sample_count <= max_frames)
+                    {
                         track.with_num_frames(ds64.sample_count);
                         track.with_duration(Duration::from(ds64.sample_count));
                     }
@@ -340,8 +348,11 @@ impl FormatReader for WavReader<'_> {
         let actual_ts = self.packet_info.get_actual_ts(required_ts);
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos =
-            self.data_start_pos + (actual_ts.get() as u64 * self.packet_info.block_size.get());
+        // The frame count may come from an untrusted header, so the offset may overflow.
+        let seek_pos = (actual_ts.get() as u64)
+            .checked_mul(self.packet_info.block_size.get())
+            .and_then(|offset| self.data_start_pos.checked_add(offset))
+            .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -382,9 +393,10 @@ mod tests {
     use std::io::Cursor;
 
     use symphonia_core::formats::probe::{Hint, Probe};
-    use symphonia_core::formats::{FormatOptions, FormatReader};
+    use symphonia_core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
     use symphonia_core::io::MediaSourceStream;
     use symphonia_core::meta::MetadataOptions;
+    use symphonia_core::units::Timestamp;
 
     use super::WavReader;
 
@@ -447,8 +459,7 @@ mod tests {
     }
 
     /// The ds64 sizes that match `pcm()`.
-    const DS64: Option<(u64, u64)> =
-        Some(((NUM_FRAMES * BLOCK_ALIGN) as u64, NUM_FRAMES as u64));
+    const DS64: Option<(u64, u64)> = Some(((NUM_FRAMES * BLOCK_ALIGN) as u64, NUM_FRAMES as u64));
 
     fn riff() -> Vec<u8> {
         let body = [b"WAVE".to_vec(), fmt_chunk(), chunk(b"data", &pcm())].concat();
@@ -513,6 +524,54 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("overflows"), "{err}");
+    }
+
+    #[test]
+    fn rf64_frame_count_overflow_is_an_error() {
+        // Mono IMA ADPCM: 256-byte blocks of 505 frames. The data end position fits in a u64, but
+        // the frame count derived from it does not.
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&0x11u16.to_le_bytes()); // IMA ADPCM
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // channels
+        fmt.extend_from_slice(&48_000u32.to_le_bytes()); // sample rate
+        fmt.extend_from_slice(&(48_000u32 * 256 / 505).to_le_bytes()); // byte rate
+        fmt.extend_from_slice(&256u16.to_le_bytes()); // block align
+        fmt.extend_from_slice(&4u16.to_le_bytes()); // bits per sample
+        fmt.extend_from_slice(&2u16.to_le_bytes()); // extra size
+        fmt.extend_from_slice(&505u16.to_le_bytes()); // frames per block
+
+        let mut buf = b"RF64".to_vec();
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        buf.extend(ds64_chunk(u64::MAX - 4096, 0));
+        buf.extend(chunk(b"fmt ", &fmt));
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        buf.extend_from_slice(&[0; 256]);
+
+        let err = WavReader::try_new(mss(buf), FormatOptions::default()).err().unwrap();
+        assert!(err.to_string().contains("frame count"), "{err}");
+    }
+
+    #[test]
+    fn rf64_sample_count_beyond_data_is_ignored() {
+        let ds64 = Some(((NUM_FRAMES * BLOCK_ALIGN) as u64, u64::MAX));
+        let mut reader =
+            WavReader::try_new(mss(rf64(b"RF64", ds64, None)), FormatOptions::default()).unwrap();
+        assert_eq!(reader.tracks()[0].num_frames, Some(u64::from(NUM_FRAMES)));
+
+        // Seeking past the end is out of range rather than overflowing the byte offset.
+        let to = SeekTo::Timestamp { ts: Timestamp::new(i64::MAX), track_id: 0 };
+        assert!(reader.seek(SeekMode::Accurate, to).is_err());
+    }
+
+    #[test]
+    fn riff_ignores_malformed_ds64() {
+        // A ds64 chunk means nothing in a plain RIFF file, so it is skipped like any unknown chunk.
+        let body =
+            [b"WAVE".to_vec(), chunk(b"ds64", &[]), fmt_chunk(), chunk(b"data", &pcm())].concat();
+        let buf = [b"RIFF".to_vec(), (body.len() as u32).to_le_bytes().to_vec(), body].concat();
+        assert_reads_pcm(buf);
     }
 
     #[test]

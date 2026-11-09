@@ -380,8 +380,9 @@ impl PacketInfo {
         })
     }
 
-    pub fn get_num_frames_at(&self, data_pos: u64) -> u64 {
-        (data_pos / self.block_size) * self.frames_per_block.get()
+    /// Returns `None` if the frame count does not fit in a `u64`.
+    pub fn get_num_frames_at(&self, data_pos: u64) -> Option<u64> {
+        (data_pos / self.block_size).checked_mul(self.frames_per_block.get())
     }
 
     pub fn get_actual_ts(&self, ts: Timestamp) -> Timestamp {
@@ -415,10 +416,11 @@ pub fn next_packet(
 
     // The packet timestamp is the position of the first byte of the first frame in the
     // packet relative to the start of the data chunk divided by the length per frame.
-    let pts = match packet_info.get_num_frames_at(pos - data_start_pos).try_into() {
-        Ok(pts) => pts,
-        Err(_) => return Ok(None),
-    };
+    let pts: Timestamp =
+        match packet_info.get_num_frames_at(pos - data_start_pos).map(TryInto::try_into) {
+            Some(Ok(pts)) => pts,
+            _ => return Ok(None),
+        };
 
     let dur = Duration::from(blocks_per_packet * packet_info.frames_per_block.get());
     let pkt_len = blocks_per_packet * packet_info.block_size.get();
@@ -470,10 +472,18 @@ pub fn append_format_params(
 
 /// TODO: format here refers to format chunk in Wave terminology, but the data being handled here is
 /// generic - find a better name, or combine with append_data_params append_format_params
-pub fn append_data_params(track: &mut Track, data_len: u64, packet_info: &PacketInfo) {
+pub fn append_data_params(
+    track: &mut Track,
+    data_len: u64,
+    packet_info: &PacketInfo,
+) -> Result<()> {
     // Prefer the duration in the FACT chunk.
-    let num_frames = packet_info.get_num_frames_at(data_len);
+    let Some(num_frames) = packet_info.get_num_frames_at(data_len)
+    else {
+        return decode_error("riff: data chunk length overflows frame count");
+    };
     track.with_num_frames(num_frames);
     // Duration equals the number of frames because the timebase is always 1 / sample rate.
     track.with_duration(Duration::from(num_frames));
+    Ok(())
 }
