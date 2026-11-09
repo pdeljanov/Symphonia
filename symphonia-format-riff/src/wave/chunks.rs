@@ -604,6 +604,29 @@ impl ParseChunk for InfoChunk {
     }
 }
 
+/// The 64-bit sizes of an RF64 or BW64 file (EBU Tech 3306, ITU-R BS.2088). Files over 4 GB set
+/// the 32-bit RIFF, data, and fact sizes to `u32::MAX` and carry the real values here.
+pub struct Ds64Chunk {
+    pub data_size: u64,
+    pub sample_count: u64,
+}
+
+impl ParseChunk for Ds64Chunk {
+    fn parse<B: ReadBytes>(reader: &mut B, _tag: [u8; 4], len: u32) -> Result<Self> {
+        // RIFF size, data size, sample count, and the size table length. The size table that
+        // follows is for other chunks over 4 GB, which are not read, so it is skipped.
+        if len < 28 {
+            return decode_error("wav: malformed ds64 chunk");
+        }
+
+        let _riff_size = reader.read_u64()?;
+        let data_size = reader.read_u64()?;
+        let sample_count = reader.read_u64()?;
+
+        Ok(Ds64Chunk { data_size, sample_count })
+    }
+}
+
 pub struct DataChunk {
     pub len: Option<u32>,
 }
@@ -620,6 +643,7 @@ pub enum RiffWaveChunks {
     Format(ChunkParser<WaveFormatChunk>),
     List(ChunkParser<ListChunk>),
     Fact(ChunkParser<FactChunk>),
+    Ds64(ChunkParser<Ds64Chunk>),
     Data(ChunkParser<DataChunk>),
 }
 
@@ -635,6 +659,7 @@ impl ParseChunkTag for RiffWaveChunks {
             b"fmt " => parser!(RiffWaveChunks::Format, WaveFormatChunk, tag, len),
             b"LIST" => parser!(RiffWaveChunks::List, ListChunk, tag, len),
             b"fact" => parser!(RiffWaveChunks::Fact, FactChunk, tag, len),
+            b"ds64" => parser!(RiffWaveChunks::Ds64, Ds64Chunk, tag, len),
             b"data" => parser!(RiffWaveChunks::Data, DataChunk, tag, len),
             _ => None,
         }
@@ -655,8 +680,8 @@ impl ParseChunkTag for RiffInfoListChunks {
     }
 }
 
-pub fn append_fact_params(track: &mut Track, fact: &FactChunk) {
-    track.with_num_frames(u64::from(fact.num_frames));
+pub fn append_fact_params(track: &mut Track, num_frames: u64) {
+    track.with_num_frames(num_frames);
 }
 
 pub fn read_info_chunk(source: &mut MediaSourceStream<'_>, len: u32) -> Result<MetadataRevision> {
