@@ -213,7 +213,7 @@ impl ElementChannel {
                 .iter()
                 .rev()
                 .zip(&out[i - order..i])
-                .map(|(&coeff, &s)| coeff.wrapping_mul(s - past0))
+                .map(|(&coeff, &s)| coeff.wrapping_mul(s.wrapping_sub(past0)))
                 .fold(0i32, |sum, s| sum.wrapping_add(s));
 
             // Rewrite `1 << (self.shift - 1)` as `(1 << self.shift) >> 1` to prevent overflowing
@@ -230,12 +230,14 @@ impl ElementChannel {
                 if res > 0 {
                     // Positive residual case.
                     for (j, (coeff, &sample)) in iter {
-                        let val = past0 - sample;
+                        let val = past0.wrapping_sub(sample);
                         let sign = val.signum();
 
                         *coeff -= sign;
 
-                        res -= (1 + j as i32) * ((sign * val) >> self.shift);
+                        res = res.wrapping_sub(
+                            (1 + j as i32).wrapping_mul(sign.wrapping_mul(val) >> self.shift),
+                        );
 
                         if res <= 0 {
                             break;
@@ -245,12 +247,14 @@ impl ElementChannel {
                 else {
                     // Negative residual case.
                     for (j, (coeff, &sample)) in iter {
-                        let val = past0 - sample;
+                        let val = past0.wrapping_sub(sample);
                         let sign = val.signum();
 
                         *coeff += sign;
 
-                        res -= (1 + j as i32) * ((-sign * val) >> self.shift);
+                        res = res.wrapping_sub(
+                            (1 + j as i32).wrapping_mul((-sign).wrapping_mul(val) >> self.shift),
+                        );
 
                         if res >= 0 {
                             break;
@@ -668,5 +672,49 @@ fn decorrelate_mid_side(out0: &mut [i32], out1: &mut [i32], weight: i32, shift: 
     for (s0, s1) in out0.iter_mut().zip(out1.iter_mut()) {
         *s0 = *s0 + *s1 - ((*s1 * weight) >> shift);
         *s1 = *s0 - *s1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
+    use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoder};
+    use symphonia_core::errors::Result;
+    use symphonia_core::packet::Packet;
+    use symphonia_core::units::{Duration, Timestamp};
+
+    use super::AlacDecoder;
+
+    fn decode(cookie: &[u8], data: &[u8]) -> Result<()> {
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_ALAC).with_extra_data(cookie.into());
+
+        let mut decoder = AlacDecoder::try_new(&params, &Default::default())?;
+        let packet = Packet::new(0, Timestamp::ZERO, Duration::ZERO, data);
+
+        decoder.decode(&packet).map(|_| ())
+    }
+
+    #[test]
+    fn verify_predict_with_extreme_samples() {
+        // 32-bit mono. The difference between two samples in the predictor history does not fit
+        // in an i32, both in the FIR filter and when adapting the coefficients for a negative
+        // residual. Found by fuzzing.
+        let cookie = [
+            0x00, 0x00, 0x00, 0x11, 0x00, 0x20, 0x7c, 0x21, 0x01, 0x01, 0x00, 0xff, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xac, 0x44, //
+        ];
+        let data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x2f, 0x21, 0x0a, 0x00, 0x00, 0x00];
+
+        assert!(decode(&cookie, &data).is_ok());
+
+        // As above, but for a positive residual.
+        let cookie = [
+            0x00, 0x00, 0x2f, 0x0a, 0x00, 0x20, 0x7c, 0xa1, 0x21, 0x01, 0x00, 0xff, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xac, 0x44, //
+        ];
+        let data = [0x0a, 0x00, 0x00, 0x00, 0x01, 0xef, 0x82, 0x40, 0xbc, 0x21, 0xff, 0xb1, 0x00];
+
+        assert!(decode(&cookie, &data).is_ok());
     }
 }
