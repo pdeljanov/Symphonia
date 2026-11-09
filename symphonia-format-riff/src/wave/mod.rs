@@ -168,7 +168,14 @@ impl<'s> WavReader<'s> {
 
                     // Record the bounds of the data chunk.
                     let data_start_pos = mss.pos();
-                    let data_end_pos = data_len.map(|len| data_start_pos + len);
+                    // The ds64 data size is untrusted, so the end position may overflow.
+                    let data_end_pos = match data_len {
+                        Some(len) => match data_start_pos.checked_add(len) {
+                            Some(end) => Some(end),
+                            None => return decode_error("wav: data chunk length overflows"),
+                        },
+                        None => None,
+                    };
 
                     // Create the track.
                     let mut track = Track::new(0);
@@ -192,6 +199,13 @@ impl<'s> WavReader<'s> {
                     // Append Data chunk fields to track.
                     if let Some(data_len) = data_len {
                         append_data_params(&mut track, data_len, &packet_info);
+                    }
+
+                    // The ds64 sample count is exact, whereas the count derived from the data
+                    // length includes any padding in the last block of compressed audio.
+                    if let Some(ds64) = ds64.as_ref().filter(|ds64| ds64.sample_count > 0) {
+                        track.with_num_frames(ds64.sample_count);
+                        track.with_duration(Duration::from(ds64.sample_count));
                     }
 
                     // Instantiate the reader.
@@ -414,12 +428,12 @@ mod tests {
 
     /// An RF64-style file: sizes over 4 GB are written as u32::MAX. A chunk follows the audio, so
     /// reading past the ds64 data size would return it as samples.
-    fn rf64(marker: &[u8; 4], ds64: bool, fact: Option<u32>) -> Vec<u8> {
+    fn rf64(marker: &[u8; 4], ds64: Option<(u64, u64)>, fact: Option<u32>) -> Vec<u8> {
         let mut out = marker.to_vec();
         out.extend_from_slice(&u32::MAX.to_le_bytes());
         out.extend_from_slice(b"WAVE");
-        if ds64 {
-            out.extend(ds64_chunk(u64::from(NUM_FRAMES * BLOCK_ALIGN), u64::from(NUM_FRAMES)));
+        if let Some((data_size, sample_count)) = ds64 {
+            out.extend(ds64_chunk(data_size, sample_count));
         }
         out.extend(fmt_chunk());
         if let Some(num_frames) = fact {
@@ -431,6 +445,10 @@ mod tests {
         out.extend(chunk(b"junk", &[0x55; 64]));
         out
     }
+
+    /// The ds64 sizes that match `pcm()`.
+    const DS64: Option<(u64, u64)> =
+        Some(((NUM_FRAMES * BLOCK_ALIGN) as u64, NUM_FRAMES as u64));
 
     fn riff() -> Vec<u8> {
         let body = [b"WAVE".to_vec(), fmt_chunk(), chunk(b"data", &pcm())].concat();
@@ -457,25 +475,44 @@ mod tests {
 
     #[test]
     fn reads_rf64_sizes_from_ds64() {
-        assert_reads_pcm(rf64(b"RF64", true, None));
+        assert_reads_pcm(rf64(b"RF64", DS64, None));
     }
 
     #[test]
     fn reads_bw64() {
-        assert_reads_pcm(rf64(b"BW64", true, None));
+        assert_reads_pcm(rf64(b"BW64", DS64, None));
     }
 
     #[test]
     fn rf64_fact_uses_ds64_sample_count() {
-        assert_reads_pcm(rf64(b"RF64", true, Some(u32::MAX)));
+        assert_reads_pcm(rf64(b"RF64", DS64, Some(u32::MAX)));
     }
 
     #[test]
     fn rf64_without_ds64_is_an_error() {
-        let err = WavReader::try_new(mss(rf64(b"RF64", false, None)), FormatOptions::default())
+        let err = WavReader::try_new(mss(rf64(b"RF64", None, None)), FormatOptions::default())
             .err()
             .unwrap();
         assert!(err.to_string().contains("ds64"), "{err}");
+    }
+
+    #[test]
+    fn rf64_num_frames_uses_ds64_sample_count() {
+        // Compressed audio pads its last block, so the sample count is below what the data length
+        // implies.
+        let ds64 = Some(((NUM_FRAMES * BLOCK_ALIGN) as u64, NUM_FRAMES as u64 - 3));
+        let reader =
+            WavReader::try_new(mss(rf64(b"RF64", ds64, None)), FormatOptions::default()).unwrap();
+        assert_eq!(reader.tracks()[0].num_frames, Some(u64::from(NUM_FRAMES) - 3));
+    }
+
+    #[test]
+    fn rf64_overflowing_data_size_is_an_error() {
+        let ds64 = Some((u64::MAX, NUM_FRAMES as u64));
+        let err = WavReader::try_new(mss(rf64(b"RF64", ds64, None)), FormatOptions::default())
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("overflows"), "{err}");
     }
 
     #[test]
@@ -491,7 +528,7 @@ mod tests {
         let mut reader = probe
             .probe(
                 &Hint::new(),
-                mss(rf64(b"RF64", true, None)),
+                mss(rf64(b"RF64", DS64, None)),
                 FormatOptions::default(),
                 MetadataOptions::default(),
             )
