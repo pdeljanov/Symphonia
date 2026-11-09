@@ -263,6 +263,7 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
     }
 
     fn parse_aifc<B: ReadBytes>(self, reader: &mut B) -> Result<CommonChunk> {
+        let chunk_start = reader.pos();
         let num_channels = reader.read_be_u16()?;
         let num_sample_frames = reader.read_be_u32()?;
         let sample_size = reader.read_be_u16()?;
@@ -271,6 +272,15 @@ impl CommonChunkParser for ChunkParser<CommonChunk> {
 
         // Ignore the compression_name pascal string.
         ignore_pascal_string(reader)?;
+
+        // AIFC producers may append private data to COMM. The chunk reader has already
+        // accounted for the declared size, so consume any remaining bytes here before
+        // attempting to read the following chunk.
+        let consumed = reader.pos().saturating_sub(chunk_start);
+        if consumed > u64::from(self.len) {
+            return decode_error("aifc: malformed COMM chunk");
+        }
+        reader.ignore_bytes(u64::from(self.len) - consumed)?;
 
         let format_data = match &compression_type {
             b"none" | b"NONE" => CommonChunk::read_pcm_fmt(sample_size, num_channels),
