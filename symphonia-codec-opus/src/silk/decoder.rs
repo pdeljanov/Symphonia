@@ -158,13 +158,19 @@ impl Decoder {
     /// a stereo (`api_stereo`) or mono output stream, and returns whether a stereo stream just
     /// turned mono.
     ///
-    /// When a stereo frame follows a mono one, stereo output restarts the unmixing history from
-    /// zero and the side resampler from the mid one
-    /// ([RFC 6716 Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
+    /// A side channel that the previous frame did not code restarts as after a reset, so its next
+    /// frame skips the gain clamp and the NLSF interpolation
+    /// ([RFC 6716 Section 4.2.7.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>),
+    /// [Section 4.2.7.5.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.5>)).
+    /// Stereo output then restarts the unmixing history from zero and the side resampler from the
+    /// mid one ([Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
     fn begin_frame(&mut self, is_stereo: bool, api_stereo: bool) -> bool {
         let internal_channels = if is_stereo { 2 } else { 1 };
         let previous = self.prev_internal_channels;
         self.prev_internal_channels = internal_channels;
+        if internal_channels > previous {
+            self.channels[1].reset();
+        }
         if api_stereo && internal_channels == 2 && previous == 1 {
             self.stereo.reset_side();
             self.channels[1].core.resampler = self.channels[0].core.resampler;
@@ -570,6 +576,49 @@ mod tests {
             assert_eq!(reg.mid.sample_count, 160);
             assert_eq!(reg.mid.lsf_interpolation_index, Some(4));
         }
+    }
+
+    /// Decodes the regular frames of `payload` after the per-frame channel bookkeeping and
+    /// returns the side channel frame of the first one.
+    fn decode_side(decoder: &mut Decoder, payload: &[u8]) -> Frame {
+        decoder.begin_frame(true, true);
+        let mut side = None;
+        let mut dec = entropy::Decoder::new(payload);
+        decoder
+            .decode_opus_frame(&mut dec, true, |_, kind, _, pair| {
+                if kind != FrameKind::Lbrr && side.is_none() {
+                    side = pair.side.clone();
+                }
+                return Ok(());
+            })
+            .unwrap();
+        return side.unwrap();
+    }
+
+    /// A side channel that was not coded in the previous Opus frame starts its next coded frame
+    /// without the gain clamp and without NLSF interpolation, like after a reset
+    /// ([RFC 6716 Section 4.2.7.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>),
+    /// [Section 4.2.7.5.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.5>)):
+    /// after stereo, mono and stereo frames at one internal rate, the side channel decodes as in a
+    /// fresh decoder.
+    #[test]
+    fn side_channel_restarts_after_a_mono_frame() {
+        // TOC 0x2c: SILK-only mediumband 20 ms, stereo, one frame; the payload follows the TOC.
+        let stereo_0 = &crate::test_vectors::STEREO_MB.packets[0].packet[1..];
+        let stereo_1 = &crate::test_vectors::STEREO_MB.packets[1].packet[1..];
+        let mut out = [[0.0_f32; 960]; 2];
+
+        let mut switched =
+            create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        let mut dec = entropy::Decoder::new(stereo_0);
+        switched.decode_frame_planar(&mut dec, true, Planes::from_rows(&mut out, true)).unwrap();
+        switched.conceal_frame_planar(false, Planes::from_rows(&mut out, true)).unwrap();
+        let switched_side = decode_side(&mut switched, stereo_1);
+
+        let mut fresh = create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        let fresh_side = decode_side(&mut fresh, stereo_1);
+
+        assert_eq!(switched_side.output_pcm, fresh_side.output_pcm);
     }
 
     #[test]
