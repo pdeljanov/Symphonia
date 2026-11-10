@@ -34,10 +34,10 @@ Prefer deterministic bitstream and DSP transformations with explicit inputs and 
 
 | Principle | Requirement in `symphonia-codec-opus` |
 | :--- | :--- |
-| Deterministic DSP & Bitstream Core | Keep range decoding, parameter unpacking, LSF/LTP/LPC synthesis, and resampling deterministic with explicit state transitions. Use exact RFC 6716 fixed-point integer arithmetic (`Q7`, `Q8`, `Q10`, `Q12`, `Q14`, `Q15`, `Q16`, `Q23`) throughout all SILK stages (converting to `f32` only at the final output buffer), and use integer range/PVQ decoding paired with `f32` DSP (`symphonia_core::dsp::mdct::Imdct`) in CELT. |
+| Deterministic DSP & Bitstream Core | Keep range decoding, parameter unpacking, LSF/LTP/LPC synthesis, and resampling deterministic with explicit state transitions. Use exact RFC 6716 fixed-point integer arithmetic (`Q7`, `Q8`, `Q10`, `Q12`, `Q14`, `Q15`, `Q16`, `Q23`) throughout all SILK stages (converting to `f32` only at the final output buffer), and use integer range/PVQ decoding paired with `f32` DSP in CELT (CELT MDCT sizes `120 * 2^k` are not powers of two, so `symphonia_core::dsp::mdct::Imdct` cannot be used). |
 | Zero Per-Frame & Per-Packet Heap Allocation | Never allocate `Vec` in per-packet, per-frame, or per-subframe decode hot paths (`OpusDecoder::decode_ref`, `OpusDecoder::decode_lost_packet`, `silk::Decoder`, `celt::Decoder`). Use fixed-size RFC-bounded stack arrays (`MAX_SILK_FRAMES = 3`, `MAX_SUBFRAMES = 4`, `MAX_LPC_ORDER = 16`, `LTP_ORDER = 5`, `MAX_SUBFRAME_SAMPLES = 80`, `MAX_FRAME_SAMPLES = 320`, `MAX_PACKET_SAMPLES_48K = 5760`) and pre-allocated synthesis/scratch buffers (`DecodedOpusFrame`, `OpusDecoder::scratch_ch0`, `scratch_ch1`). |
 | Functional & Iterator-First Rust (Not C Clones) | Never write C-clone manual index loops (`while i < N`, element-by-element history shifts, or unrolled C pointer arithmetic) when Rust slice methods and iterator combinators express the operation cleanly. Use `std::array::from_fn`, `.iter()`, `.iter_mut()`, `.zip()`, `.enumerate()`, `.fold()`, `.take_while()`, `.for_each()`, `.chunks_exact()`, `.chunks_exact_mut()`, `.windows()`, `.fill()`, `.copy_from_slice()`, and `.copy_within()`. Deduplicate repeated DSP blocks into cohesive helper functions. |
-| Clean Code & Domain Naming | Use domain-specific RFC terminology (`toc`, `vad_flag`, `lbrr_flag`, `nlsf_q15`, `res_q10`, `ltp_coeffs`, `icdf`), named Q-format constants instead of magic numbers, cohesive functions, and flat control flow with early guard returns. |
+| Clean Code & Domain Naming | Use domain-specific RFC terminology (`toc`, `vad_flag`, `lbrr_flag`, `nlsf_q15`, `res_q10`, `ltp_coeffs`, `cdf`), named Q-format constants instead of magic numbers, cohesive functions, and flat control flow with early guard returns. |
 | SOLID & GRASP | Keep module responsibilities separated: `OpusDecoder` (`decoder.rs`) owns `FramePacket` parsing, `entropy::Decoder<'a>` instantiation over `&'a [u8]`, and the output `AudioBuffer<f32>`, passing `&mut entropy::Decoder<'_>` into `silk::Decoder` and `celt::Decoder`. Split `silk/` and `celt/` into focused submodules (`params`, `lsf`, `excitation`, `synthesis`, `resampler`, `plc`, `energy`, `rate`, `cwrs`, `vq`, `mdct`, `decoder`, `constant`, `error`). Do not introduce wrapper traits (such as `RangeDecoder`) when concrete `entropy::Decoder<'a>` over `&'a [u8]` suffices for both production and real-bitstream unit tests. |
 
 ## 4. `symphonia-codec-opus` code style and Rust conventions
@@ -53,10 +53,10 @@ All code in `symphonia-codec-opus/` must preserve the readability, transparency,
   - Shift delay lines and history buffers with `slice.copy_within(src_range, dst_start)` and clear buffers with `slice.fill(0)` rather than manual index-copy loops.
   - Express dot products, energy accumulations, and max-gain searches with `.iter().zip(...).fold(...)` or `.iter().enumerate().fold(...)`.
 - **Consistent Index Naming (`i`, `j`, `k`) & Minimal Type Casting**:
-  - Always name loop and closure index variables `i` (and `j`, `k` for nested loops). Never mix `idx`, `ix`, `s_idx`, `b_idx`, `frame_idx`, or `subframe_idx`.
+  - Always name loop and closure index variables `i` (and `j`, `k` for nested loops). Never use `ix` or any name containing `idx` (`idx`, `s_idx`, `b_idx`, `frame_idx`, `subframe_idx`, `idx0`).
   - Use `usize` natively for slice indices, band indices, and block sizes (`lm: usize`, `start_band: usize`, `end_band: usize`) to avoid noisy `as usize`, `as isize`, and `as i32` casts.
 - **Named Q-Format & Domain Constants (No Magic Numbers)**:
-  - Never write unexplained bit-shift or fixed-point magic numbers (`1 << 16`, `1 << 21`, `1 << 23`, `5`, `6`, `32767`) inline. Define named, documented constants that state the exact Q-format and RFC 6716 / `libopus` meaning (e.g., `UNIT_GAIN_Q16 = 1 << 16`, `CNG_HIGH_PLC_GAIN_THRES_Q16 = 1 << 21`, `CNG_HIGH_SMTH_GAIN_THRES_Q16 = 1 << 23`, `CNG_PLC_ENERGY_SUB_SHIFT = 5`, `Q16_TO_Q10_SHIFT = 6`).
+  - Never write unexplained bit-shift or fixed-point magic numbers (`1 << 16`, `1 << 21`, `1 << 23`, `5`, `6`, `32767`) inline. Define named, documented constants that state the exact Q-format and RFC 6716 meaning (e.g., `UNIT_GAIN_Q16 = 1 << 16`, `CNG_HIGH_PLC_GAIN_THRES_Q16 = 1 << 21`, `CNG_HIGH_SMTH_GAIN_THRES_Q16 = 1 << 23`, `CNG_PLC_ENERGY_SUB_SHIFT = 5`, `Q16_TO_Q10_SHIFT = 6`).
 - **Explicit `return` statements**:
   - Use explicit `return expr;` statements at the end of functions and methods (`return Ok(...);`, `return Err(...);`, `return value;`) rather than implicit tail expressions.
 - **RFC ASCII Diagrams & Doc Comments**:
@@ -71,8 +71,8 @@ All code in `symphonia-codec-opus/` must preserve the readability, transparency,
   - Use `TryFrom` and `From` (`TryFrom<u8>`, `TryFrom<&[u8]>`, `From<FrameDuration> for Duration`) for parsing and type conversions.
   - Use `#[repr(u32)]` / `#[repr(u64)]` enum discriminants when variants map directly to numeric constants (such as `Bandwidth` sample rates or `FrameDuration` nanoseconds).
 - **Codebooks & Constants**:
-  - Store RFC lookup tables, codebooks, and inverse CDFs (`ICDF_*`) in `symphonia-codec-opus/src/silk/constant.rs` (organized under domain submodules `header`, `gain`, `lsf`, `ltp`, `excitation`, `resampler` and re-exported at the `constant` root) and `symphonia-codec-opus/src/celt/constant.rs`.
-  - Use fixed-size arrays (`[[u8; 10]; 32]`, `[u32; N]`) rather than slice references (`&[u32]`), and keep `ICDF_*` arrays in the format `[total, cum_0, cum_1, ..., total]` (`total = 256`) expected by `entropy::Decoder::decode_symbol_with_icdf`.
+  - Store RFC lookup tables, codebooks, and cumulative distribution tables (`CDF_*`, built with `entropy::Cdf::new`) in `symphonia-codec-opus/src/silk/constant.rs` (organized under domain submodules `header`, `gain`, `lsf`, `ltp`, `excitation`, `resampler` and re-exported at the `constant` root) and `symphonia-codec-opus/src/celt/constant.rs`.
+  - Use fixed-size arrays (`[[u8; 10]; 32]`, `[u32; N]`) rather than slice references (`&[u32]`), and build every `CDF_*` constant as `Cdf::new(&[total, cum_0, cum_1, ..., total])` so the layout `[total, fh_0, ..., total]` is validated at compile time and consumed by `entropy::Decoder::decode_symbol` without per-call checks.
 - **Workspace Membership**:
   - `symphonia-codec-opus` is a member of the root Cargo workspace (`Cargo.toml`). Never add a `[workspace]` table to a member crate.
 
@@ -177,21 +177,21 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 ### 5.1 Core testing rules
 
 - **Reproduce before fixing**: Start every bug fix from a failing unit test or reproducing input whose failure was observed before modifying production code.
-- **Never weaken expectations**: Never edit a test assertion or expected vector merely to make a failing test pass. Update an expectation only when proven incorrect against RFC 6716, RFC 7845, RFC 8251, or the reference `xiph/opus` (`libopus`) C implementation, and cite the RFC section in the test or commit.
-- **Real Bitstreams & `libopus` C Oracle Ground Truth**: Do not use mock range decoders that bypass `entropy::Decoder` or ignore iCDF tables. Instead, feed real range-coded packet byte slices `&[u8]` (extracted from official RFC 6716 `opus_testvectors` or generated via a reference `libopus` C harness in `/tmp`) into `entropy::Decoder<'a>` and assert intermediate and final outputs (`vad_flags`, `lbrr_flags`, `stereo_weights`, `gain_q16`, `nlsf_q15`, `pitch_lag`, `ltp_coeffs`, `excitation`, and synthesized PCM) against exact ground-truth values dumped from `libopus`.
+- **Never weaken expectations**: Never edit a test assertion or expected vector merely to make a failing test pass. Update an expectation only when proven incorrect against RFC 6716 (the text or the normative Appendix A reference decoder), RFC 7845, or RFC 8251, and cite the RFC section in the test or commit. libopus mainline is not a source of truth.
+- **Real Bitstreams & RFC Reference Decoder Ground Truth**: Do not use mock range decoders that bypass `entropy::Decoder` or ignore iCDF tables. Instead, feed real range-coded packet byte slices `&[u8]` (extracted from official RFC 6716 `opus_testvectors` or generated with the RFC 6716 Appendix A reference decoder carrying the RFC 8251 patch, built in a scratch directory) into `entropy::Decoder<'a>` and assert intermediate and final outputs (`vad_flags`, `lbrr_flags`, `stereo_weights`, `gain_q16`, `nlsf_q15`, `pitch_lag`, `ltp_coeffs`, `excitation`, and synthesized PCM) against ground-truth values produced by that reference decoder.
 - **Compact, Readable Tests with Declarative Macros (`macro_rules!`) & `TestCase` Tables**:
   - Match the clarity and compactness of `toc.rs`, `header.rs`, and `packet.rs` tests.
-  - Eliminate repetitive decode-and-assert boilerplate using module-local declarative macros (`assert_mono_f32_packets!`, `assert_stereo_f32_packets!`, `assert_celt_frame_matches_oracle!`, `assert_plc_loss_steps!`, `assert_subframe_field!`), `TestCase` table structs, and stack-array helpers (`std::array::from_fn` instead of `.collect::<Vec<_>>()`).
-- **Keep tests self-contained and deterministic**: Embed extracted packet byte slices and expected C oracle values directly in `#[cfg(test)] mod tests` at the bottom of the owning module so unit tests execute with zero external network or filesystem dependencies.
+  - Eliminate repetitive decode-and-assert boilerplate using module-local declarative macros (`assert_mono_f32_packets!`, `assert_stereo_f32_packets!`, `assert_celt_frame_matches_reference!`, `assert_plc_loss_steps!`, `assert_subframe_field!`), `TestCase` table structs, and stack-array helpers (`std::array::from_fn` instead of `.collect::<Vec<_>>()`).
+- **Keep tests self-contained and deterministic**: Embed extracted packet byte slices and expected reference decoder values directly in `#[cfg(test)] mod tests` at the bottom of the owning module so unit tests execute with zero external network or filesystem dependencies.
 
 ### 5.2 Five testing layers
 
 | Layer | Scope | Required Pattern in `symphonia-codec-opus` |
 | :--- | :--- | :--- |
-| **1. Table & Constant Invariants** | `silk/constant.rs`, `celt/constant.rs` | Verify structural and mathematical invariants on all static RFC tables: iCDF format (`icdf[0] == 256`, `icdf.last() == Some(&256)`, strict cumulative monotonicity), codebook selector bounds (`0..16` for LSF Stage-2, `0..2` for prediction weights), permutation validity (LSF polynomial evaluation orderings), and symmetry/monotonicity of trigonometric lookup tables (Q12 cosine table). |
+| **1. Table & Constant Invariants** | `silk/constant.rs`, `celt/constant.rs` | Verify structural and mathematical invariants on all static RFC tables: CDF format (`cdf[0] == total`, `cdf.last() == Some(&total)`, strict cumulative monotonicity), codebook selector bounds (`0..16` for LSF Stage-2, `0..2` for prediction weights), permutation validity (LSF polynomial evaluation orderings), and symmetry/monotonicity of trigonometric lookup tables (Q12 cosine table). |
 | **2. Bitstream & Header Parsers** | `toc.rs`, `packet.rs`, `header.rs` | Use **table-driven exhaustive tests** (`TestCase` arrays covering all 32 TOC configs, bandwidths, frame durations, and code modes `0..=3`) and **fluent test builders** (`PacketBuilder`, `IdHeaderBuilder`, `CommentHeaderBuilder`) to construct valid and malformed binary inputs cleanly without opaque raw byte slices. |
 | **3. Boundary & Malformed Input Checks** | All parsers and decoders | Explicitly test every error variant in the module's `Error` enum: empty/truncated slices (`PacketTooShort`, `UnexpectedEof`), frame length overflow (`> 1275` bytes), multi-byte padding (`255` -> `254` bytes), total packet duration boundary (`<= 120_000 us` across `2.5 ms`..`60 ms` frames, `<= 48` frames), zero-length DTX frames, invalid magic signatures, unsupported versions, and invalid channel mappings. |
-| **4. Real-Packet Entropy & DSP Stage Tests** | `entropy.rs`, `silk/*`, `celt/*` | 1) In `entropy.rs`, test range decoder initialization, normalization (`rng`, `val`), final-byte LSB handling, `decode_symbol_with_icdf`, `decode_symbol_logp`, backward raw bits (`decode_raw_bits`), uniform uint (`decode_uint`), Laplace, and `tell`/`tell_frac` against `libopus` `ec_dec` reference outputs.<br>2) In `silk/` and `celt/`, feed real range-coded packet bytes (from RFC 6716 `opus_testvectors` and `libopus` `ec_enc`/encoder harnesses) through `entropy::Decoder<'a>` and assert bit-exact equality (`assert_eq!`) against `libopus` C oracle dumps for every stage (`decode_silk_header`, `decode_stereo_prediction_weights`, `decode_gains`, `decode_lsf`, `decode_ltp`, `decode_excitation`, `lsf_to_lpc`, `ltp_synthesis`, `lpc_synthesis`, stereo unmixing, resampling, coarse/fine energy, PVQ/CWRS, IMDCT, post-filter, PLC). |
+| **4. Real-Packet Entropy & DSP Stage Tests** | `entropy.rs`, `silk/*`, `celt/*` | 1) In `entropy.rs`, test range decoder initialization, normalization (`rng`, `val`), final-byte LSB handling, `decode_symbol`, `decode_symbol_logp`, backward raw bits (`decode_raw_bits`), uniform uint (`decode_uint`), Laplace, and `tell`/`tell_frac` against RFC 6716 Section 4.1 reference decoder outputs.<br>2) In `silk/` and `celt/`, feed real range-coded packet bytes (from RFC 6716 `opus_testvectors` and the RFC 6716 Appendix A reference encoder) through `entropy::Decoder<'a>` and assert bit-exact equality (`assert_eq!`) against reference decoder dumps for every stage (`decode_silk_header`, `decode_stereo_prediction_weights`, `decode_gains`, `decode_lsf`, `decode_ltp`, `decode_excitation`, `lsf_to_lpc`, `ltp_synthesis`, `lpc_synthesis`, stereo unmixing, resampling, coarse/fine energy, PVQ/CWRS, IMDCT, post-filter, PLC). |
 | **5. End-to-End Decoder & RFC Test Vectors** | `decoder.rs`, integration tests | Verify `OpusDecoder` lifecycle (`try_new`, `decode_ref`, `reset`, `finalize`, `last_decoded`) and validate full SILK, CELT, and Hybrid packet decoding against the official IETF RFC 6716 / RFC 8251 test vectors (`testvector01`..`testvector12`) using bit-exact internal parameter checks and the RFC 6716 Section 6.1 `opus_compare` quality metric. |
 
 ### 5.3 Mandatory verification gate
@@ -199,16 +199,16 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 Before reporting any Rust change complete or closing an issue, execute and pass all four checks:
 
 ```bash
-rg -n "else if|\b(ix|idx|s_idx|b_idx|frame_idx|subframe_idx)\b" symphonia-codec-opus/src/
+rg -n "else if|\bix\b|\w*idx\w*" symphonia-codec-opus/src/
 cargo test -p symphonia-codec-opus -- --test-threads=1
-cargo clippy -p symphonia-codec-opus --all-targets
-cargo doc -p symphonia-codec-opus --no-deps
+cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
+cargo doc -p symphonia-codec-opus --no-deps --document-private-items
 ```
 
-- `rg` must report `0` code matches for `else if` or non-standard index variable names (`ix`, `idx`, `s_idx`, `b_idx`, `frame_idx`, `subframe_idx`).
+- `rg` must report `0` matches for `else if`, `ix`, or any identifier containing `idx` (`idx`, `s_idx`, `block_idx`, `idx0`, and so on).
 - All unit, integration, and doc tests must pass (`0 failed`).
-- `cargo clippy` must introduce zero new warnings.
-- `cargo doc -p symphonia-codec-opus --no-deps` must complete with `0 warnings`.
+- `cargo clippy` must report zero warnings for this crate (`--no-deps` scopes the lints to it; `-D warnings` fails the gate on any).
+- `cargo doc -p symphonia-codec-opus --no-deps --document-private-items` must complete with `0 warnings`; the crate's modules are private, so the flag is what checks their intra-doc links.
 
 ## 6. Git, branch organization, and authorization
 
@@ -224,3 +224,5 @@ cargo doc -p symphonia-codec-opus --no-deps
   - Never commit with `git add -A` or broad snapshot commands; stage explicit file paths (`git add <path>`) and inspect `git diff --cached --stat` before committing.
   - Keep separate logical fixes or issues in separate commits when requested.
   - Never commit credentials, tokens, editor-generated changelogs (`CHANGELOG.md`), or temporary scratch files (`help.txt`) to tracked paths. Store disposable scripts or logs in untracked scratch locations only.
+  - NEVER include Claude/AI-related comments, attributions, co-author tags, or signatures in commit messages, PR descriptions, or code comments.
+
