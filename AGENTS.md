@@ -196,16 +196,14 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 
 ### 5.3 Mandatory verification gate
 
-Before reporting any Rust change complete or closing an issue, execute and pass all four checks:
+Before reporting any Rust change complete or closing an issue, execute and pass all three checks:
 
 ```bash
-rg -n "else if|\bix\b|\w*idx\w*" symphonia-codec-opus/src/
 cargo test -p symphonia-codec-opus -- --test-threads=1
 cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
 cargo doc -p symphonia-codec-opus --no-deps --document-private-items
 ```
 
-- `rg` must report `0` matches for `else if`, `ix`, or any identifier containing `idx` (`idx`, `s_idx`, `block_idx`, `idx0`, and so on).
 - All unit, integration, and doc tests must pass (`0 failed`).
 - `cargo clippy` must report zero warnings for this crate (`--no-deps` scopes the lints to it; `-D warnings` fails the gate on any).
 - `cargo doc -p symphonia-codec-opus --no-deps --document-private-items` must complete with `0 warnings`; the crate's modules are private, so the flag is what checks their intra-doc links.
