@@ -234,10 +234,12 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
     // are zeroed and do-not need anti-aliasing.
     let sb_rzero = channel.rzero / 18;
 
-    // The anti-aliasing filter must be applied up-to the last non-zero sub-band. After
+    // The anti-aliasing filter must be applied up-to the last non-zero long sub-band. After
     // anti-aliasing, the first zeroed sub-band may have non-zero values "smeared" into it.
-    // Therefore, the rzero must be updated.
-    channel.rzero = 18 * sb_limit.min(sb_rzero + 2).min(32);
+    let antialias_end = 18 * sb_limit.min(sb_rzero + 2).min(32);
+
+    // Extend rzero to cover possible smearing.
+    channel.rzero = channel.rzero.max(antialias_end);
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
@@ -264,7 +266,7 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
     //
     // Note that all butterfly calculations only involve two samples, and all iterations are
     // independant of each other. This lends itself well for SIMD processing.
-    for sb in (18..channel.rzero).step_by(18) {
+    for sb in (18..antialias_end).step_by(18) {
         for i in 0..8 {
             let li = sb - 1 - i;
             let ui = sb + i;
