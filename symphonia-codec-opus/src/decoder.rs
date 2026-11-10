@@ -640,7 +640,8 @@ impl StreamDecoder {
         mut out: Planes<'_>,
     ) -> Result<usize> {
         let samples = self.sample_rate.samples_per(config.duration);
-        let Some(bytes) = frame.filter(|b| !b.is_empty()) else {
+        // RFC 6716 Appendix A: a frame of at most one byte has no payload and is concealed.
+        let Some(bytes) = frame.filter(|b| b.len() > 1) else {
             return self.conceal_frame(config.duration, out);
         };
         let mut out = out.range(..samples);
@@ -1615,6 +1616,42 @@ mod tests {
         dec.decode_ref(&dtx_code1).unwrap();
         assert_eq!(dec.buffer.frames(), 960);
         assert!(dec.buffer.plane(0).unwrap().iter().all(|s| s.is_finite()));
+        return;
+    }
+
+    /// RFC 6716 Appendix A (`opus_decode_frame`): a frame of one byte carries no payload and is
+    /// decoded exactly like a lost frame, so its output must equal explicit loss concealment from
+    /// the same state and its final range state must be zero.
+    #[test]
+    fn one_byte_frame_is_concealed_like_a_lost_frame() {
+        let mut mono_params = AudioCodecParameters::new();
+        mono_params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
+        let active = PacketRef::new(
+            0,
+            Timestamp::from(0u32),
+            Duration::from(480u64),
+            CELT_MONO_FB_10MS.packets[0].packet,
+        );
+
+        let mut lost = OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
+        lost.decode_ref(&active).unwrap();
+        lost.decode_lost_packet().unwrap();
+        let concealed: Vec<f32> = lost.buffer.plane(0).unwrap().to_vec();
+
+        let mut one_byte =
+            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
+        one_byte.decode_ref(&active).unwrap();
+        let one_byte_frame = [CELT_MONO_FB_10MS.packets[0].packet[0], 0x00];
+        let pkt =
+            PacketRef::new(0, Timestamp::from(480u32), Duration::from(480u64), &one_byte_frame[..]);
+        one_byte.decode_ref(&pkt).unwrap();
+
+        assert_eq!(one_byte.buffer.frames(), 480);
+        assert_eq!(one_byte.final_range(), 0);
+        assert_eq!(one_byte.buffer.plane(0).unwrap(), &concealed[..]);
         return;
     }
 }
