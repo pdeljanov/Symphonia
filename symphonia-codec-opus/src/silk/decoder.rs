@@ -1,729 +1,571 @@
-//! SILK Frame Decoder Orchestration
+//! SILK frame decoder orchestration
+//! ([RFC 6716 Section 4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2>)).
 //!
-//! Coordinates multi-frame SILK header decoding, optional LBRR frame decoding,
-//! regular mid/side SILK frame decoding, and subframe synthesis (RFC 6716 Section 4.2).
+//! Decodes the header flags of an Opus frame, parses its LBRR frames, decodes and synthesises
+//! its regular frames, and unmixes, resamples and writes every frame pair as soon as it is
+//! decoded.
 
-use symphonia_core::audio::{Audio, AudioBuffer, Channels};
 use symphonia_core::errors::Result;
 
 use crate::entropy;
+use crate::planes::Planes;
+use crate::silk::error::Error;
+use crate::silk::excitation::{decode_excitation, decode_lcg_seed};
+use crate::silk::params::{
+    decode_frame_type, decode_mid_only_flag, decode_silk_header, decode_stereo_prediction_weights,
+};
+use crate::silk::synthesis::{
+    STEREO_HISTORY_SAMPLES, buffer_mono_mid, resample_to_f32, unmix_mid_side_to_left_right,
+};
 use crate::silk::{
-    CodingMode, DecodedOpusFrame, Frame, LpcOrder, MAX_SILK_FRAMES, SignalType,
-    SilkChannelFramePair, State, SubframeSize,
+    ChannelDecoder, CodingMode, CodingReferences, Frame, LAST_GAIN_INDEX_AFTER_RESET,
+    MAX_FRAME_SAMPLES, MAX_SILK_FRAMES, SignalType, SilkChannelFramePair, SilkHeaderFlags,
+    SilkLayout, StereoState, StereoWeights,
 };
 use crate::toc::{Bandwidth, FrameDuration};
 
-/// SILK layer decoder state and frame orchestrator.
-#[derive(Debug, Default)]
-pub struct Decoder {
-    pub(crate) state: State,
+/// Samples of one channel frame buffer for stereo unmixing: the two history samples followed
+/// by the decoded frame ([RFC 6716 Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
+const UNMIX_BUFFER_SAMPLES: usize = STEREO_HISTORY_SAMPLES + MAX_FRAME_SAMPLES;
+
+/// SILK layer decoder: configuration, the two channel states and the stereo unmixing state
+/// ([RFC 6716 Section 4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2>)).
+#[derive(Debug, Clone)]
+pub(crate) struct Decoder {
+    /// Frame geometry and bandwidth of the current Opus frame (RFC 6716 Section 4.2.2).
+    layout: SilkLayout,
+    /// Output sample rate of the resampler in Hz (RFC 6716 Section 4.2.9).
+    output_sample_rate: u32,
+    /// Mid (or mono) and side channel state.
+    channels: [ChannelDecoder; 2],
+    /// Coding references of the LBRR frames of the current Opus frame, a chain separate from the
+    /// regular frames (RFC 6716 Section 4.2.7.4).
+    lbrr_references: [CodingReferences; 2],
+    /// Stereo unmixing history (RFC 6716 Section 4.2.8).
+    stereo: StereoState,
+    /// Whether the previous regular frame coded the mid channel only (RFC 6716 Section 4.2.7.2).
+    prev_decode_only_middle: bool,
+    /// Coded channel count of the previous Opus frame (`0` before the first frame).
+    prev_internal_channels: usize,
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        return Self::new();
+    }
 }
 
 impl Decoder {
     /// Creates a new SILK layer decoder with default unconfigured state.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         return Self {
-            state: State::default(),
+            layout: SilkLayout::UNCONFIGURED,
+            output_sample_rate: 48_000,
+            channels: [ChannelDecoder::new(), ChannelDecoder::new()],
+            lbrr_references: [CodingReferences::new(); 2],
+            stereo: StereoState::new(),
+            prev_decode_only_middle: false,
+            prev_internal_channels: 0,
         };
     }
 
     /// Sets the target API output sample rate (`8000`, `12000`, `16000`, `24000`, or `48000` Hz).
-    pub fn set_output_sample_rate(&mut self, output_sample_rate: u32) {
-        self.state.output_sample_rate = output_sample_rate;
+    pub(crate) fn set_output_sample_rate(&mut self, output_sample_rate: u32) {
+        self.output_sample_rate = output_sample_rate;
     }
 
-    /// Resets the SILK decoder state across stream discontinuities.
-    pub fn reset(&mut self) {
-        self.state.reset();
+    /// Resets the SILK decoder state across stream discontinuities
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>),
+    /// [RFC 8251 Section 3](<https://datatracker.ietf.org/doc/html/rfc8251#section-3>)).
+    pub(crate) fn reset(&mut self) {
+        self.prev_decode_only_middle = false;
+        self.prev_internal_channels = 0;
+        self.stereo = StereoState::new();
+        self.channels.iter_mut().for_each(ChannelDecoder::reset);
+        self.lbrr_references = [CodingReferences::new(); 2];
     }
 
-    /// Reconfigures the SILK decoder state if the packet's frame size, bandwidth, or channel layout changed.
-    pub fn configure(
+    /// Configures the decoder for an Opus frame of `frame_duration` coded at `bandwidth` with
+    /// `coded_channels` (`1` or `2`) SILK channels
+    /// ([RFC 6716 Section 4.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>)).
+    ///
+    /// The coded channel count is decided per frame by the stereo flag of the TOC byte, so it
+    /// is accepted here only for symmetry with the caller and not stored.
+    pub(crate) fn configure(
         &mut self,
-        channels: Channels,
-        frame_size: FrameDuration,
+        coded_channels: usize,
+        frame_duration: FrameDuration,
         bandwidth: Bandwidth,
     ) -> Result<()> {
-        let output_sample_rate = self.state.output_sample_rate;
-        self.state
-            .configure(channels, frame_size, bandwidth, output_sample_rate)?;
-
+        debug_assert!(matches!(coded_channels, 1 | 2));
+        let layout = SilkLayout::new(bandwidth, frame_duration)?;
+        let output_sample_rate = self.output_sample_rate;
+        for channel in self.channels.iter_mut() {
+            channel.set_sample_rate(layout.sample_rate_khz(), output_sample_rate)?;
+        }
+        self.layout = layout;
         return Ok(());
     }
 
-    /// Conceals a single channel's lost SILK frame using `PlcState` and `CngState`.
-    fn conceal_channel_frame(
+    /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
+    /// when applicable, resamples to `output_sample_rate`, and writes `f32` PCM into the planar
+    /// output [`Planes`]. Returns the total number of samples per channel written.
+    pub(crate) fn decode_frame_planar(
         &mut self,
-        channel: usize,
-        sample_count: usize,
-        num_subframes: usize,
-        lpc_order: usize,
-    ) -> Result<Frame> {
-        let mut frame = Frame::new(sample_count, num_subframes, lpc_order);
-        let ch_state = &mut self.state.channel_states[channel];
-        let mut plc_state = ch_state.plc_state;
-        let mut cng_state = ch_state.cng_state;
+        range_decoder: &mut entropy::Decoder<'_>,
+        is_stereo: bool,
+        mut out: Planes<'_>,
+    ) -> Result<usize> {
+        let stereo_to_mono = self.begin_frame(is_stereo, out.is_stereo());
 
-        plc_state.conceal_lost_frame(
-            ch_state,
-            sample_count,
-            num_subframes,
-            lpc_order,
-            &mut frame.output_pcm[..sample_count],
-        );
-        cng_state.apply(
-            ch_state,
-            &plc_state,
-            None,
-            lpc_order,
-            &mut frame.output_pcm[..sample_count],
-        )?;
-        plc_state.glue_frames(&mut frame.output_pcm[..sample_count]);
+        let mut total_written = 0usize;
+        self.decode_opus_frame(range_decoder, is_stereo, |decoder, kind, i, pair| {
+            if kind == FrameKind::Lbrr {
+                return Ok(());
+            }
+            let stereo_to_mono = stereo_to_mono && i == 0;
+            let out = out.range(total_written..);
+            total_written += decoder.output_frame_pair(pair, is_stereo, stereo_to_mono, out)?;
+            return Ok(());
+        })?;
 
-        ch_state.last_gain_index = 10;
-        ch_state.plc_state = plc_state;
-        ch_state.cng_state = cng_state;
+        return Ok(total_written);
+    }
 
+    /// Conceals a lost or DTX SILK Opus frame with packet loss concealment and comfort noise,
+    /// unmixes stereo when applicable, and writes resampled `f32` PCM into the planar output
+    /// [`Planes`] (non-normative,
+    /// [RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+    pub(crate) fn conceal_frame_planar(
+        &mut self,
+        is_stereo: bool,
+        mut out: Planes<'_>,
+    ) -> Result<usize> {
+        let stereo_to_mono = self.begin_frame(is_stereo, out.is_stereo());
+
+        let mut total_written = 0usize;
+        for i in 0..self.layout.frame_count {
+            let pair = self.conceal_frame_pair(is_stereo)?;
+            let stereo_to_mono = stereo_to_mono && i == 0;
+            let out = out.range(total_written..);
+            total_written += self.output_frame_pair(&pair, is_stereo, stereo_to_mono, out)?;
+        }
+
+        return Ok(total_written);
+    }
+
+    /// Applies the coded channel count of the Opus frame about to be decoded or concealed, for
+    /// a stereo (`api_stereo`) or mono output stream, and returns whether a stereo stream just
+    /// turned mono.
+    ///
+    /// When a stereo frame follows a mono one, stereo output restarts the unmixing history from
+    /// zero and the side resampler from the mid one
+    /// ([RFC 6716 Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
+    fn begin_frame(&mut self, is_stereo: bool, api_stereo: bool) -> bool {
+        let internal_channels = if is_stereo { 2 } else { 1 };
+        let previous = self.prev_internal_channels;
+        self.prev_internal_channels = internal_channels;
+        if api_stereo && internal_channels == 2 && previous == 1 {
+            self.stereo.reset_side();
+            self.channels[1].core.resampler = self.channels[0].core.resampler;
+        }
+        return api_stereo && internal_channels == 1 && previous == 2;
+    }
+
+    /// Conceals one channel's lost SILK frame (non-normative,
+    /// [RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+    fn conceal_channel_frame(&mut self, channel: usize) -> Result<Frame> {
+        let layout = self.layout;
+        let mut frame = Frame::for_layout(&layout);
+        let sample_count = frame.sample_count;
+        self.channels[channel].conceal(&layout, &mut frame.output_pcm[..sample_count])?;
         return Ok(frame);
     }
 
-    /// Conceals a mid/side SILK frame pair for packet loss or DTX.
-    fn conceal_frame_pair(
-        &mut self,
-        is_stereo: bool,
-        sample_count: usize,
-        num_subframes: usize,
-        lpc_order: usize,
-    ) -> Result<SilkChannelFramePair> {
-        let mid = self.conceal_channel_frame(0, sample_count, num_subframes, lpc_order)?;
-
-        let side = if is_stereo && !self.state.prev_decode_only_middle {
-            Some(self.conceal_channel_frame(1, sample_count, num_subframes, lpc_order)?)
+    /// Conceals a mid/side SILK frame pair for packet loss or DTX; a side channel that the
+    /// previous frame left uncoded stays silent and restarts its gain reference
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+    fn conceal_frame_pair(&mut self, is_stereo: bool) -> Result<SilkChannelFramePair> {
+        let mid = self.conceal_channel_frame(0)?;
+        if is_stereo && self.prev_decode_only_middle {
+            self.channels[1].core.references.last_gain_index = LAST_GAIN_INDEX_AFTER_RESET;
+        }
+        let side = if is_stereo && !self.prev_decode_only_middle {
+            Some(self.conceal_channel_frame(1)?)
         } else {
-            if is_stereo {
-                self.state.channel_states[1].last_gain_index = 10;
-            }
             None
         };
-
-        return Ok(SilkChannelFramePair {
-            stereo_weights: None,
-            mid_only: self.state.prev_decode_only_middle,
-            mid,
-            side,
-        });
+        return Ok(SilkChannelFramePair { stereo_weights: None, mid, side });
     }
 
-    /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
-    /// when applicable, resamples to `output_sample_rate`, and writes `f32` PCM into planar
-    /// output slices `out_ch0` and `out_ch1`. Returns the total number of samples per channel written.
-    pub fn decode_frame_planar(
-        &mut self,
-        range_decoder: &mut entropy::Decoder<'_>,
-        is_stereo: bool,
-        out_ch0: &mut [f32],
-        mut out_ch1: Option<&mut [f32]>,
-    ) -> Result<usize> {
-        let api_channels = if out_ch1.is_some() { 2 } else { 1 };
-        let internal_channels = if is_stereo { 2 } else { 1 };
-        let stereo_to_mono = api_channels == 2
-            && internal_channels == 1
-            && self.state.prev_internal_channels == 2;
-
-        if api_channels == 2 && internal_channels == 2 && self.state.prev_internal_channels == 1 {
-            self.state.stereo_state.reset_side();
-            self.state.channel_states[1].resampler = self.state.channel_states[0].resampler;
-        }
-        self.state.prev_internal_channels = internal_channels;
-
-        let decoded_opus_frame = self.decode_opus_frame(range_decoder, is_stereo)?;
-        let mut total_written = 0usize;
-
-        for (i, regular_frame) in decoded_opus_frame.active_regular_frames().iter().enumerate() {
-            let ch1_slice = out_ch1
-                .as_deref_mut()
-                .map(|s| &mut s[total_written..]);
-            let n_out = self.output_frame_pair_planar(
-                regular_frame,
-                is_stereo,
-                stereo_to_mono && i == 0,
-                &mut out_ch0[total_written..],
-                ch1_slice,
-            )?;
-            total_written += n_out;
-        }
-
-        return Ok(total_written);
-    }
-
-    /// Conceals a lost or DTX SILK Opus frame using stateful Packet Loss Concealment (`PlcState`)
-    /// and Comfort Noise Generation (`CngState`), unmixes stereo when applicable, and writes
-    /// resampled `f32` PCM into planar slices `out_ch0` and `out_ch1`.
-    pub fn conceal_frame_planar(
-        &mut self,
-        is_stereo: bool,
-        out_ch0: &mut [f32],
-        mut out_ch1: Option<&mut [f32]>,
-    ) -> Result<usize> {
-        let api_channels = if out_ch1.is_some() { 2 } else { 1 };
-        let internal_channels = if is_stereo { 2 } else { 1 };
-        let stereo_to_mono = api_channels == 2
-            && internal_channels == 1
-            && self.state.prev_internal_channels == 2;
-        self.state.prev_internal_channels = internal_channels;
-
-        let num_silk_frames = State::silk_frame_count(self.state.frame_size)?;
-        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
-        let sample_count =
-            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
-        let num_subframes = SubframeSize::from(silk_frame_duration);
-        let lpc_order = LpcOrder::from(self.state.bandwidth);
-
-        let mut total_written = 0usize;
-        for i in 0..num_silk_frames {
-            let pair =
-                self.conceal_frame_pair(is_stereo, sample_count, num_subframes, lpc_order)?;
-
-            let ch1_slice = out_ch1
-                .as_deref_mut()
-                .map(|s| &mut s[total_written..]);
-            let n_out = self.output_frame_pair_planar(
-                &pair,
-                is_stereo,
-                stereo_to_mono && i == 0,
-                &mut out_ch0[total_written..],
-                ch1_slice,
-            )?;
-            total_written += n_out;
-        }
-
-        return Ok(total_written);
-    }
-
-    /// Conceals a lost or DTX SILK Opus frame and appends `f32` PCM to `buffer`.
-    pub fn decode_lost_frame(
-        &mut self,
-        is_stereo: bool,
-        buffer: &mut AudioBuffer<f32>,
-    ) -> Result<()> {
-        let api_channels = buffer.spec().channels().count();
-        let internal_channels = if is_stereo { 2 } else { 1 };
-        let stereo_to_mono = api_channels == 2
-            && internal_channels == 1
-            && self.state.prev_internal_channels == 2;
-        self.state.prev_internal_channels = internal_channels;
-
-        let num_silk_frames = State::silk_frame_count(self.state.frame_size)?;
-        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
-        let sample_count =
-            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
-        let num_subframes = SubframeSize::from(silk_frame_duration);
-        let lpc_order = LpcOrder::from(self.state.bandwidth);
-
-        for i in 0..num_silk_frames {
-            let pair =
-                self.conceal_frame_pair(is_stereo, sample_count, num_subframes, lpc_order)?;
-            self.output_frame_pair(&pair, is_stereo, stereo_to_mono && i == 0, buffer)?;
-        }
-
-        return Ok(());
-    }
-
-    /// Decodes a single Opus frame's SILK layer from `range_decoder`, unmixes Mid-Side stereo
-    /// when applicable, resamples to `output_sample_rate`, and appends `f32` PCM to `buffer`.
-    pub fn decode_frame(
-        &mut self,
-        range_decoder: &mut entropy::Decoder<'_>,
-        is_stereo: bool,
-        buffer: &mut AudioBuffer<f32>,
-    ) -> Result<()> {
-        let api_channels = buffer.spec().channels().count();
-        let internal_channels = if is_stereo { 2 } else { 1 };
-        let stereo_to_mono = api_channels == 2
-            && internal_channels == 1
-            && self.state.prev_internal_channels == 2;
-
-        if api_channels == 2 && internal_channels == 2 && self.state.prev_internal_channels == 1 {
-            self.state.stereo_state.reset_side();
-            self.state.channel_states[1].resampler = self.state.channel_states[0].resampler;
-        }
-        self.state.prev_internal_channels = internal_channels;
-
-        let decoded_opus_frame = self.decode_opus_frame(range_decoder, is_stereo)?;
-
-        for (i, regular_frame) in decoded_opus_frame.active_regular_frames().iter().enumerate() {
-            self.output_frame_pair(regular_frame, is_stereo, stereo_to_mono && i == 0, buffer)?;
-        }
-
-        return Ok(());
-    }
-
-    /// Decodes a single Opus frame payload (10, 20, 40, or 60 ms) containing 1 to 3 SILK frames.
+    /// Decodes a single Opus frame payload (10, 20, 40, or 60 ms) containing 1 to 3 SILK frames
+    /// ([RFC 6716 Section 4.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>)).
     ///
-    /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
-    pub fn decode_opus_frame(
+    /// LBRR frame pairs ([Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>))
+    /// are parsed against fresh coding references so the range decoder advances past them; the
+    /// regular frame pairs ([Section 4.2.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.6>))
+    /// are synthesised. Every frame pair is handed to `sink` with its kind and frame index
+    /// as soon as it is decoded, so only one pair is held at a time.
+    fn decode_opus_frame<F>(
         &mut self,
         range_decoder: &mut entropy::Decoder<'_>,
         is_stereo: bool,
-    ) -> Result<DecodedOpusFrame> {
-        let header = self.decode_silk_header(range_decoder, is_stereo, self.state.frame_size)?;
-        self.state.lbrr_flag = header.has_any_lbrr();
+        mut sink: F,
+    ) -> Result<SilkHeaderFlags>
+    where
+        F: FnMut(&mut Self, FrameKind, usize, &SilkChannelFramePair) -> Result<()>,
+    {
+        let header = decode_silk_header(range_decoder, is_stereo, self.layout.frame_count)?;
 
-        let silk_frame_duration = State::silk_frame_duration(self.state.frame_size)?;
+        self.lbrr_references = [CodingReferences::new(); 2];
+        self.parse_lbrr_frames(range_decoder, &header, is_stereo, &mut sink)?;
 
-        let mut lbrr_frames: [SilkChannelFramePair; MAX_SILK_FRAMES] =
-            std::array::from_fn(|_| SilkChannelFramePair::default());
-        let mut num_lbrr_frames = 0usize;
-
-        if header.has_any_lbrr() {
-            let saved_channel_states = self.state.channel_states;
-            let saved_prev_decode_only_middle = self.state.prev_decode_only_middle;
-            for ch_state in self.state.channel_states.iter_mut() {
-                ch_state.reset();
-            }
-            self.state.prev_decode_only_middle = false;
-
-            for i in 0..header.num_silk_frames {
-                if header.has_frame_lbrr(i) {
-                    let mid_coding_mode = if i > 0 && header.per_frame_lbrr[0][i - 1] {
-                        CodingMode::CodeConditionally
-                    } else {
-                        CodingMode::CodeIndependently
-                    };
-                    let side_coding_mode = if i == 0 || !header.per_frame_lbrr[1][i - 1] {
-                        CodingMode::CodeIndependently
-                    } else {
-                        CodingMode::CodeConditionally
-                    };
-                    lbrr_frames[num_lbrr_frames] = self.decode_silk_frame_pair(
-                        range_decoder,
-                        silk_frame_duration,
-                        is_stereo,
-                        header.per_frame_lbrr[0][i],
-                        header.per_frame_lbrr[1][i],
-                        true,
-                        true,
-                        mid_coding_mode,
-                        side_coding_mode,
-                    )?;
-                    num_lbrr_frames += 1;
-                }
-            }
-
-            self.state.channel_states = saved_channel_states;
-            self.state.prev_decode_only_middle = saved_prev_decode_only_middle;
+        for i in 0..header.num_silk_frames {
+            let plan = FramePairPlan::regular(&header, is_stereo, i, self.prev_decode_only_middle);
+            let pair = self.decode_silk_frame_pair(range_decoder, plan)?;
+            sink(self, plan.kind, i, &pair)?;
         }
 
-        let mut regular_frames: [SilkChannelFramePair; MAX_SILK_FRAMES] =
-            std::array::from_fn(|_| SilkChannelFramePair::default());
-        let num_regular_frames = header.num_silk_frames;
-
-        for (i, regular_slot) in regular_frames.iter_mut().enumerate().take(num_regular_frames) {
-            let mid_coding_mode = if i == 0 {
-                CodingMode::CodeIndependently
-            } else {
-                CodingMode::CodeConditionally
-            };
-            let side_coding_mode = match (i == 0, self.state.prev_decode_only_middle) {
-                (true, _) => CodingMode::CodeIndependently,
-                (false, true) => CodingMode::CodeIndependentlyNoLtpScaling,
-                (false, false) => CodingMode::CodeConditionally,
-            };
-            *regular_slot = self.decode_silk_frame_pair(
-                range_decoder,
-                silk_frame_duration,
-                is_stereo,
-                header.vad_flags[0][i],
-                header.vad_flags[1][i],
-                header.per_frame_lbrr[0][i] || header.per_frame_lbrr[1][i],
-                false,
-                mid_coding_mode,
-                side_coding_mode,
-            )?;
-        }
-
-        return Ok(DecodedOpusFrame {
-            header,
-            lbrr_frames,
-            num_lbrr_frames,
-            regular_frames,
-            num_regular_frames,
-        });
+        return Ok(header);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn decode_silk_frame_pair(
+    /// Parses every LBRR frame pair flagged in `header`, handing each to `sink`
+    /// ([RFC 6716 Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>)).
+    fn parse_lbrr_frames<F>(
         &mut self,
         range_decoder: &mut entropy::Decoder<'_>,
-        silk_frame_duration: FrameDuration,
+        header: &SilkHeaderFlags,
         is_stereo: bool,
-        mid_vad: bool,
-        side_vad: bool,
-        lbrr_flag: bool,
-        is_lbrr_frame: bool,
-        mid_coding_mode: CodingMode,
-        side_coding_mode: CodingMode,
+        sink: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(&mut Self, FrameKind, usize, &SilkChannelFramePair) -> Result<()>,
+    {
+        for i in (0..header.num_silk_frames).filter(|&i| header.has_frame_lbrr(i)) {
+            let plan = FramePairPlan::lbrr(header, is_stereo, i);
+            let pair = self.decode_silk_frame_pair(range_decoder, plan)?;
+            sink(self, FrameKind::Lbrr, i, &pair)?;
+        }
+        return Ok(());
+    }
+
+    /// Decodes one mid/side SILK frame pair according to `plan`
+    /// ([RFC 6716 Section 4.2.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7>)).
+    fn decode_silk_frame_pair(
+        &mut self,
+        range_decoder: &mut entropy::Decoder<'_>,
+        plan: FramePairPlan,
     ) -> Result<SilkChannelFramePair> {
-        let (stereo_weights, mid_only) = if is_stereo && (!is_lbrr_frame || mid_vad) {
-            let weights = self.decode_stereo_prediction_weights(range_decoder)?;
-            let mid_only_flag = self.decode_mid_only_flag(range_decoder, side_vad)?;
-            (Some(weights), mid_only_flag)
+        let is_lbrr = plan.kind == FrameKind::Lbrr;
+        let decode_mid = !is_lbrr || plan.mid_active;
+
+        let (stereo_weights, mid_only) = if plan.is_stereo && decode_mid {
+            let weights = decode_stereo_prediction_weights(range_decoder)?;
+            (Some(weights), decode_mid_only_flag(range_decoder, plan.side_active)?)
         } else {
             (None, false)
         };
 
-        let mut mid = if !is_lbrr_frame || mid_vad {
-            self.decode_single_silk_frame(
-                range_decoder,
-                0,
-                mid_coding_mode,
-                silk_frame_duration,
-                mid_vad,
-                lbrr_flag,
-                is_lbrr_frame,
-            )?
+        let layout = self.layout;
+        let mut mid = if decode_mid {
+            self.decode_single_silk_frame(range_decoder, 0, &plan, plan.mid_coding)?
         } else {
-            let sample_count =
-                State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
-            let num_subframes = SubframeSize::from(silk_frame_duration);
-            let lpc_order = LpcOrder::from(self.state.bandwidth);
-            Frame::new(sample_count, num_subframes, lpc_order)
+            Frame::for_layout(&layout)
         };
         mid.stereo_weights = stereo_weights;
         mid.mid_only = mid_only;
 
-        let decode_side = if is_lbrr_frame {
-            is_stereo && side_vad
-        } else {
-            is_stereo && !mid_only
+        let decode_side = match plan.kind {
+            FrameKind::Lbrr => plan.is_stereo && plan.side_active,
+            FrameKind::Regular { .. } => plan.is_stereo && !mid_only,
         };
-
+        if decode_side && !is_lbrr && self.prev_decode_only_middle {
+            self.channels[1].reset_after_mid_only();
+        }
         let side = if decode_side {
-            if !is_lbrr_frame && self.state.prev_decode_only_middle {
-                self.state.channel_states[1].reset_after_mid_only();
-            }
-            let mut side_frame = self.decode_single_silk_frame(
-                range_decoder,
-                1,
-                side_coding_mode,
-                silk_frame_duration,
-                side_vad,
-                lbrr_flag,
-                is_lbrr_frame,
-            )?;
-            side_frame.stereo_weights = stereo_weights;
-            side_frame.mid_only = mid_only;
-            Some(side_frame)
+            let mut side =
+                self.decode_single_silk_frame(range_decoder, 1, &plan, plan.side_coding)?;
+            side.stereo_weights = stereo_weights;
+            side.mid_only = mid_only;
+            Some(side)
         } else {
             None
         };
 
-        if is_stereo && !is_lbrr_frame {
-            self.state.prev_decode_only_middle = mid_only;
+        if plan.is_stereo && !is_lbrr {
+            self.prev_decode_only_middle = mid_only;
         }
 
-        return Ok(SilkChannelFramePair {
-            stereo_weights,
-            mid_only,
-            mid,
-            side,
-        });
+        return Ok(SilkChannelFramePair { stereo_weights, mid, side });
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn decode_single_silk_frame(
+    /// Decodes the parameters of one SILK channel frame and, for a regular frame, synthesises
+    /// its output ([RFC 6716 Section 4.2.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7>)).
+    /// An LBRR frame stops after excitation decoding: its parameters only advance the range
+    /// decoder ([Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>)).
+    fn decode_single_silk_frame(
         &mut self,
         range_decoder: &mut entropy::Decoder<'_>,
         channel: usize,
+        plan: &FramePairPlan,
         coding_mode: CodingMode,
-        silk_frame_duration: FrameDuration,
-        vad_flag: bool,
-        lbrr_flag: bool,
-        is_lbrr_frame: bool,
     ) -> Result<Frame> {
-        let sample_count =
-            State::calculate_frame_length(self.state.sample_rate, silk_frame_duration)?;
-        let num_subframes = SubframeSize::from(silk_frame_duration);
-        let lpc_order = LpcOrder::from(self.state.bandwidth);
-        let mut frame = Frame::new(sample_count, num_subframes, lpc_order);
+        let layout = self.layout;
+        let is_lbrr = plan.kind == FrameKind::Lbrr;
+        let vad_flag = match channel {
+            0 => plan.mid_active,
+            _ => plan.side_active,
+        };
+        let mut frame = Frame::for_layout(&layout);
         frame.vad_flag = vad_flag;
-        frame.lbrr_flag = lbrr_flag;
+        frame.lbrr_flag = match plan.kind {
+            FrameKind::Regular { lbrr_present } => lbrr_present,
+            FrameKind::Lbrr => true,
+        };
+        frame.frame_type = decode_frame_type(range_decoder, vad_flag, is_lbrr)?;
 
-        frame.frame_type = self.decode_frame_type(range_decoder, vad_flag, is_lbrr_frame)?;
-
-        self.decode_gains(range_decoder, &mut frame, channel, coding_mode)?;
-
-        self.decode_lsf(range_decoder, &mut frame, channel, silk_frame_duration)?;
-        if !is_lbrr_frame {
-            self.state.channel_states[channel]
-                .plc_state
-                .expand_lpc_after_loss(&mut frame);
-        }
-
+        let references = match plan.kind {
+            FrameKind::Lbrr => &mut self.lbrr_references[channel],
+            FrameKind::Regular { .. } => &mut self.channels[channel].core.references,
+        };
+        references.decode_gains(range_decoder, &mut frame, coding_mode)?;
+        references.decode_lsf(range_decoder, &mut frame, &layout)?;
         if frame.frame_type.signal_type == SignalType::Voiced {
-            self.decode_ltp(
-                range_decoder,
-                &mut frame,
-                channel,
-                coding_mode,
-                silk_frame_duration,
-            )?;
+            references.decode_ltp(range_decoder, &mut frame, &layout, coding_mode)?;
+        }
+        references.finish_frame(frame.frame_type.signal_type);
+        decode_lcg_seed(range_decoder, &mut frame)?;
+        decode_excitation(range_decoder, &mut frame)?;
+        if is_lbrr {
+            return Ok(frame);
         }
 
-        self.state.channel_states[channel].ec_prev_signal_type = frame.frame_type.signal_type;
-
-        self.decode_lcg_seed(range_decoder, &mut frame)?;
-
-        self.decode_excitation(range_decoder, &mut frame)?;
-
-        self.synthesize_channel_frame(&mut frame, channel)?;
-
-        if !is_lbrr_frame {
-            let ch_state = &mut self.state.channel_states[channel];
-            let mut plc_state = ch_state.plc_state;
-            let mut cng_state = ch_state.cng_state;
-            let mut pcm_buf = frame.output_pcm;
-            plc_state.update_from_decoded_frame(ch_state, &frame);
-            cng_state.apply(
-                ch_state,
-                &plc_state,
-                Some(&frame),
-                lpc_order,
-                &mut pcm_buf[..sample_count],
-            )?;
-            plc_state.glue_frames(&mut pcm_buf[..sample_count]);
-            frame.output_pcm[..sample_count].copy_from_slice(&pcm_buf[..sample_count]);
-            ch_state.plc_state = plc_state;
-            ch_state.cng_state = cng_state;
-        }
-
-        self.state.prev_frame_type = frame.frame_type;
-        self.state.channel_states[channel].prev_signal_type = frame.frame_type.signal_type;
-        self.state.channel_states[channel].first_frame_after_reset = false;
-
+        let decoder = &mut self.channels[channel];
+        decoder.plc.expand_lpc_after_loss(&mut frame);
+        decoder.core.synthesize_frame(&mut frame)?;
+        decoder.finish_decoded_frame(&mut frame)?;
         return Ok(frame);
+    }
+
+    /// Unmixes (or, for mono output, delays) a decoded frame pair, resamples it to the output
+    /// rate and writes it into `out`, returning the samples written per channel
+    /// ([RFC 6716 Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>),
+    /// [Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)). A mono
+    /// stream to stereo output is duplicated, except on the first frame after a stereo stream
+    /// turned mono at an unchanged internal rate, which the side resampler renders once more
+    /// (RFC 6716 Appendix A).
+    fn output_frame_pair(
+        &mut self,
+        pair: &SilkChannelFramePair,
+        is_stereo: bool,
+        stereo_to_mono: bool,
+        out: Planes<'_>,
+    ) -> Result<usize> {
+        let frame_length = pair.mid.sample_count;
+        if frame_length == 0 || frame_length > MAX_FRAME_SAMPLES {
+            return Err(Error::InvalidFrameSize.into());
+        }
+        let Planes { left, right } = out;
+        let [mid, side] = self.unmix_frame_pair(pair, is_stereo && right.is_some());
+
+        let delayed = 1..1 + frame_length;
+        let left_resampler = &mut self.channels[0].core.resampler;
+        let written = resample_to_f32(left_resampler, &mid[delayed.clone()], left)?;
+        let Some(right) = right else {
+            return Ok(written);
+        };
+        if right.len() < written {
+            return Err(Error::BufferOverflow.into());
+        }
+        let right_source = match (is_stereo, stereo_to_mono) {
+            (true, _) => &side,
+            (false, true) => &mid,
+            (false, false) => {
+                right[..written].copy_from_slice(&left[..written]);
+                return Ok(written);
+            }
+        };
+        resample_to_f32(&mut self.channels[1].core.resampler, &right_source[delayed], right)?;
+        return Ok(written);
+    }
+
+    /// Places the decoded mid and side frames after the two samples of stereo history and
+    /// unmixes them into left and right, or only delays the mid channel when `unmix` is off
+    /// ([RFC 6716 Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
+    fn unmix_frame_pair(
+        &mut self,
+        pair: &SilkChannelFramePair,
+        unmix: bool,
+    ) -> [[i16; UNMIX_BUFFER_SAMPLES]; 2] {
+        let frame_length = pair.mid.sample_count;
+        let frame = STEREO_HISTORY_SAMPLES..STEREO_HISTORY_SAMPLES + frame_length;
+        let mut mid = [0i16; UNMIX_BUFFER_SAMPLES];
+        let mut side = [0i16; UNMIX_BUFFER_SAMPLES];
+        mid[frame.clone()].copy_from_slice(&pair.mid.output_pcm[..frame_length]);
+        if let Some(side_frame) = &pair.side {
+            side[frame.clone()].copy_from_slice(&side_frame.output_pcm[..frame_length]);
+        }
+
+        let buffered = frame.end;
+        if !unmix {
+            buffer_mono_mid(&mut self.stereo, &mut mid[..buffered], frame_length);
+            return [mid, side];
+        }
+        let [w0_q13, w1_q13] = self.stereo.prediction_prev_q13;
+        let weights = pair.stereo_weights.unwrap_or(StereoWeights { w0_q13, w1_q13 });
+        let sample_rate_khz = self.channels[0].core.sample_rate_khz;
+        let (mid_frame, side_frame) = (&mut mid[..buffered], &mut side[..buffered]);
+        unmix_mid_side_to_left_right(
+            &mut self.stereo,
+            mid_frame,
+            side_frame,
+            weights,
+            sample_rate_khz,
+            frame_length,
+        );
+        return [mid, side];
+    }
+}
+
+/// Whether a SILK frame pair carries regular audio or LBRR redundancy
+/// ([RFC 6716 Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>),
+/// [Section 4.2.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.6>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameKind {
+    /// Regular frame; `lbrr_present` records whether either channel carried an LBRR frame for
+    /// the same interval ([Section 4.2.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>)).
+    Regular { lbrr_present: bool },
+    /// LBRR frame, parsed for its range decoder side effects only.
+    Lbrr,
+}
+
+/// Schedule of one mid/side SILK frame pair inside an Opus frame: which channels are coded and
+/// how each codes its gains, pitch lags and LTP scaling
+/// ([RFC 6716 Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>),
+/// [Section 4.2.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.6>),
+/// [Section 4.2.7.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FramePairPlan {
+    /// Whether the Opus frame codes a side channel.
+    is_stereo: bool,
+    kind: FrameKind,
+    /// VAD flag (regular, [Section 4.2.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3>))
+    /// or per-frame LBRR flag (LBRR, [Section 4.2.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>))
+    /// of the mid channel.
+    mid_active: bool,
+    /// The same flag for the side channel.
+    side_active: bool,
+    mid_coding: CodingMode,
+    side_coding: CodingMode,
+}
+
+impl FramePairPlan {
+    /// Plan of LBRR frame pair `i` ([RFC 6716 Section 4.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.5>)).
+    fn lbrr(header: &SilkHeaderFlags, is_stereo: bool, i: usize) -> Self {
+        let [mid, side] = &header.channels;
+        return Self {
+            is_stereo,
+            kind: FrameKind::Lbrr,
+            mid_active: mid.per_frame_lbrr[i],
+            side_active: side.per_frame_lbrr[i],
+            mid_coding: Self::lbrr_coding_mode(&mid.per_frame_lbrr, i),
+            side_coding: Self::lbrr_coding_mode(&side.per_frame_lbrr, i),
+        };
+    }
+
+    /// Plan of regular frame pair `i` ([RFC 6716 Section 4.2.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.6>));
+    /// the side channel loses LTP scaling when the previous pair coded the mid channel only
+    /// ([Section 4.2.7.6.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.3>)).
+    fn regular(
+        header: &SilkHeaderFlags,
+        is_stereo: bool,
+        i: usize,
+        prev_decode_only_middle: bool,
+    ) -> Self {
+        let [mid, side] = &header.channels;
+        let mid_coding = match i {
+            0 => CodingMode::Independent,
+            _ => CodingMode::Conditional,
+        };
+        let side_coding = match (i == 0, prev_decode_only_middle) {
+            (true, _) => CodingMode::Independent,
+            (false, true) => CodingMode::IndependentWithoutLtpScaling,
+            (false, false) => CodingMode::Conditional,
+        };
+        return Self {
+            is_stereo,
+            kind: FrameKind::Regular {
+                lbrr_present: mid.per_frame_lbrr[i] || side.per_frame_lbrr[i],
+            },
+            mid_active: mid.vad_flags[i],
+            side_active: side.vad_flags[i],
+            mid_coding,
+            side_coding,
+        };
+    }
+
+    /// An LBRR frame is coded conditionally when the same channel carried the previous LBRR
+    /// frame of the packet ([RFC 6716 Section 4.2.7.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>)).
+    fn lbrr_coding_mode(flags: &[bool; MAX_SILK_FRAMES], i: usize) -> CodingMode {
+        if i.checked_sub(1).is_some_and(|j| flags[j]) {
+            return CodingMode::Conditional;
+        }
+        return CodingMode::Independent;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
+    // normative (RFC 6716 Section 4.2) and is verified against the RFC 8251 test vectors by
+    // `tests/rfc6716_conformance.rs`.
     use super::*;
-    use crate::silk::{
-        FrameType, QuantizationOffsetType, StereoWeights, constant,
-    };
-    use symphonia_core::audio::Position;
+    use crate::silk::QuantizationOffsetType;
 
     fn create_test_silk_decoder(
         stereo: bool,
         frame_size: FrameDuration,
         bandwidth: Bandwidth,
     ) -> Decoder {
-        let channels = if stereo {
-            Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)
-        } else {
-            Channels::Positioned(Position::FRONT_LEFT)
-        };
+        let channels = if stereo { 2 } else { 1 };
         let mut decoder = Decoder::new();
         decoder.configure(channels, frame_size, bandwidth).unwrap();
         return decoder;
     }
 
-    macro_rules! assert_silk_gains {
-        (
-            $decoder:expr,
-            $dec:expr,
-            samples: $samples:expr,
-            subframes: $subframes:expr,
-            lpc_order: $lpc_order:expr,
-            mode: $mode:expr,
-            expected_log_gains: $expected_log:expr,
-            expected_gains_q16: $expected_q16:expr,
-            expected_last_idx: $expected_last:expr
-        ) => {{
-            let mut frame = Frame::new($samples, $subframes, $lpc_order);
-            frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
-            $decoder
-                .decode_gains(&mut $dec, &mut frame, 0, $mode)
-                .unwrap();
-            let log_gains: Vec<i32> = frame
-                .active_subframes()
-                .iter()
-                .map(|s| s.log_gain)
-                .collect();
-            let gains_q16: Vec<i32> = frame
-                .active_subframes()
-                .iter()
-                .map(|s| s.gain_q16)
-                .collect();
-            assert_eq!(log_gains.as_slice(), &$expected_log);
-            assert_eq!(gains_q16.as_slice(), &$expected_q16);
-            assert_eq!($decoder.state.channel_states[0].last_gain_index, $expected_last);
-        }};
-    }
-
-    macro_rules! assert_nlsf_to_lpc {
-        ($nlsf:expr, $expected_a_q12:expr, $expected_inv_gain:expr) => {{
-            let order = $expected_a_q12.len();
-            let a_q12 = Decoder::lsf_to_lpc(&$nlsf).unwrap();
-            assert_eq!(&a_q12[..order], &$expected_a_q12);
-            assert_eq!(
-                Decoder::lpc_inverse_pred_gain(&a_q12[..order]),
-                $expected_inv_gain
-            );
-        }};
-    }
-
-    macro_rules! assert_resampler_tail {
-        ($in_rate:expr, $out_rate:expr, $out_len:expr, $in_sig:expr, $expected_tail:expr) => {{
-            let mut resampler = crate::silk::resampler::ResamplerState::default();
-            resampler.init($in_rate, $out_rate).unwrap();
-            let mut out_buf = [0i16; $out_len];
-            resampler.resample(&mut out_buf, &$in_sig).unwrap();
-            assert_eq!(&out_buf[$out_len - 16..], &$expected_tail);
-        }};
-    }
-
-    #[test]
-    fn silk_header_mono_10ms_and_20ms_flags() {
-        // Range-coded by libopus ec_enc:
-        // HEADER_MONO_20MS_BYTES = [0x80]: [VAD_0 = 1, LBRR = 0]
-        // HEADER_MONO_10MS_LBRR_BYTES = [0x40]: [VAD_0 = 0, LBRR = 1] -> implicit per_frame_lbrr[0][0] = true
-        const HEADER_MONO_20MS_BYTES: [u8; 1] = [0x80];
-        const HEADER_MONO_10MS_LBRR_BYTES: [u8; 1] = [0x40];
-
-        let decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
-
-        let mut dec_20 = entropy::Decoder::new(&HEADER_MONO_20MS_BYTES).unwrap();
-        let header = decoder
-            .decode_silk_header(&mut dec_20, false, FrameDuration::Ms20)
-            .unwrap();
-
-        assert_eq!(header.num_channels, 1);
-        assert_eq!(header.num_silk_frames, 1);
-        assert_eq!(header.vad_flags[0], [true, false, false]);
-        assert!(!header.lbrr_flags[0]);
-        assert_eq!(header.per_frame_lbrr[0], [false, false, false]);
-        assert!(!header.has_any_lbrr());
-
-        let mut dec_10 = entropy::Decoder::new(&HEADER_MONO_10MS_LBRR_BYTES).unwrap();
-        let header_lbrr = decoder
-            .decode_silk_header(&mut dec_10, false, FrameDuration::Ms10)
-            .unwrap();
-
-        assert!(header_lbrr.lbrr_flags[0]);
-        assert_eq!(header_lbrr.per_frame_lbrr[0], [true, false, false]);
-        assert!(header_lbrr.has_any_lbrr());
-        assert!(header_lbrr.has_frame_lbrr(0));
-    }
-
-    #[test]
-    fn silk_header_mono_40ms_and_60ms_per_frame_lbrr_masks() {
-        // Range-coded by libopus ec_enc:
-        // HEADER_MONO_40MS_LBRR_BYTES = [0xa8]: VAD=[1, 0], LBRR=1, Table 4 sym=1 -> mask=2 (0b10)
-        // HEADER_MONO_60MS_LBRR_BYTES = [0xd8, 0x80]: VAD=[1, 1, 0], LBRR=1, Table 4 sym=4 -> mask=5 (0b101)
-        const HEADER_MONO_40MS_LBRR_BYTES: [u8; 1] = [0xa8];
-        const HEADER_MONO_60MS_LBRR_BYTES: [u8; 2] = [0xd8, 0x80];
-
-        let decoder = create_test_silk_decoder(false, FrameDuration::Ms40, Bandwidth::NarrowBand);
-
-        let mut dec_40 = entropy::Decoder::new(&HEADER_MONO_40MS_LBRR_BYTES).unwrap();
-        let header_40 = decoder
-            .decode_silk_header(&mut dec_40, false, FrameDuration::Ms40)
-            .unwrap();
-
-        assert_eq!(header_40.num_silk_frames, 2);
-        assert_eq!(header_40.vad_flags[0], [true, false, false]);
-        assert_eq!(header_40.per_frame_lbrr[0], [false, true, false]);
-        assert!(!header_40.has_frame_lbrr(0));
-        assert!(header_40.has_frame_lbrr(1));
-
-        let mut dec_60 = entropy::Decoder::new(&HEADER_MONO_60MS_LBRR_BYTES).unwrap();
-        let header_60 = decoder
-            .decode_silk_header(&mut dec_60, false, FrameDuration::Ms60)
-            .unwrap();
-
-        assert_eq!(header_60.num_silk_frames, 3);
-        assert_eq!(header_60.vad_flags[0], [true, true, false]);
-        assert_eq!(header_60.per_frame_lbrr[0], [true, false, true]);
-        assert!(header_60.has_frame_lbrr(0));
-        assert!(!header_60.has_frame_lbrr(1));
-        assert!(header_60.has_frame_lbrr(2));
-    }
-
-    #[test]
-    fn silk_header_stereo_60ms_8_bits_and_dual_channel_lbrr() {
-        // Range-coded by libopus ec_enc:
-        // Mid: VAD=[1, 0, 1], LBRR=1; Side: VAD=[0, 1, 0], LBRR=1;
-        // Mid Table 4 sym=0 -> mask=1 (0b001); Side Table 4 sym=5 -> mask=6 (0b110).
-        const HEADER_STEREO_60MS_LBRR_BYTES: [u8; 2] = [0xb5, 0x18];
-
-        let decoder = create_test_silk_decoder(true, FrameDuration::Ms60, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&HEADER_STEREO_60MS_LBRR_BYTES).unwrap();
-        let header = decoder
-            .decode_silk_header(&mut dec, true, FrameDuration::Ms60)
-            .unwrap();
-
-        assert_eq!(header.num_channels, 2);
-        assert_eq!(header.num_silk_frames, 3);
-        assert_eq!(header.vad_flags[0], [true, false, true]);
-        assert_eq!(header.vad_flags[1], [false, true, false]);
-        assert_eq!(header.lbrr_flags, [true, true]);
-        assert_eq!(header.per_frame_lbrr[0], [true, false, false]);
-        assert_eq!(header.per_frame_lbrr[1], [false, true, true]);
-        assert!(header.has_frame_lbrr(0));
-        assert!(header.has_frame_lbrr(1));
-        assert!(header.has_frame_lbrr(2));
-    }
-
-    #[test]
-    fn silk_stereo_prediction_weights_and_mid_only_flag_match_libopus() {
-        // Range-coded by libopus ec_enc and verified against silk_stereo_decode_pred & silk_stereo_decode_mid_only:
-        // n=7, i0=1, i1=2, i2=2, i3=0 -> w0_Q13 = -6783, w1_Q13 = 1033; mid_only = 1 (tell = 16).
-        const STEREO_WEIGHTS_AND_MID_ONLY_BYTES: [u8; 2] = [0x32, 0x1f];
-
-        let decoder = create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&STEREO_WEIGHTS_AND_MID_ONLY_BYTES).unwrap();
-
-        let weights = decoder.decode_stereo_prediction_weights(&mut dec).unwrap();
-        assert_eq!(
-            weights,
-            StereoWeights {
-                w0_q13: -6783,
-                w1_q13: 1033,
-            }
-        );
-
-        let tell_before_active_mid_only = dec.tell();
-        assert!(!decoder.decode_mid_only_flag(&mut dec, true).unwrap());
-        assert_eq!(dec.tell(), tell_before_active_mid_only);
-
-        assert!(decoder.decode_mid_only_flag(&mut dec, false).unwrap());
-        assert_eq!(dec.tell(), 16);
-    }
-
     #[test]
     fn silk_multi_frame_40ms_and_lbrr_full_opus_frame_decode() {
         // Range-coded 40 ms Mono NB frame with LBRR on frame 0 and 2 regular 20 ms frames:
-        const OPUS_FRAME_40MS_MONO_LBRR_BYTES: [u8; 10] = [
-            0x20, 0x04, 0x62, 0x4a, 0xb3, 0x7b, 0x7c, 0x70, 0x97, 0x80,
-        ];
+        const OPUS_FRAME_40MS_MONO_LBRR_BYTES: [u8; 10] =
+            [0x20, 0x04, 0x62, 0x4a, 0xb3, 0x7b, 0x7c, 0x70, 0x97, 0x80];
 
-        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms40, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&OPUS_FRAME_40MS_MONO_LBRR_BYTES).unwrap();
-        let decoded = decoder.decode_opus_frame(&mut dec, false).unwrap();
+        let mut decoder =
+            create_test_silk_decoder(false, FrameDuration::Ms40, Bandwidth::Narrowband);
+        let mut dec = entropy::Decoder::new(&OPUS_FRAME_40MS_MONO_LBRR_BYTES);
+        let mut lbrr: [Option<SilkChannelFramePair>; MAX_SILK_FRAMES] =
+            std::array::from_fn(|_| None);
+        let mut regular: [Option<SilkChannelFramePair>; MAX_SILK_FRAMES] =
+            std::array::from_fn(|_| None);
+        let header = decoder
+            .decode_opus_frame(&mut dec, false, |_, kind, i, pair| {
+                match kind {
+                    FrameKind::Lbrr => lbrr[i] = Some(pair.clone()),
+                    FrameKind::Regular { .. } => regular[i] = Some(pair.clone()),
+                }
+                return Ok(());
+            })
+            .unwrap();
 
-        assert_eq!(decoded.header.num_silk_frames, 2);
-        assert_eq!(decoded.active_lbrr_frames().len(), 1);
-        assert_eq!(decoded.active_regular_frames().len(), 2);
+        assert_eq!(header.num_silk_frames, 2);
+        assert_eq!(lbrr.iter().flatten().count(), 1);
+        assert_eq!(regular.iter().flatten().count(), 2);
 
-        assert_eq!(decoded.active_lbrr_frames()[0].mid.num_subframes, 4);
-        assert_eq!(decoded.active_lbrr_frames()[0].mid.sample_count, 160);
-        assert_eq!(
-            decoded.active_lbrr_frames()[0].mid.lsf_interpolation_index,
-            Some(4)
-        );
+        let lbrr_mid = &lbrr[0].as_ref().unwrap().mid;
+        assert_eq!(lbrr_mid.num_subframes, 4);
+        assert_eq!(lbrr_mid.sample_count, 160);
+        assert_eq!(lbrr_mid.lsf_interpolation_index, Some(4));
 
-        for reg in decoded.active_regular_frames() {
+        for reg in regular.iter().flatten() {
             assert_eq!(reg.mid.num_subframes, 4);
             assert_eq!(reg.mid.sample_count, 160);
             assert_eq!(reg.mid.lsf_interpolation_index, Some(4));
@@ -731,246 +573,46 @@ mod tests {
     }
 
     #[test]
-    fn silk_gains_independent_delta_clamping_and_log2lin_match_libopus() {
-        // Range-coded by libopus ec_enc and verified against silk_gains_dequant:
-        // Frame 1 (20ms Voiced, independent): gains_Q16 = [7929856, 4194304, 1048576000, 1686110208], last_idx = 63
-        // Frame 2 (10ms Voiced, independent): gains_Q16 = [135266304, 135266304], last_idx = 47
-        // Frame 3 (10ms Voiced, conditional): gains_Q16 = [83886080, 83886080], last_idx = 44
-        const GAINS_MULTI_FRAME_BYTES: [u8; 6] = [0x4a, 0x94, 0xce, 0xa2, 0xc2, 0xf8];
-
-        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&GAINS_MULTI_FRAME_BYTES).unwrap();
-
-        assert_silk_gains!(
-            decoder,
-            dec,
-            samples: 160,
-            subframes: 4,
-            lpc_order: 10,
-            mode: CodingMode::CodeIndependently,
-            expected_log_gains: [29, 25, 60, 63],
-            expected_gains_q16: [7_929_856, 4_194_304, 1_048_576_000, 1_686_110_208],
-            expected_last_idx: 63
-        );
-
-        assert_silk_gains!(
-            decoder,
-            dec,
-            samples: 80,
-            subframes: 2,
-            lpc_order: 10,
-            mode: CodingMode::CodeIndependently,
-            expected_log_gains: [47, 47],
-            expected_gains_q16: [135_266_304, 135_266_304],
-            expected_last_idx: 47
-        );
-
-        assert_silk_gains!(
-            decoder,
-            dec,
-            samples: 80,
-            subframes: 2,
-            lpc_order: 10,
-            mode: CodingMode::CodeConditionally,
-            expected_log_gains: [44, 44],
-            expected_gains_q16: [83_886_080, 83_886_080],
-            expected_last_idx: 44
-        );
-    }
-
-    #[test]
-    fn silk_lsf_stage1_stage2_backward_prediction_and_stabilization_match_libopus() {
-        // Range-coded by libopus ec_enc and verified against silk_NLSF_decode:
-        // Stage-2 symbols for i1 = 0 with extensions (+6 at k=8, -5 at k=9):
-        const LSF_STAGE2_NB_EXT_BYTES: [u8; 3] = [0xb6, 0x6e, 0x3b];
-        const EXPECTED_NLSF_Q15_NB: [i16; 10] = [
-            1547, 4508, 7814, 10871, 14261, 17641, 21363, 25184, 26336, 26339,
-        ];
-
-        let decoder_nb = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
-        let mut dec_nb = entropy::Decoder::new(&LSF_STAGE2_NB_EXT_BYTES).unwrap();
-        let (d_lpc_nb, res_q10_nb) = decoder_nb.decode_lsf_stage2(&mut dec_nb, 0).unwrap();
-        assert_eq!(d_lpc_nb, 10);
-        assert_eq!(res_q10_nb[9], -904);
-        assert_eq!(res_q10_nb[8], 511);
-
-        let mut nlsf_nb = decoder_nb.reconstruct_nlsf(d_lpc_nb, &res_q10_nb[..d_lpc_nb], 0).unwrap();
-        decoder_nb.stabilize_nlsf(&mut nlsf_nb[..d_lpc_nb]).unwrap();
-        assert_eq!(&nlsf_nb[..10], &EXPECTED_NLSF_Q15_NB);
-
-        // Test WB (16 coefficients) stabilization with pathological disordered input
-        let decoder_wb = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::WideBand);
-        let mut pathological_wb = [
-            32760, 10, 32700, 5, 20000, 100, 50, 40, 30, 20, 15, 12, 8, 4, 2, 0,
-        ];
-        decoder_wb.stabilize_nlsf(&mut pathological_wb).unwrap();
-        let min_delta_wb = &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB;
-        assert!(pathological_wb[0] as i32 >= min_delta_wb[0]);
-        for i in 1..16 {
-            assert!(
-                pathological_wb[i] as i32 - pathological_wb[i - 1] as i32 >= min_delta_wb[i],
-                "WB NLSF spacing violated at index {i}"
-            );
-        }
-        assert!((1 << 15) - (pathological_wb[15] as i32) >= min_delta_wb[16]);
-    }
-
-    #[test]
-    fn silk_lsf_4_subframe_interpolation_matches_libopus() {
-        // Range-coded by libopus ec_enc and verified against silk_NLSF_decode:
-        const LSF_INTERP_TWO_FRAMES_BYTES: [u8; 4] = [0x13, 0x8d, 0x29, 0x80];
-        const EXPECTED_F0_NLSF_Q15: [i16; 10] = [
-            1536, 4480, 7680, 10624, 13824, 16896, 20096, 23040, 26368, 29184,
-        ];
-        const EXPECTED_F1_NLSF_Q15: [i16; 10] = [
-            3840, 6272, 9600, 12416, 15488, 18176, 21120, 23808, 26752, 29312,
-        ];
-
-        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&LSF_INTERP_TWO_FRAMES_BYTES).unwrap();
-
-        let mut frame0 = Frame::new(160, 4, 10);
-        decoder
-            .decode_lsf(&mut dec, &mut frame0, 0, FrameDuration::Ms20)
-            .unwrap();
-        decoder.state.channel_states[0].first_frame_after_reset = false;
-
-        assert_eq!(frame0.lsf_interpolation_index, Some(4));
-        for sf in frame0.active_subframes() {
-            assert_eq!(sf.nlsf(10), &EXPECTED_F0_NLSF_Q15);
-        }
-
-        let mut frame1 = Frame::new(160, 4, 10);
-        decoder
-            .decode_lsf(&mut dec, &mut frame1, 0, FrameDuration::Ms20)
-            .unwrap();
-
-        assert_eq!(frame1.lsf_interpolation_index, Some(2));
-        assert_eq!(frame1.subframes[2].nlsf(10), &EXPECTED_F1_NLSF_Q15);
-        assert_eq!(frame1.subframes[3].nlsf(10), &EXPECTED_F1_NLSF_Q15);
-
-        for i in 0..10 {
-            let expected = EXPECTED_F0_NLSF_Q15[i]
-                + (((EXPECTED_F1_NLSF_Q15[i] as i32 - EXPECTED_F0_NLSF_Q15[i] as i32) * 2) >> 2) as i16;
-            assert_eq!(frame1.subframes[0].nlsf_q15[i], expected);
-            assert_eq!(frame1.subframes[1].nlsf_q15[i], expected);
-        }
-    }
-
-    #[test]
-    fn silk_pitch_lags_nb_mb_wb_absolute_relative_delta_and_ltp_scaling_match_libopus() {
-        const LTP_WB_THREE_FRAMES_BYTES: [u8; 8] = [0x39, 0x6f, 0x58, 0xee, 0x9c, 0x60, 0xe0, 0xf4];
-        const LTP_MB_10MS_BYTES: [u8; 3] = [0x0b, 0xd1, 0xc0];
-
-        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::WideBand);
-        let mut dec_wb = entropy::Decoder::new(&LTP_WB_THREE_FRAMES_BYTES).unwrap();
-
-        // 1. WB 20 ms independent voiced frame
-        let mut frame1 = Frame::new(320, 4, 16);
-        frame1.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
-        decoder
-            .decode_ltp(&mut dec_wb, &mut frame1, 0, CodingMode::CodeIndependently, FrameDuration::Ms20)
-            .unwrap();
-        decoder.state.channel_states[0].prev_signal_type = SignalType::Voiced;
-
-        assert_eq!(decoder.state.channel_states[0].prev_lag_index, 43);
-        assert_eq!(
-            frame1.active_subframes().iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
-            vec![74, 75, 76, 77]
-        );
-        assert_eq!(frame1.ltp_scale_q14, 8192);
-        assert!((frame1.ltp_scale - 0.5).abs() < f32::EPSILON);
-
-        // 2. Conditional voiced frame with relative delta pitch lag
-        let mut frame2 = Frame::new(320, 4, 16);
-        frame2.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
-        decoder
-            .decode_ltp(&mut dec_wb, &mut frame2, 0, CodingMode::CodeConditionally, FrameDuration::Ms20)
-            .unwrap();
-
-        assert_eq!(decoder.state.channel_states[0].prev_lag_index, 46);
-        assert_eq!(
-            frame2.active_subframes().iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
-            vec![78, 78, 78, 78]
-        );
-        assert_eq!(frame2.ltp_scale_q14, 15565);
-
-        // 3. Conditional voiced frame with delta_lag_index == 0 falling back to absolute lag
-        let mut frame3 = Frame::new(320, 4, 16);
-        frame3.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
-        decoder
-            .decode_ltp(&mut dec_wb, &mut frame3, 0, CodingMode::CodeConditionally, FrameDuration::Ms20)
-            .unwrap();
-
-        assert_eq!(
-            frame3.active_subframes().iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
-            vec![32, 32, 35, 41]
-        );
-
-        // 4. MediumBand 10 ms frame (2 subframes, scale = 6, min_lag = 24, max_lag = 216)
-        let mut decoder_mb = create_test_silk_decoder(false, FrameDuration::Ms10, Bandwidth::MediumBand);
-        let mut dec_mb = entropy::Decoder::new(&LTP_MB_10MS_BYTES).unwrap();
-        let mut frame_mb = Frame::new(120, 2, 10);
-        frame_mb.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::Low);
-        decoder_mb
-            .decode_ltp(&mut dec_mb, &mut frame_mb, 0, CodingMode::CodeIndependently, FrameDuration::Ms10)
-            .unwrap();
-
-        assert_eq!(
-            frame_mb.active_subframes().iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
-            vec![40, 43]
-        );
-        assert_eq!(frame_mb.ltp_scale_q14, 12288);
-    }
-
-    #[test]
-    fn real_libopus_encoded_wb_voiced_packet_matches_c_oracle() {
-        // Real 20 ms WideBand Mono Voiced SILK frame encoded by libopus opus_encode()
-        // from a 200 Hz harmonic speech-like signal (TOC = 0x48) and verified against
-        // C silk_decode_indices + silk_decode_parameters:
-        const REAL_LIBOPUS_WB_VOICED_FRAME: [u8; 26] = [
-            0x9e, 0xb1, 0x56, 0x16, 0x50, 0xf5, 0x07, 0xbc, 0x1e, 0x76, 0xe6, 0x1d, 0xe3,
-            0xe8, 0xf3, 0xe9, 0x8e, 0x07, 0x89, 0xf4, 0x49, 0xff, 0x51, 0x0d, 0x1d, 0x6b,
+    fn wideband_voiced_packet_decodes_to_recorded_values() {
+        // A 20 ms wideband mono voiced SILK frame (TOC = 0x48) encoded from a 200 Hz harmonic
+        // speech-like signal, and the parameters and output it decodes to:
+        const WB_VOICED_FRAME: [u8; 26] = [
+            0x9e, 0xb1, 0x56, 0x16, 0x50, 0xf5, 0x07, 0xbc, 0x1e, 0x76, 0xe6, 0x1d, 0xe3, 0xe8,
+            0xf3, 0xe9, 0x8e, 0x07, 0x89, 0xf4, 0x49, 0xff, 0x51, 0x0d, 0x1d, 0x6b,
         ];
         const EXPECTED_NLSF_Q15: [i16; 16] = [
             674, 1292, 2214, 4949, 6390, 9088, 11264, 13184, 15232, 17536, 19712, 21888, 24192,
             26240, 28416, 30336,
         ];
 
-        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::WideBand);
-        let mut dec = entropy::Decoder::new(&REAL_LIBOPUS_WB_VOICED_FRAME).unwrap();
+        let mut decoder = create_test_silk_decoder(false, FrameDuration::Ms20, Bandwidth::Wideband);
+        let layout = decoder.layout;
+        let core = &mut decoder.channels[0].core;
+        let mut dec = entropy::Decoder::new(&WB_VOICED_FRAME);
 
-        let header = decoder
-            .decode_silk_header(&mut dec, false, FrameDuration::Ms20)
-            .unwrap();
-        assert_eq!(header.vad_flags[0], [true, false, false]);
-        assert!(!header.lbrr_flags[0]);
+        let header = decode_silk_header(&mut dec, false, 1).unwrap();
+        assert_eq!(header.channels[0].vad_flags, [true, false, false]);
+        assert!(!header.channels[0].lbrr_flag);
 
         let mut frame = Frame::new(320, 4, 16);
-        frame.vad_flag = header.vad_flags[0][0];
-        frame.frame_type = decoder.decode_frame_type(&mut dec, true, false).unwrap();
+        frame.vad_flag = header.channels[0].vad_flags[0];
+        frame.frame_type = decode_frame_type(&mut dec, true, false).unwrap();
         assert_eq!(frame.frame_type.signal_type, SignalType::Voiced);
         assert_eq!(frame.frame_type.quantization_offset_type, QuantizationOffsetType::Low);
 
-        decoder
-            .decode_gains(&mut dec, &mut frame, 0, CodingMode::CodeIndependently)
-            .unwrap();
-        assert_eq!(decoder.state.channel_states[0].last_gain_index, 25);
+        core.references.decode_gains(&mut dec, &mut frame, CodingMode::Independent).unwrap();
+        assert_eq!(core.references.last_gain_index, 25);
         assert_eq!(
             frame.active_subframes().iter().map(|s| s.gain_q16).collect::<Vec<_>>(),
             vec![4_194_304, 4_194_304, 4_194_304, 4_194_304]
         );
 
-        decoder
-            .decode_lsf(&mut dec, &mut frame, 0, FrameDuration::Ms20)
-            .unwrap();
+        core.references.decode_lsf(&mut dec, &mut frame, &layout).unwrap();
         assert_eq!(frame.lsf_interpolation_index, Some(4));
-        assert_eq!(frame.subframes[0].nlsf(16), &EXPECTED_NLSF_Q15);
+        assert_eq!(frame.subframes[0].nlsf_q15[..16], EXPECTED_NLSF_Q15);
 
-        decoder
-            .decode_ltp(&mut dec, &mut frame, 0, CodingMode::CodeIndependently, FrameDuration::Ms20)
-            .unwrap();
-        assert_eq!(decoder.state.channel_states[0].prev_lag_index, 48);
+        core.references.decode_ltp(&mut dec, &mut frame, &layout, CodingMode::Independent).unwrap();
+        assert_eq!(core.references.prev_lag_index, 48);
         assert_eq!(
             frame.active_subframes().iter().map(|s| s.pitch_lag).collect::<Vec<_>>(),
             vec![80, 80, 80, 80]
@@ -982,151 +624,25 @@ mod tests {
             947, 963, 967, 958, 944, 919, 886, 845, 797, 749, 695, 639, 579, 520,
         ];
         const REAL_WB_LAST_32_PCM: [i16; 32] = [
-            40, -60, -139, -208, -306, -407, -495, -575, -649, -716, -784, -848, -888, -897,
-            -918, -948, -957, -968, -1000, -1027, -1054, -1115, -1160, -1192, -1258, -1320,
-            -1373, -1421, -1447, -1434, -1389, -1324,
+            40, -60, -139, -208, -306, -407, -495, -575, -649, -716, -784, -848, -888, -897, -918,
+            -948, -957, -968, -1000, -1027, -1054, -1115, -1160, -1192, -1258, -1320, -1373, -1421,
+            -1447, -1434, -1389, -1324,
         ];
         const REAL_WB_SLPC_Q14_BUF: [i32; 16] = [
             -245066, -247746, -256088, -262800, -269758, -285468, -296864, -305186, -322048,
             -337976, -351410, -363806, -370326, -366994, -355556, -339060,
         ];
 
-        decoder.decode_lcg_seed(&mut dec, &mut frame).unwrap();
+        decode_lcg_seed(&mut dec, &mut frame).unwrap();
         assert_eq!(frame.lcg_seed, 0);
 
-        decoder.decode_excitation(&mut dec, &mut frame).unwrap();
+        decode_excitation(&mut dec, &mut frame).unwrap();
         assert_eq!(dec.tell(), 209);
 
-        decoder
-            .synthesize_channel_frame(&mut frame, 0)
-            .unwrap();
+        core.synthesize_frame(&mut frame).unwrap();
         assert_eq!(&frame.output_pcm[..32], &REAL_WB_FIRST_32_PCM);
         assert_eq!(&frame.output_pcm[320 - 32..320], &REAL_WB_LAST_32_PCM);
-        assert_eq!(
-            &decoder.state.channel_states[0].s_lpc_q14_buf,
-            &REAL_WB_SLPC_Q14_BUF
-        );
-        assert_eq!(decoder.state.channel_states[0].lag_prev, 80);
-    }
-
-    #[test]
-    fn silk_nlsf2a_nb_wb_and_resonant_stabilization_match_libopus() {
-        // Generated from libopus 1.6.1 C silk_NLSF2A and silk_LPC_inverse_pred_gain_c:
-        const NLSF_Q15_NB: [i16; 10] = [
-            1547, 4508, 7814, 10871, 14261, 17641, 21363, 25184, 26336, 26339,
-        ];
-        const EXPECTED_A_Q12_NB: [i16; 10] = [
-            1545, 716, 1663, -2049, 2207, -1542, 1286, -805, 595, -332,
-        ];
-
-        const NLSF_Q15_WB: [i16; 16] = [
-            674, 1292, 2214, 4949, 6390, 9088, 11264, 13184, 15232, 17536, 19712, 21888, 24192,
-            26240, 28416, 30336,
-        ];
-        const EXPECTED_A_Q12_WB: [i16; 16] = [
-            7772, -3675, 43, -45, 264, -676, 460, -283, 541, -219, 61, -369, 301, -381, 139, 146,
-        ];
-
-        const NLSF_Q15_RESONANT: [i16; 10] = [100, 120, 140, 160, 180, 200, 220, 240, 260, 280];
-        const EXPECTED_A_Q12_RESONANT: [i16; 10] = [
-            16591, -30244, 32672, -23164, 11261, -3802, 880, -134, 12, -1,
-        ];
-
-        assert_nlsf_to_lpc!(NLSF_Q15_NB, EXPECTED_A_Q12_NB, 3_238_224);
-        assert_nlsf_to_lpc!(NLSF_Q15_WB, EXPECTED_A_Q12_WB, 864_548);
-        assert_nlsf_to_lpc!(NLSF_Q15_RESONANT, EXPECTED_A_Q12_RESONANT, 386_396);
-    }
-
-    #[test]
-    fn silk_excitation_shell_splits_lsb_escape_and_signs_match_libopus() {
-        // Bitstream encoded by libopus C silk_encode_pulses covering:
-        // - block 0: pulse_count = 0 with lsb_count = 1 (escape 17 -> 0, LSB-only pulses + signs)
-        // - block 1: pulse_count = 4
-        // - block 2: pulse_count = 0, lsb_count = 0 (all-zero block)
-        // - block 3: pulse_count = 7 with lsb_count = 2 (double escape 17 -> 17 -> 7)
-        // - block 4: pulse_count = 12 (dense shell split)
-        const EXCITATION_TEST_BYTES: [u8; 25] = [
-            0xa5, 0x77, 0x85, 0xab, 0xf8, 0xf2, 0x89, 0xdb, 0xac, 0xa9, 0x0e, 0xcf, 0xec, 0x43,
-            0xbc, 0xb5, 0x5f, 0x16, 0x0f, 0x72, 0xaf, 0xa7, 0x7c, 0xc4, 0x80,
-        ];
-        const EXPECTED_DECODED_PULSES: [i16; 80] = [
-            -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 1, 0, 2, 0, 0, -1, 0, 0, 0, 0, 1,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 2, -3, 4, 1, -2,
-            3, 0, -1, 2, 3, 0, 1, 2, -7, -2, 1, 0, 1, -1, 0, -2, 0, -1, 1, 0, 0, -1, 0, -1, 1,
-        ];
-
-        let mut decoder =
-            create_test_silk_decoder(false, FrameDuration::Ms10, Bandwidth::NarrowBand);
-        let mut dec = entropy::Decoder::new(&EXCITATION_TEST_BYTES).unwrap();
-        let mut frame = Frame::new(80, 2, 10);
-        frame.frame_type = FrameType::new(SignalType::Voiced, QuantizationOffsetType::High);
-
-        decoder.decode_lcg_seed(&mut dec, &mut frame).unwrap();
-        assert_eq!(frame.lcg_seed, 2);
-
-        decoder.decode_excitation(&mut dec, &mut frame).unwrap();
-        assert_eq!(dec.tell(), 193);
-        assert_eq!(&frame.pulses[..80], &EXPECTED_DECODED_PULSES);
-    }
-
-    #[test]
-    fn silk_stereo_ms_to_lr_and_resampler_modes_match_libopus() {
-        const EXPECTED_STEREO_LEFT: [i16; 16] = [
-            -594, -1014, 1478, -861, 406, -183, -967, 1568, -465, 673, -3352, 3939, -1276, 1470,
-            -5677, 6250,
-        ];
-        const EXPECTED_STEREO_RIGHT: [i16; 16] = [
-            -246, -1386, 288, -271, 92, 319, 197, -164, -1573, 1999, 46, 1, -3298, 3738, -165, 226,
-        ];
-        const EXPECTED_RESAMP_8_TO_16_TAIL: [i16; 16] = [
-            3819, 4356, 4647, 4591, 4133, 3279, 2094, 701, -745, -2085, -3176, -3920, -4275,
-            -4262, -3957, -3473,
-        ];
-        const EXPECTED_RESAMP_16_TO_8_TAIL: [i16; 16] = [
-            4383, 829, -468, -1852, -4765, -3335, 1948, 3713, 2445, 2516, 728, -4079, -4964,
-            -1025, 1123, 1766,
-        ];
-        const EXPECTED_RESAMP_16_TO_12_TAIL: [i16; 16] = [
-            -2456, 1230, 3540, 3513, 2585, 2376, 2525, 1311, -1750, -4749, -5277, -3110, -368,
-            997, 1279, 2097,
-        ];
-
-        let mut decoder = create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
-        decoder.state.stereo_state.pred_prev_q13 = [-1524, 2816];
-        decoder.state.stereo_state.s_mid = [310, -420];
-        decoder.state.stereo_state.s_side = [95, -110];
-
-        let mut x_mid = [0i16; 18];
-        let mut x_side = [0i16; 18];
-        for i in 0..16 {
-            let sign_m = if (i & 1) != 0 { -1 } else { 1 };
-            let sign_s = if (i & 2) != 0 { 1 } else { -1 };
-            x_mid[i + 2] = ((i as i32 * 317 - 1200) * sign_m) as i16;
-            x_side[i + 2] = ((i as i32 * 193 - 500) * sign_s) as i16;
-        }
-        Decoder::unmix_mid_side_to_left_right(
-            &mut decoder.state.stereo_state,
-            &mut x_mid,
-            &mut x_side,
-            crate::silk::StereoWeights {
-                w0_q13: 3120,
-                w1_q13: -1840,
-            },
-            12,
-            16,
-        );
-        assert_eq!(&x_mid[1..17], &EXPECTED_STEREO_LEFT);
-        assert_eq!(&x_side[1..17], &EXPECTED_STEREO_RIGHT);
-
-        let in_sig: [i16; 80] = std::array::from_fn(|i| {
-            let v = 4000.0 * (2.0 * std::f64::consts::PI * i as f64 / 16.0).sin()
-                + 1500.0 * (2.0 * std::f64::consts::PI * i as f64 / 7.0).cos();
-            v as i16
-        });
-
-        assert_resampler_tail!(8000, 16000, 160, in_sig, EXPECTED_RESAMP_8_TO_16_TAIL);
-        assert_resampler_tail!(16000, 8000, 40, in_sig, EXPECTED_RESAMP_16_TO_8_TAIL);
-        assert_resampler_tail!(16000, 12000, 60, in_sig, EXPECTED_RESAMP_16_TO_12_TAIL);
+        assert_eq!(&core.lpc_state_q14, &REAL_WB_SLPC_Q14_BUF);
+        assert_eq!(core.prev_pitch_lag, 80);
     }
 }
-

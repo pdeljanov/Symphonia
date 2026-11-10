@@ -1,23 +1,18 @@
-//! Combinatorial Waveform / Pyramid Vector Quantizer (PVQ) Pulse Indexing (RFC 6716 Section 4.3.4.1)
+//! CELT pulse vector decoding
+//! ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
 //!
-//! In CELT, the normalized spectral shape of an $N$-dimensional partition with $K$ pulses is
-//! represented by an integer pulse vector $\mathbf{y} \in \mathbb{Z}^N$ on the $L_1$-pyramid:
+//! The shape of a band of `N` coefficients carrying `K` pulses is an integer vector `X` with
+//! `|X[0]| + ... + |X[N - 1]| = K`. Its index is decoded as a uniform integer below `V(N, K)`,
+//! the number of such vectors, and unranked one coefficient at a time. RFC 6716 allows any
+//! method equivalent to the recursive definition of `V`; this module counts with the symmetric
+//! auxiliary `U(N, K) = U(K, N)`, which keeps every intermediate value within 32 bits:
 //!
-//! $$\sum_{i=0}^{N-1} |y_i| = K$$
-//!
-//! The number of distinct signed pulse codewords is $V(N, K)$, which satisfies the recurrence:
-//!
-//! $$V(N, K) = V(N - 1, K) + V(N, K - 1) + V(N - 1, K - 1)$$
-//!
-//! To enumerate and unpack codewords in 32-bit unsigned arithmetic without overflow or division,
-//! RFC 6716 defines the symmetric auxiliary function $U(N, K) = U(K, N)$:
-//!
-//! $$U(N, K) = \sum_{m=0}^{K-1} V(N - 1, m), \quad V(N, K) = U(N, K) + U(N, K + 1)$$
-//!
-//! where $U(N, K + 1)$ counts codewords with $y_0 \ge 0$ and $U(N, K)$ counts codewords with $y_0 < 0$.
-//!
-//! <https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>
+//! ```text
+//!   V(N, K) = V(N - 1, K) + V(N, K - 1) + V(N - 1, K - 1)    V(N, 0) = 1, V(0, K) = 0 for K > 0
+//!   U(N, K) = V(N - 1, 0) + ... + V(N - 1, K - 1)            V(N, K) = U(N, K) + U(N, K + 1)
+//! ```
 
+// The `U(N, K)` table is a lookup table read by index.
 #![allow(clippy::large_const_arrays)]
 
 use symphonia_core::errors::Result;
@@ -25,17 +20,16 @@ use symphonia_core::errors::Result;
 use crate::celt::error::Error;
 use crate::entropy::Decoder;
 
-/// Row starting offsets into [`CELT_PVQ_U_DATA`], shifted by `-row` so that
-/// `CELT_PVQ_U_DATA[(CELT_PVQ_U_ROW_OFFSETS[row] + col as isize) as usize]` yields $U(\text{row}, \text{col})$
-/// for $0 \le \text{row} \le 14$ and $\text{row} \le \text{col}$.
-const CELT_PVQ_U_ROW_OFFSETS: [isize; 15] = [
-    0, 176, 351, 525, 698, 870, 1041, 1131, 1178, 1207, 1226, 1240, 1248, 1254, 1257,
-];
+/// Start of each row of [`PVQ_U_DATA`]: `PVQ_U_DATA[PVQ_U_ROW_START[row] + (col - row)]` is
+/// `U(row, col)` for `row <= 14` and `row <= col`.
+const PVQ_U_ROW_START: [usize; 15] =
+    [0, 177, 353, 528, 702, 875, 1047, 1138, 1186, 1216, 1236, 1251, 1260, 1267, 1271];
 
-/// Precomputed upper-triangular values of $U(N, K)$ for $0 \le N \le 14$ and $N \le K \le 176$
-/// where $V(N, K) < 2^{32}$ (`CELT_PVQ_U_DATA` from `cwrs.c`, RFC 6716 Section 4.3.4.1).
+/// Upper-triangular values of `U(N, K)` for `N <= 14` and `N <= K <= 176`, the range in which
+/// `V(N, K)` fits in 32 bits
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
 #[rustfmt::skip]
-pub const CELT_PVQ_U_DATA: [u32; 1272] = [
+pub(crate) const PVQ_U_DATA: [u32; 1272] = [
     // N = 0, K = 0..=176
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -173,37 +167,33 @@ pub const CELT_PVQ_U_DATA: [u32; 1272] = [
     1409933619,
 ];
 
-/// Returns the PVQ combinatorial offset $U(n, k) = U(k, n)$ (`CELT_PVQ_U` in `cwrs.c`,
-/// RFC 6716 Section 4.3.4.1).
-///
-/// For $n > 0$ and $k > 0$, $U(n, k)$ equals the number of $n$-dimensional pulse codewords
-/// where the first coordinate is strictly negative (or equivalently $\sum_{m=0}^{k-1} V(n - 1, m)$).
+/// The counting function `U(n, k) = U(k, n)`: for `n > 0` and `k > 0`, the number of
+/// `n`-dimensional pulse codewords whose first coordinate is negative, which equals
+/// `V(n - 1, 0) + ... + V(n - 1, k - 1)`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
 #[inline]
-pub const fn celt_pvq_u(n: usize, k: usize) -> u32 {
+pub(crate) const fn pvq_count_u(n: usize, k: usize) -> u32 {
     let (row, col) = if n < k { (n, k) } else { (k, n) };
     return match row {
         0 => (col == 0) as u32,
         1 => 1,
         2 => (2 * col - 1) as u32,
-        _ => {
-            let offset = (CELT_PVQ_U_ROW_OFFSETS[row] + col as isize) as usize;
-            CELT_PVQ_U_DATA[offset]
-        }
+        _ => PVQ_U_DATA[PVQ_U_ROW_START[row] + (col - row)],
     };
 }
 
-/// Returns the PVQ codebook cardinality $V(n, k) = U(n, k) + U(n, k + 1)$ (`CELT_PVQ_V` in `cwrs.c`,
-/// RFC 6716 Section 4.3.4.1), i.e., the number of $n$-dimensional signed integer vectors $\mathbf{y}$
-/// satisfying $\sum_{i=0}^{n-1} |y_i| = k$.
+/// The number of codewords `V(n, k) = U(n, k) + U(n, k + 1)`: the `n`-dimensional integer
+/// vectors `y` with `|y[0]| + ... + |y[n - 1]| = k`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
 #[inline]
-pub const fn celt_pvq_v(n: usize, k: usize) -> u32 {
-    return celt_pvq_u(n, k).wrapping_add(celt_pvq_u(n, k + 1));
+pub(crate) const fn pvq_count_v(n: usize, k: usize) -> u32 {
+    return pvq_count_u(n, k).wrapping_add(pvq_count_u(n, k + 1));
 }
 
-/// Unpacks a uniform codeword index `index` $\in [0, V(n, k) - 1]$ into the $n$-dimensional signed
-/// integer pulse vector `y[..n]` and returns its squared $L_2$ norm $\sum_{i=0}^{n-1} y_i^2$
-/// (`cwrsi` in `cwrs.c`, RFC 6716 Section 4.3.4.1).
-pub fn cwrsi(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
+/// Unpacks the codeword index `index` (below `V(n, k)`) into the `n`-dimensional pulse vector
+/// `y[..n]` and returns its squared norm `y[0]^2 + ... + y[n - 1]^2`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+pub(crate) fn decode_pulse_vector(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
     debug_assert!(n >= 1 && y.len() >= n);
     let mut rem_pulses = k;
     let mut energy = 0.0f32;
@@ -211,7 +201,7 @@ pub fn cwrsi(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
     for (dim, out_pulse) in (1..=n).rev().zip(y[..n].iter_mut()) {
         // Codewords with y_j >= 0 occupy [0, U(dim, rem_pulses + 1)), and codewords
         // with y_j < 0 occupy [U(dim, rem_pulses + 1), V(dim, rem_pulses)).
-        let neg_threshold = celt_pvq_u(dim, rem_pulses + 1);
+        let neg_threshold = pvq_count_u(dim, rem_pulses + 1);
         let is_negative = index >= neg_threshold;
         if is_negative {
             index -= neg_threshold;
@@ -222,16 +212,10 @@ pub fn cwrsi(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
         let next_pulses = match dim {
             1 => 0,
             2 => ((index + 1) >> 1) as usize,
-            _ => {
-                let mut m = rem_pulses;
-                while celt_pvq_u(dim, m) > index {
-                    m -= 1;
-                }
-                m
-            }
+            _ => (0..=rem_pulses).rev().find(|&m| pvq_count_u(dim, m) <= index).unwrap_or(0),
         };
 
-        index -= celt_pvq_u(dim, next_pulses);
+        index -= pvq_count_u(dim, next_pulses);
         let magnitude = (rem_pulses - next_pulses) as i32;
         let signed_pulse = if is_negative { -magnitude } else { magnitude };
         *out_pulse = signed_pulse;
@@ -242,52 +226,57 @@ pub fn cwrsi(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
     return energy;
 }
 
-/// Packs an $n$-dimensional signed integer pulse vector `y[..n]` with $L_1$ norm $k = \sum |y_i|$
-/// into its unique codeword index $\in [0, V(n, k) - 1]$ and codebook size $V(n, k)$
-/// (`icwrs` in `cwrs.c`, RFC 6716 Section 4.3.4.1).
-pub fn icwrs(n: usize, y: &[i32]) -> (u32, u32) {
-    debug_assert!(n >= 1 && y.len() >= n);
-    let mut index = 0u32;
-    let mut cum_pulses = 0usize;
-
-    for (dim, &pulse) in (1..=n).zip(y[..n].iter().rev()) {
-        index = index.wrapping_add(celt_pvq_u(dim, cum_pulses));
-        cum_pulses += pulse.unsigned_abs() as usize;
-        if pulse < 0 {
-            index = index.wrapping_add(celt_pvq_u(dim, cum_pulses + 1));
-        }
-    }
-
-    let codebook_size = celt_pvq_v(n, cum_pulses);
-    return (index, codebook_size);
-}
-
-/// Decodes a $k$-pulse PVQ codeword in $n$ dimensions from the entropy coder `dec` into `y[..n]`
-/// and returns the squared $L_2$ energy $R_{yy} = \sum_{i=0}^{n-1} y_i^2$
-/// (`decode_pulses` in `cwrs.c`, RFC 6716 Section 4.3.4.1).
-pub fn decode_pulses(y: &mut [i32], n: usize, k: usize, dec: &mut Decoder<'_>) -> Result<f32> {
+/// Decodes a `k`-pulse codeword in `n` dimensions from `dec` into `y[..n]` and returns its
+/// squared norm
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+pub(crate) fn decode_pulses(
+    y: &mut [i32],
+    n: usize,
+    k: usize,
+    dec: &mut Decoder<'_>,
+) -> Result<f32> {
     if n == 0 || k == 0 || y.len() < n {
         return Err(Error::InvalidPvqParameters.into());
     }
-    let codebook_size = celt_pvq_v(n, k);
+    let codebook_size = pvq_count_v(n, k);
     let index = dec.decode_uint(codebook_size)?;
-    return Ok(cwrsi(n, k, index, &mut y[..n]));
+    return Ok(decode_pulse_vector(n, k, index, &mut y[..n]));
 }
 
 #[cfg(test)]
 mod tests {
+    // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
+    // normative (RFC 6716 Section 4.3.4.2) and is verified against the RFC 8251 test vectors by
+    // `tests/rfc6716_conformance.rs`.
     use super::*;
+
+    /// Packs the `n`-dimensional pulse vector `y[..n]` with `k = |y[0]| + ... + |y[n - 1]|`
+    /// pulses into its codeword index (below `V(n, k)`) and the codebook size `V(n, k)`
+    /// (inverse of [`decode_pulse_vector`], RFC 6716 Section 4.3.4.2).
+    pub(crate) fn icwrs(n: usize, y: &[i32]) -> (u32, u32) {
+        debug_assert!(n >= 1 && y.len() >= n);
+        let mut index = 0u32;
+        let mut cum_pulses = 0usize;
+
+        for (dim, &pulse) in (1..=n).zip(y[..n].iter().rev()) {
+            index = index.wrapping_add(pvq_count_u(dim, cum_pulses));
+            cum_pulses += pulse.unsigned_abs() as usize;
+            if pulse < 0 {
+                index = index.wrapping_add(pvq_count_u(dim, cum_pulses + 1));
+            }
+        }
+
+        let codebook_size = pvq_count_v(n, cum_pulses);
+        return (index, codebook_size);
+    }
 
     #[test]
     fn test_pvq_codebook_sizes_and_roundtrips() {
-        // Verify V(N, K) and exact cwrsi <-> icwrs roundtrip across CELT partition dimensions.
-        let ns = [
-            2, 3, 4, 6, 8, 9, 11, 12, 16, 18, 22, 24, 32, 36, 44, 48, 64, 72, 88, 96, 144, 176,
-        ];
+        // Verify V(N, K) and exact decode_pulse_vector <-> icwrs roundtrip across CELT partition dimensions.
+        let ns =
+            [2, 3, 4, 6, 8, 9, 11, 12, 16, 18, 22, 24, 32, 36, 44, 48, 64, 72, 88, 96, 144, 176];
         let ks = [1, 2, 3, 4, 5, 7, 8, 12, 14, 20, 32, 64, 128];
-        let max_col_for_row = [
-            176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 16, 14,
-        ];
+        let max_col_for_row = [176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 16, 14];
         let mut y = [0i32; 176];
 
         for &n in &ns {
@@ -297,18 +286,24 @@ mod tests {
                 if min_nk > 14 || max_nk > max_col_for_row[min_nk] {
                     continue;
                 }
-                let v64 = (celt_pvq_u(n, k) as u64) + (celt_pvq_u(n, k + 1) as u64);
+                let v64 = (pvq_count_u(n, k) as u64) + (pvq_count_u(n, k + 1) as u64);
                 if v64 > (u32::MAX as u64) {
                     continue;
                 }
-                let v = celt_pvq_v(n, k);
+                let v = pvq_count_v(n, k);
                 let samples = [0, 1.min(v - 1), v / 3, v / 2, v.saturating_sub(2), v - 1];
                 for &codeword in &samples {
-                    let yy = cwrsi(n, k, codeword, &mut y[..n]);
+                    let yy = decode_pulse_vector(n, k, codeword, &mut y[..n]);
                     let l1_norm: usize = y[..n].iter().map(|&p| p.unsigned_abs() as usize).sum();
                     let l2_sq: f32 = y[..n].iter().map(|&p| (p * p) as f32).sum();
-                    assert_eq!(l1_norm, k, "L1 norm mismatch for n={n}, k={k}, codeword={codeword}");
-                    assert_eq!(yy, l2_sq, "L2 energy mismatch for n={n}, k={k}, codeword={codeword}");
+                    assert_eq!(
+                        l1_norm, k,
+                        "L1 norm mismatch for n={n}, k={k}, codeword={codeword}"
+                    );
+                    assert_eq!(
+                        yy, l2_sq,
+                        "L2 energy mismatch for n={n}, k={k}, codeword={codeword}"
+                    );
 
                     let (encoded_codeword, encoded_v) = icwrs(n, &y[..n]);
                     assert_eq!(encoded_v, v);
@@ -323,22 +318,22 @@ mod tests {
     }
 
     #[test]
-    fn test_cwrsi_matches_libopus_oracle() {
+    fn decode_pulse_vector_matches_recorded_values() {
         let mut y = [0i32; 176];
 
-        macro_rules! assert_cwrsi_oracle {
+        macro_rules! assert_decode_pulse_vector {
             ($n:expr, $k:expr, $codeword:expr, $expected_v:expr, $expected_yy:expr, $expected_y:expr) => {
-                assert_eq!(celt_pvq_v($n, $k), $expected_v);
-                assert_eq!(cwrsi($n, $k, $codeword, &mut y[..$n]), $expected_yy);
+                assert_eq!(pvq_count_v($n, $k), $expected_v);
+                assert_eq!(decode_pulse_vector($n, $k, $codeword, &mut y[..$n]), $expected_yy);
                 assert_eq!(&y[..$n], $expected_y);
             };
         }
 
-        assert_cwrsi_oracle!(2, 1, 3, 4, 1.0, &[-1, 0]);
-        assert_cwrsi_oracle!(2, 128, 345, 512, 8992.0, &[-84, -44]);
-        assert_cwrsi_oracle!(3, 5, 67, 102, 11.0, &[-3, 1, 1]);
-        assert_cwrsi_oracle!(6, 20, 1_234_567, 1_749_456, 86.0, &[-4, 6, 5, 2, -2, 1]);
-        assert_cwrsi_oracle!(
+        assert_decode_pulse_vector!(2, 1, 3, 4, 1.0, &[-1, 0]);
+        assert_decode_pulse_vector!(2, 128, 345, 512, 8992.0, &[-84, -44]);
+        assert_decode_pulse_vector!(3, 5, 67, 102, 11.0, &[-3, 1, 1]);
+        assert_decode_pulse_vector!(6, 20, 1_234_567, 1_749_456, 86.0, &[-4, 6, 5, 2, -2, 1]);
+        assert_decode_pulse_vector!(
             11,
             10,
             424_242,
@@ -346,7 +341,7 @@ mod tests {
             18.0,
             &[3, -1, -2, -1, 0, 0, 0, 0, 1, -1, 1]
         );
-        assert_cwrsi_oracle!(
+        assert_decode_pulse_vector!(
             14,
             13,
             123_456_789,
@@ -354,7 +349,7 @@ mod tests {
             29.0,
             &[2, 0, 3, -1, -1, 3, 0, 0, 0, 0, -2, 0, 0, -1]
         );
-        assert_cwrsi_oracle!(
+        assert_decode_pulse_vector!(
             16,
             8,
             999_999,
@@ -364,8 +359,8 @@ mod tests {
         );
 
         // (n=176, k=3, codeword=5000000) -> v=7269152, yy=3, nonzeros at 49 (-1), 50 (-1), 94 (+1)
-        assert_eq!(celt_pvq_v(176, 3), 7_269_152);
-        assert_eq!(cwrsi(176, 3, 5_000_000, &mut y[..176]), 3.0);
+        assert_eq!(pvq_count_v(176, 3), 7_269_152);
+        assert_eq!(decode_pulse_vector(176, 3, 5_000_000, &mut y[..176]), 3.0);
         assert_eq!(y[49], -1);
         assert_eq!(y[50], -1);
         assert_eq!(y[94], 1);
@@ -373,8 +368,8 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_pulses_matches_libopus_bitstream() {
-        // Bitstream generated by libopus encode_pulses for:
+    fn decode_pulses_from_a_recorded_bitstream() {
+        // Range-coded pulse vectors:
         // y1 (n=8, k=10): [2, -1, 0, 3, -2, 0, 1, -1]
         // y2 (n=16, k=7): [0, -1, 0, 0, 2, 0, -1, 0, 0, 1, 0, 0, -1, 0, 0, 1]
         // y3 (n=3, k=44): [-15, 22, -7]
@@ -382,7 +377,7 @@ mod tests {
             0x27, 0x5b, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0xf1,
             0x8d, 0x02,
         ];
-        let mut dec = Decoder::new(&packet).expect("valid range decoder");
+        let mut dec = Decoder::new(&packet);
 
         let mut d1 = [0i32; 8];
         let mut d2 = [0i32; 16];
@@ -396,14 +391,20 @@ mod tests {
         assert_eq!(d1, [2, -1, 0, 3, -2, 0, 1, -1]);
 
         assert_eq!(e2, 9.0);
-        assert_eq!(
-            d2,
-            [0, -1, 0, 0, 2, 0, -1, 0, 0, 1, 0, 0, -1, 0, 0, 1]
-        );
+        assert_eq!(d2, [0, -1, 0, 0, 2, 0, -1, 0, 0, 1, 0, 0, -1, 0, 0, 1]);
 
         assert_eq!(e3, 758.0);
         assert_eq!(d3, [-15, 22, -7]);
         return;
     }
-}
 
+    /// A codeword needs at least one dimension and one pulse, and room for its dimensions
+    /// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+    #[test]
+    fn decode_pulses_rejects_empty_codebooks() {
+        let mut dec = Decoder::new(&[0x55; 8]);
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 4], 0, 1, &mut dec)));
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 4], 4, 0, &mut dec)));
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 2], 4, 1, &mut dec)));
+    }
+}

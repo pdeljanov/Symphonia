@@ -1,19 +1,23 @@
-//! SILK Codebooks, iCDFs, and Resampler Constants (RFC 6716 Section 4.2)
+//! SILK codebooks, inverse-CDF tables and filter coefficients
+//! ([RFC 6716 Section 4.2.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7>),
+//! [Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
 //!
-//! Predefined quantization codebooks, inverse cumulative distribution functions (iCDFs),
-//! LSF conversion tables, and resampler filter coefficients for the SILK layer.
+//! The tables are grouped by the decoding stage that reads them (`header`, `gain`, `lsf`, `ltp`,
+//! `excitation`, `resampler`) and re-exported at this module's root.
 
+// The codebooks and filter tables are lookup tables read by index.
 #![allow(clippy::large_const_arrays)]
 
-pub use self::excitation::*;
-pub use self::gain::*;
-pub use self::header::*;
-pub use self::lsf::*;
-pub use self::ltp::*;
-pub use self::resampler::*;
+pub(crate) use self::excitation::*;
+pub(crate) use self::gain::*;
+pub(crate) use self::header::*;
+pub(crate) use self::lsf::*;
+pub(crate) use self::ltp::*;
 
 /// SILK Header, Stereo & Frame Type Constants (RFC 6716 Section 4.2.2-4.2.4, Section 4.2.7.3)
-pub mod header {
+pub(crate) mod header {
+    use crate::entropy::Cdf;
+
     /// TLDR;
     /// ```text
     /// +----------+-----------------------------+
@@ -24,10 +28,9 @@ pub mod header {
     /// | Active   | [0, 0, 24, 74, 148, 10]/256 |
     /// +----------+-----------------------------+
     ///  <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3>
-    /// ``` 
-    pub const ICDF_FRAME_TYPE_VAD_INACTIVE: [u32; 3] = [256, 26, 256];
-    pub const ICDF_FRAME_TYPE_VAD_ACTIVE: [u32; 5] = [256, 24, 98, 246, 256];
-
+    /// ```
+    pub(crate) const CDF_FRAME_TYPE_VAD_INACTIVE: Cdf<'static> = Cdf::new(&[256, 26, 256]);
+    pub(crate) const CDF_FRAME_TYPE_VAD_ACTIVE: Cdf<'static> = Cdf::new(&[256, 24, 98, 246, 256]);
 
     /// PDFs for Stereo Prediction Weight Decoding
     /// ```text
@@ -42,12 +45,14 @@ pub mod header {
     /// Table 7: PDFs for Stereo Prediction Weight Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
-    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE: [u32; 26] = [
-        256, 7, 9, 10, 11, 12, 22, 46, 54, 55, 56, 59, 82, 174,
-        197, 200, 201, 202, 210, 234, 244, 245, 246, 247, 249, 256,
-    ];
-    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO: [u32; 4] = [256, 85, 171, 256];
-    pub const ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE: [u32; 6] = [256, 51, 102, 154, 205, 256];
+    pub(crate) const CDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE: Cdf<'static> = Cdf::new(&[
+        256, 7, 9, 10, 11, 12, 22, 46, 54, 55, 56, 59, 82, 174, 197, 200, 201, 202, 210, 234, 244,
+        245, 246, 247, 249, 256,
+    ]);
+    pub(crate) const CDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO: Cdf<'static> =
+        Cdf::new(&[256, 85, 171, 256]);
+    pub(crate) const CDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE: Cdf<'static> =
+        Cdf::new(&[256, 51, 102, 154, 205, 256]);
 
     /// Quantization Boundaries for Stereo Prediction Weights (Q13)
     /// ```text
@@ -64,9 +69,9 @@ pub mod header {
     /// Table 8: Stereo Prediction Weight Quantization Boundaries (Q13)
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1>
-    pub const CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13: [i16; 16] = [
-        -13732, -10050, -8266, -7526, -6500, -5000, -2950, -820,
-        820, 2950, 5000, 6500, 7526, 8266, 10050, 13732,
+    pub(crate) const CODEBOOK_STEREO_QUANTIZATION_BOUNDARIES_Q13: [i16; 16] = [
+        -13732, -10050, -8266, -7526, -6500, -5000, -2950, -820, 820, 2950, 5000, 6500, 7526, 8266,
+        10050, 13732,
     ];
 
     /// PDF for Mid-Only Stereo Flag
@@ -78,7 +83,7 @@ pub mod header {
     /// +----------------+
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>
-    pub const ICDF_STEREO_MID_ONLY: [u32; 3] = [256, 192, 256];
+    pub(crate) const CDF_STEREO_MID_ONLY: Cdf<'static> = Cdf::new(&[256, 192, 256]);
 
     /// PDFs for Per-Frame LBRR Flags
     /// ```text
@@ -91,12 +96,15 @@ pub mod header {
     /// Table 4: PDFs for Per-Frame LBRR Flags (non-zero symbols 1..=3 and 1..=7)
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.4>
-    pub const ICDF_PER_FRAME_LBRR_FLAGS_40_MS: [u32; 4] = [256, 53, 106, 256];
-    pub const ICDF_PER_FRAME_LBRR_FLAGS_60_MS: [u32; 8] = [256, 41, 61, 90, 131, 146, 174, 256];
+    pub(crate) const CDF_PER_FRAME_LBRR_FLAGS_40_MS: Cdf<'static> = Cdf::new(&[256, 53, 106, 256]);
+    pub(crate) const CDF_PER_FRAME_LBRR_FLAGS_60_MS: Cdf<'static> =
+        Cdf::new(&[256, 41, 61, 90, 131, 146, 174, 256]);
 }
 
 /// SILK Subframe Quantization Gain Constants (RFC 6716 §4.2.7.4)
-pub mod gain {
+pub(crate) mod gain {
+    use crate::entropy::Cdf;
+
     /// ```text
     /// +-------------+------------------------------------+
     /// | Signal Type | PDF                                |
@@ -109,9 +117,12 @@ pub mod gain {
     /// +-------------+------------------------------------+
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
     /// ```
-    pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE: [u32; 9] = [256, 32, 144, 212, 241, 253, 254, 255, 256];
-    pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED: [u32; 9] = [256, 2, 19, 64, 124, 186, 233, 252, 256];
-    pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED: [u32; 9] = [256, 1, 4, 30, 101, 195, 245, 254, 256];
+    pub(crate) const CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE: Cdf<'static> =
+        Cdf::new(&[256, 32, 144, 212, 241, 253, 254, 255, 256]);
+    pub(crate) const CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED: Cdf<'static> =
+        Cdf::new(&[256, 2, 19, 64, 124, 186, 233, 252, 256]);
+    pub(crate) const CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED: Cdf<'static> =
+        Cdf::new(&[256, 1, 4, 30, 101, 195, 245, 254, 256]);
 
     /// ```text
     /// +--------------------------------------+
@@ -121,7 +132,8 @@ pub mod gain {
     /// +--------------------------------------+
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.4>
     /// ```
-    pub const ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
+    pub(crate) const CDF_INDEPENDENT_QUANTIZATION_GAIN_LSB: Cdf<'static> =
+        Cdf::new(&[256, 32, 64, 96, 128, 160, 192, 224, 256]);
 
     /// ```text
     /// +-------------------------------------------------------------------+
@@ -133,15 +145,17 @@ pub mod gain {
     /// +-------------------------------------------------------------------+
     /// PDF for Delta Quantization Gain Coding
     /// ```
-    pub const ICDF_DELTA_QUANTIZATION_GAIN: [u32; 42] = [
-        256, 6, 11, 22, 53, 185, 206, 214, 218, 221, 223, 225, 227, 228,
-        229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242,
-        243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256,
-    ];
+    pub(crate) const CDF_DELTA_QUANTIZATION_GAIN: Cdf<'static> = Cdf::new(&[
+        256, 6, 11, 22, 53, 185, 206, 214, 218, 221, 223, 225, 227, 228, 229, 230, 231, 232, 233,
+        234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251,
+        252, 253, 254, 255, 256,
+    ]);
 }
 
 /// SILK Normalized LSF Codebooks, Weights & Conversion Tables (RFC 6716 §4.2.7.5)
-pub mod lsf {
+pub(crate) mod lsf {
+    use crate::entropy::Cdf;
+
     /// Codebook Selection for NB/MB Normalized LSF Stage-2 Index Decoding
     /// NOTE: In definition of codebook 'a = 0, b = 1...'
     /// ```text
@@ -217,7 +231,8 @@ pub mod lsf {
     ///             Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
+    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND: [[u8; 10];
+        32] = [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [1, 3, 1, 2, 2, 1, 2, 1, 1, 1],
         [2, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -251,7 +266,6 @@ pub mod lsf {
         [2, 5, 3, 7, 5, 5, 4, 4, 5, 4],
         [4, 4, 5, 4, 5, 6, 5, 6, 5, 4],
     ];
-
 
     /// Codebook Selection for WB Normalized LSF Stage-2 Index Decoding
     /// ```text
@@ -328,7 +342,7 @@ pub mod lsf {
     ///            Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND: [[u8; 16]; 32] = [
+    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND: [[u8; 16]; 32] = [
         [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
         [10, 11, 11, 11, 11, 11, 10, 10, 10, 10, 10, 9, 9, 9, 8, 11],
         [10, 13, 13, 11, 15, 12, 12, 13, 10, 13, 12, 13, 13, 12, 11, 11],
@@ -403,13 +417,11 @@ pub mod lsf {
     /// +-------------+-----+-----+-----+-----+
     /// ```
     /// Table 20: Prediction Weights for Normalized LSF Decoding
-    pub const PREDICTION_WEIGHTS_NB_MB: [[u16; 9]; 2] = [
-        [179, 138, 140, 148, 151, 149, 153, 151, 163],
-        [116, 67, 82, 59, 92, 72, 100, 89, 92],
-    ];
+    pub(crate) const PREDICTION_WEIGHTS_NB_MB: [[u16; 9]; 2] =
+        [[179, 138, 140, 148, 151, 149, 153, 151, 163], [116, 67, 82, 59, 92, 72, 100, 89, 92]];
 
     // For Wideband
-    pub const PREDICTION_WEIGHTS_WB: [[u16; 15]; 2] = [
+    pub(crate) const PREDICTION_WEIGHTS_WB: [[u16; 15]; 2] = [
         [175, 148, 160, 176, 178, 173, 174, 164, 177, 174, 196, 182, 198, 192, 182],
         [68, 62, 66, 60, 72, 117, 85, 90, 118, 136, 151, 142, 160, 142, 155],
     ];
@@ -489,7 +501,7 @@ pub mod lsf {
     ///            Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub const PREDICTION_WEIGHT_SELECTION_NB_MB: [[u8; 9]; 32] = [
+    pub(crate) const PREDICTION_WEIGHT_SELECTION_NB_MB: [[u8; 9]; 32] = [
         [0, 1, 0, 0, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -599,7 +611,7 @@ pub mod lsf {
     ///
     /// Table 22: Prediction Weight Selection for WB Normalized LSF Decoding
     /// ```
-    pub const PREDICTION_WEIGHT_SELECTION_WB: [[u8; 15]; 32] = [
+    pub(crate) const PREDICTION_WEIGHT_SELECTION_WB: [[u8; 15]; 32] = [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0],
@@ -708,7 +720,7 @@ pub mod lsf {
     ///
     /// Table 23: NB/MB Normalized LSF Stage-1 Codebook Vectors
     /// ```
-    pub const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
+    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
         [12, 35, 60, 83, 108, 132, 157, 180, 206, 228],
         [15, 32, 55, 77, 101, 125, 151, 175, 201, 225],
         [19, 42, 66, 89, 114, 137, 162, 184, 209, 230],
@@ -816,7 +828,7 @@ pub mod lsf {
     /// +----+------------------------------------------------------------+
     /// Table 24: WB Normalized LSF Stage-1 Codebook Vectors
     /// ```
-    pub const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND: [[u8; 16]; 32] = [
+    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND: [[u8; 16]; 32] = [
         [7, 23, 38, 54, 69, 85, 100, 116, 131, 147, 162, 178, 193, 208, 223, 239],
         [13, 25, 41, 55, 69, 83, 98, 112, 127, 142, 157, 171, 187, 203, 220, 236],
         [15, 21, 34, 51, 61, 78, 92, 106, 126, 136, 152, 167, 185, 205, 225, 240],
@@ -890,8 +902,10 @@ pub mod lsf {
     ///  +-------------+-----------+----+
     ///  Table 27: LSF Ordering for Polynomial Evaluation
     /// ```
-    pub const LSF_ORDERING_POLYNOMIAL_EVALUATION_NB_MB: [u8; 10] = [0, 9, 6, 3, 4, 5, 8, 1, 2, 7];
-    pub const LSF_ORDERING_POLYNOMIAL_EVALUATION_WB: [u8; 16] = [0, 15, 8, 7, 4, 11, 12, 3, 2, 13, 10, 5, 6, 9, 14, 1];
+    pub(crate) const LSF_ORDERING_POLYNOMIAL_EVALUATION_NB_MB: [u8; 10] =
+        [0, 9, 6, 3, 4, 5, 8, 1, 2, 7];
+    pub(crate) const LSF_ORDERING_POLYNOMIAL_EVALUATION_WB: [u8; 16] =
+        [0, 15, 8, 7, 4, 11, 12, 3, 2, 13, 10, 5, 6, 9, 14, 1];
 
     /// Q12 Cosine Table for LSF Conversion
     /// ```text
@@ -967,22 +981,17 @@ pub mod lsf {
     ///
     /// Table 28: Q12 Cosine Table for LSF Conversion
     /// ```
-    pub const Q12_COSINE_TABLE_FOR_LSF_CONVERSION: [i32; 129] = [
-        4096, 4095, 4091, 4085, 4076, 4065, 4052, 4036, 4017, 3997,
-        3973, 3948, 3920, 3889, 3857, 3822, 3784, 3745, 3703, 3659,
-        3613, 3564, 3513, 3461, 3406, 3349, 3290, 3229, 3166, 3102,
-        3035, 2967, 2896, 2824, 2751, 2676, 2599, 2520, 2440, 2359,
-        2276, 2191, 2106, 2019, 1931, 1842, 1751, 1660, 1568, 1474,
-        1380, 1285, 1189, 1093, 995, 897, 799, 700, 601, 501,
-        401, 301, 201, 101, 0, -101, -201, -301, -401, -501,
-        -601, -700, -799, -897, -995, -1093, -1189, -1285, -1380, -1474,
-        -1568, -1660, -1751, -1842, -1931, -2019, -2106, -2191, -2276, -2359,
-        -2440, -2520, -2599, -2676, -2751, -2824, -2896, -2967, -3035, -3102,
-        -3166, -3229, -3290, -3349, -3406, -3461, -3513, -3564, -3613, -3659,
-        -3703, -3745, -3784, -3822, -3857, -3889, -3920, -3948, -3973, -3997,
-        -4017, -4036, -4052, -4065, -4076, -4085, -4091, -4095, -4096,
+    pub(crate) const Q12_COSINE_TABLE_FOR_LSF_CONVERSION: [i32; 129] = [
+        4096, 4095, 4091, 4085, 4076, 4065, 4052, 4036, 4017, 3997, 3973, 3948, 3920, 3889, 3857,
+        3822, 3784, 3745, 3703, 3659, 3613, 3564, 3513, 3461, 3406, 3349, 3290, 3229, 3166, 3102,
+        3035, 2967, 2896, 2824, 2751, 2676, 2599, 2520, 2440, 2359, 2276, 2191, 2106, 2019, 1931,
+        1842, 1751, 1660, 1568, 1474, 1380, 1285, 1189, 1093, 995, 897, 799, 700, 601, 501, 401,
+        301, 201, 101, 0, -101, -201, -301, -401, -501, -601, -700, -799, -897, -995, -1093, -1189,
+        -1285, -1380, -1474, -1568, -1660, -1751, -1842, -1931, -2019, -2106, -2191, -2276, -2359,
+        -2440, -2520, -2599, -2676, -2751, -2824, -2896, -2967, -3035, -3102, -3166, -3229, -3290,
+        -3349, -3406, -3461, -3513, -3564, -3613, -3659, -3703, -3745, -3784, -3822, -3857, -3889,
+        -3920, -3948, -3973, -3997, -4017, -4036, -4052, -4065, -4076, -4085, -4091, -4095, -4096,
     ];
-
 
     /// Quantization Step Sizes and Level Offset for Normalized LSF Stage-2 Decoding
     /// ```text
@@ -995,9 +1004,9 @@ pub mod lsf {
     /// RFC 6716 Section 4.2.7.5.2: Normalized LSF Stage-2 Dequantization Constants
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB: i32 = 11796;
-    pub const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB: i32 = 9830;
-    pub const LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10: i32 = 102;
+    pub(crate) const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB: i32 = 11796;
+    pub(crate) const LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB: i32 = 9830;
+    pub(crate) const LSF_STAGE_TWO_QUANTIZATION_LEVEL_OFFSET_Q10: i32 = 102;
 
     /// Minimum Spacing for Normalized LSF Coefficients
     /// ```text
@@ -1041,8 +1050,10 @@ pub mod lsf {
     /// Table 25: Minimum Spacing for Normalized LSF Coefficients
     /// ```
     /// <https:///datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.4>
-    pub const MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND: [i32; 11] = [250, 3, 6, 3, 3, 3, 4, 3, 3, 3, 461];
-    pub const MINIMUM_SPACING_NORMALIZED_LSF_WB: [i32; 17] = [100, 3, 40, 3, 3, 3, 5, 14, 14, 10, 11, 3, 8, 9, 7, 3, 347];
+    pub(crate) const MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND: [i32; 11] =
+        [250, 3, 6, 3, 3, 3, 4, 3, 3, 3, 461];
+    pub(crate) const MINIMUM_SPACING_NORMALIZED_LSF_WB: [i32; 17] =
+        [100, 3, 40, 3, 3, 3, 5, 14, 14, 10, 11, 3, 8, 9, 7, 3, 347];
 
     /// ```text
     /// +-----------+----------+--------------------------------------------+
@@ -1067,23 +1078,28 @@ pub mod lsf {
     /// +-----------+----------+--------------------------------------------+
     /// PDFs for Normalized LSF Stage-1 Index Decoding
     /// ```
-    pub const ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED: [u32; 33] = [
-        256, 44, 78, 108, 127, 148, 160, 171, 174, 177, 179, 195, 197, 199, 200,
-        205, 207, 208, 211, 214, 215, 216, 218, 220, 222, 225, 226, 235, 244, 246,
-        253, 255, 256,
-    ];
-    pub const ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED: [u32; 33] = [
-        256, 1, 11, 12, 20, 23, 31, 39, 53, 66, 80, 81, 95, 107, 120, 131, 142, 154,
-        165, 175, 185, 196, 204, 213, 221, 228, 236, 237, 238, 244, 245, 251, 256,
-    ];
-    pub const ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED: [u32; 33] = [
-        256, 31, 52, 55, 72, 73, 81, 98, 102, 103, 121, 137, 141, 143, 146, 147, 157,
-        158, 161, 177, 188, 204, 206, 208, 211, 213, 224, 225, 229, 238, 246, 253, 256,
-    ];
-    pub const ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED: [u32; 33] = [
-        256, 1, 5, 21, 26, 44, 55, 60, 74, 89, 90, 93, 105, 118, 132, 146, 152, 166, 178,
-        180, 186, 187, 199, 211, 222, 232, 235, 245, 250, 251, 252, 253, 256,
-    ];
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED: Cdf<
+        'static,
+    > = Cdf::new(&[
+        256, 44, 78, 108, 127, 148, 160, 171, 174, 177, 179, 195, 197, 199, 200, 205, 207, 208,
+        211, 214, 215, 216, 218, 220, 222, 225, 226, 235, 244, 246, 253, 255, 256,
+    ]);
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED: Cdf<
+        'static,
+    > = Cdf::new(&[
+        256, 1, 11, 12, 20, 23, 31, 39, 53, 66, 80, 81, 95, 107, 120, 131, 142, 154, 165, 175, 185,
+        196, 204, 213, 221, 228, 236, 237, 238, 244, 245, 251, 256,
+    ]);
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED: Cdf<'static> =
+        Cdf::new(&[
+            256, 31, 52, 55, 72, 73, 81, 98, 102, 103, 121, 137, 141, 143, 146, 147, 157, 158, 161,
+            177, 188, 204, 206, 208, 211, 213, 224, 225, 229, 238, 246, 253, 256,
+        ]);
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED: Cdf<'static> =
+        Cdf::new(&[
+            256, 1, 5, 21, 26, 44, 55, 60, 74, 89, 90, 93, 105, 118, 132, 146, 152, 166, 178, 180,
+            186, 187, 199, 211, 222, 232, 235, 245, 250, 251, 252, 253, 256,
+        ]);
 
     /// ```text
     /// +-------------------------------+
@@ -1093,7 +1109,8 @@ pub mod lsf {
     /// +-------------------------------+
     /// Normalized LSF Index Extension Decoding
     /// ```
-    pub const ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION: [u32; 8] = [256, 156, 216, 240, 249, 253, 255, 256];
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION: Cdf<'static> =
+        Cdf::new(&[256, 156, 216, 240, 249, 253, 255, 256]);
 
     /// ```text
     /// +----------+--------------------------------------+
@@ -1116,7 +1133,7 @@ pub mod lsf {
     /// | h        | [1, 1, 18, 63, 78, 58, 30, 6, 1]/256 |
     /// +----------+--------------------------------------+
     ///  PDFs for NB/MB Normalized LSF Stage-2 Index Decoding
-    /// 
+    ///
     ///  +----------+---------------------------------------+
     /// | Codebook | PDF                                   |
     /// +----------+---------------------------------------+
@@ -1137,27 +1154,27 @@ pub mod lsf {
     /// | p        | [1, 7, 21, 50, 77, 81, 17, 1, 1]/256  |
     /// +----------+---------------------------------------+
     /// PDFs for WB Normalized LSF Stage-2 Index Decoding
-    /// ``` 
+    /// ```
     /// NB/MD and WD ICDF are combined because the codebooks do not overlap
-    pub const ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX: [[u32; 10]; 16] = [
+    pub(crate) const CDF_NORMALIZED_LSF_STAGE_TWO_INDEX: [Cdf<'static>; 16] = [
         // Narrowband and Mediumband
-        [256, 1, 2, 3, 18, 242, 253, 254, 255, 256],
-        [256, 1, 2, 4, 38, 221, 253, 254, 255, 256],
-        [256, 1, 2, 6, 48, 197, 252, 254, 255, 256],
-        [256, 1, 2, 10, 62, 185, 246, 254, 255, 256],
-        [256, 1, 4, 20, 73, 174, 248, 254, 255, 256],
-        [256, 1, 4, 21, 76, 166, 239, 254, 255, 256],
-        [256, 1, 8, 32, 85, 159, 226, 252, 255, 256],
-        [256, 1, 2, 20, 83, 161, 219, 249, 255, 256],
+        Cdf::new(&[256, 1, 2, 3, 18, 242, 253, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 4, 38, 221, 253, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 6, 48, 197, 252, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 10, 62, 185, 246, 254, 255, 256]),
+        Cdf::new(&[256, 1, 4, 20, 73, 174, 248, 254, 255, 256]),
+        Cdf::new(&[256, 1, 4, 21, 76, 166, 239, 254, 255, 256]),
+        Cdf::new(&[256, 1, 8, 32, 85, 159, 226, 252, 255, 256]),
+        Cdf::new(&[256, 1, 2, 20, 83, 161, 219, 249, 255, 256]),
         // Wideband
-        [256, 1, 2, 3, 12, 244, 253, 254, 255, 256],
-        [256, 1, 2, 4, 32, 218, 253, 254, 255, 256],
-        [256, 1, 2, 5, 47, 199, 252, 254, 255, 256],
-        [256, 1, 2, 12, 61, 187, 252, 254, 255, 256],
-        [256, 1, 5, 24, 72, 172, 249, 254, 255, 256],
-        [256, 1, 2, 16, 70, 170, 242, 254, 255, 256],
-        [256, 1, 2, 17, 78, 165, 226, 251, 255, 256],
-        [256, 1, 8, 29, 79, 156, 237, 254, 255, 256],
+        Cdf::new(&[256, 1, 2, 3, 12, 244, 253, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 4, 32, 218, 253, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 5, 47, 199, 252, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 12, 61, 187, 252, 254, 255, 256]),
+        Cdf::new(&[256, 1, 5, 24, 72, 172, 249, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 16, 70, 170, 242, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 17, 78, 165, 226, 251, 255, 256]),
+        Cdf::new(&[256, 1, 8, 29, 79, 156, 237, 254, 255, 256]),
     ];
 
     /// ```text
@@ -1168,11 +1185,14 @@ pub mod lsf {
     /// +---------------------------+
     /// Table 26: PDF for Normalized LSF Interpolation Index
     /// ```
-    pub const ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX: [u32; 6] = [256, 13, 35, 64, 75, 256];
+    pub(crate) const CDF_NORMALIZED_LSF_INTERPOLATION_INDEX: Cdf<'static> =
+        Cdf::new(&[256, 13, 35, 64, 75, 256]);
 }
 
 /// SILK Pitch Lag & Long-Term Prediction (LTP) Codebooks and iCDFs (RFC 6716 §4.2.7.6)
-pub mod ltp {
+pub(crate) mod ltp {
+    use crate::entropy::Cdf;
+
     /// Codebook Vectors for Subframe Pitch Contour: NB, 10 ms Frames
     /// ```text
     ///   +-------+------------------+
@@ -1187,11 +1207,8 @@ pub mod ltp {
     ///
     ///   Table 33: Codebook Vectors for Subframe Pitch Contour: NB, 10 ms Frames
     /// ```
-    pub const CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS: [[i8; 2]; 3] = [
-        [0, 0],
-        [1, 0],
-        [0, 1],
-    ];
+    pub(crate) const CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS: [[i8; 2]; 3] =
+        [[0, 0], [1, 0], [0, 1]];
 
     /// Codebook Vectors for Subframe Pitch Contour: NB, 20 ms Frames
     /// ```text
@@ -1223,7 +1240,7 @@ pub mod ltp {
     ///
     ///  Table 34: Codebook Vectors for Subframe Pitch Contour: NB, 20 ms Frames
     /// ```
-    pub const CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS: [[i8; 4]; 11] = [
+    pub(crate) const CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS: [[i8; 4]; 11] = [
         [0, 0, 0, 0],
         [2, 1, 0, -1],
         [-1, 0, 1, 2],
@@ -1269,7 +1286,7 @@ pub mod ltp {
     ///
     ///  Table 35: Codebook Vectors for Subframe Pitch Contour: MB or WB, 10 ms Frames
     /// ```
-    pub const CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS: [[i8; 2]; 12] = [
+    pub(crate) const CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS: [[i8; 2]; 12] = [
         [0, 0],
         [0, 1],
         [1, 0],
@@ -1360,7 +1377,7 @@ pub mod ltp {
     ///
     ///  Table 36: Codebook Vectors for Subframe Pitch Contour: MB or WB, 20 ms Frames
     /// ```
-    pub const CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS: [[i8; 4]; 34] = [
+    pub(crate) const CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS: [[i8; 4]; 34] = [
         [0, 0, 0, 0],
         [0, 0, 1, 1],
         [1, 1, 0, 0],
@@ -1421,7 +1438,7 @@ pub mod ltp {
     ///
     ///  Table 39: Codebook Vectors for LTP Filter, Periodicity Index 0
     /// ```
-    pub const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_0: [[i8; 5]; 8] = [
+    pub(crate) const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_0: [[i8; 5]; 8] = [
         [4, 6, 24, 7, 5],
         [0, 0, 2, 0, 0],
         [12, 28, 41, 13, -4],
@@ -1472,7 +1489,7 @@ pub mod ltp {
     ///
     ///  Table 40: Codebook Vectors for LTP Filter, Periodicity Index 1
     /// ```
-    pub const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_1: [[i8; 5]; 16] = [
+    pub(crate) const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_1: [[i8; 5]; 16] = [
         [13, 22, 39, 23, 12],
         [-1, 36, 64, 27, -6],
         [-7, 10, 55, 43, 17],
@@ -1562,7 +1579,7 @@ pub mod ltp {
     ///
     ///  Table 41: Codebook Vectors for LTP Filter, Periodicity Index 2
     /// ```
-    pub const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_2: [[i8; 5]; 32] = [
+    pub(crate) const CODEBOOK_LTP_FILTER_PERIODICITY_INDEX_2: [[i8; 5]; 32] = [
         [-6, 27, 61, 39, 5],
         [-11, 42, 88, 4, 1],
         [-2, 60, 65, 6, -4],
@@ -1605,15 +1622,13 @@ pub mod ltp {
     /// | 7, 6, 4, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]/256                  |
     /// +-------------------------------------------------------------------+
     /// Table 29: PDF for High Part of Primary Pitch Lag
-    /// 
+    ///
     /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1>
     /// ```
-    pub const ICDF_PRIMARY_PITCH_LAG_HIGH_PART: [u32; 33] = [
-        256, 3, 6, 12, 23, 44, 74, 106, 125, 136,
-        146, 158, 171, 184, 196, 207, 216, 224, 231, 237,
-        241, 243, 245, 247, 248, 249, 250, 251, 252, 253,
-        254, 255, 256,
-    ];
+    pub(crate) const CDF_PRIMARY_PITCH_LAG_HIGH_PART: Cdf<'static> = Cdf::new(&[
+        256, 3, 6, 12, 23, 44, 74, 106, 125, 136, 146, 158, 171, 184, 196, 207, 216, 224, 231, 237,
+        241, 243, 245, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256,
+    ]);
 
     /// ```text
     /// +------------+------------------------+-------+----------+----------+
@@ -1631,9 +1646,12 @@ pub mod ltp {
     ///    //            Table 30: PDF for Low Part of Primary Pitch Lag
     ///    // https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1
     /// ```
-    pub const ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND: [u32; 5] = [256, 64, 128, 192, 256];
-    pub const ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND: [u32; 7] = [256, 43, 85, 128, 171, 213, 256];
-    pub const ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND: [u32; 9] = [256, 32, 64, 96, 128, 160, 192, 224, 256];
+    pub(crate) const CDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND: Cdf<'static> =
+        Cdf::new(&[256, 64, 128, 192, 256]);
+    pub(crate) const CDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND: Cdf<'static> =
+        Cdf::new(&[256, 43, 85, 128, 171, 213, 256]);
+    pub(crate) const CDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND: Cdf<'static> =
+        Cdf::new(&[256, 32, 64, 96, 128, 160, 192, 224, 256]);
 
     /// ```text
     /// +-----------+--------+----------+-----------------------------------+
@@ -1657,18 +1675,17 @@ pub mod ltp {
     /// Table 32: PDFs for Subframe Pitch Contour
     /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.1>
     /// ```
-    pub const ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS: [u32; 4] = [256, 143, 193, 256, ];
-    pub const ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS: [u32; 12] = [
-        256, 68, 80, 101, 118, 137, 159, 189, 213, 230, 246, 256,
-    ];
-    pub const ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS: [u32; 13] = [
-        256, 91, 137, 176, 195, 209, 221, 229, 236, 242, 247, 252, 256,
-    ];
-    pub const ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS: [u32; 35] = [
-        256, 33, 55, 73, 89, 104, 118, 132, 145, 158, 168, 177,
-        186, 194, 200, 206, 212, 217, 221, 225, 229, 232, 235, 238,
-        240, 242, 244, 246, 248, 250, 252, 253, 254, 255, 256,
-    ];
+    pub(crate) const CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS: Cdf<'static> =
+        Cdf::new(&[256, 143, 193, 256]);
+    pub(crate) const CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS: Cdf<'static> =
+        Cdf::new(&[256, 68, 80, 101, 118, 137, 159, 189, 213, 230, 246, 256]);
+    pub(crate) const CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS: Cdf<'static> =
+        Cdf::new(&[256, 91, 137, 176, 195, 209, 221, 229, 236, 242, 247, 252, 256]);
+    pub(crate) const CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS: Cdf<'static> =
+        Cdf::new(&[
+            256, 33, 55, 73, 89, 104, 118, 132, 145, 158, 168, 177, 186, 194, 200, 206, 212, 217,
+            221, 225, 229, 232, 235, 238, 240, 242, 244, 246, 248, 250, 252, 253, 254, 255, 256,
+        ]);
 
     /// ```text
     /// +------------------+
@@ -1679,7 +1696,7 @@ pub mod ltp {
     /// Table 37: Periodicity Index PDF
     /// <https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.2>
     /// ```
-    pub const ICDF_PERIODICITY_INDEX: [u32; 4] = [256, 77, 157, 256, ];
+    pub(crate) const CDF_PERIODICITY_INDEX: Cdf<'static> = Cdf::new(&[256, 77, 157, 256]);
 
     /// ```text
     /// +-------------+----------+------------------------------------------+
@@ -1698,18 +1715,15 @@ pub mod ltp {
     ///    // Table 38: LTP Filter PDFs
     ///    // https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.2
     /// ```
-    pub const ICDF_LTP_FILTER_INDEX_0: [u32; 9] = [
-        256, 185, 200, 213, 226, 235, 244, 250, 256,
-    ];
-    pub const ICDF_LTP_FILTER_INDEX_1: [u32; 17] = [
-        256, 57, 91, 112, 132, 147, 160, 172, 185,
-        195, 205, 214, 224, 233, 241, 248, 256,
-    ];
-    pub const ICDF_LTP_FILTER_INDEX_2: [u32; 33] = [
-        256, 15, 31, 45, 57, 69, 81, 92, 103, 114, 124,
-        133, 142, 151, 160, 168, 176, 184, 192, 199, 206, 212,
-        218, 223, 227, 232, 236, 240, 244, 247, 251, 254, 256,
-    ];
+    pub(crate) const CDF_LTP_FILTER_INDEX_0: Cdf<'static> =
+        Cdf::new(&[256, 185, 200, 213, 226, 235, 244, 250, 256]);
+    pub(crate) const CDF_LTP_FILTER_INDEX_1: Cdf<'static> = Cdf::new(&[
+        256, 57, 91, 112, 132, 147, 160, 172, 185, 195, 205, 214, 224, 233, 241, 248, 256,
+    ]);
+    pub(crate) const CDF_LTP_FILTER_INDEX_2: Cdf<'static> = Cdf::new(&[
+        256, 15, 31, 45, 57, 69, 81, 92, 103, 114, 124, 133, 142, 151, 160, 168, 176, 184, 192,
+        199, 206, 212, 218, 223, 227, 232, 236, 240, 244, 247, 251, 254, 256,
+    ]);
 
     /// ```text
     /// +-------------------+
@@ -1720,8 +1734,7 @@ pub mod ltp {
     ///    // Table 42: PDF for LTP Scaling Parameter
     ///    // https://www.rfc-editor.org/rfc/rfc6716.html#section-4.2.7.6.3
     /// ```
-    pub const ICDF_LTP_SCALING_PARAMETER: [u32; 4] = [256, 128, 192, 256];
-
+    pub(crate) const CDF_LTP_SCALING_PARAMETER: Cdf<'static> = Cdf::new(&[256, 128, 192, 256]);
 
     /// PDF for Relative Delta Pitch Lag
     /// ```text
@@ -1734,10 +1747,10 @@ pub mod ltp {
     /// Table 31: PDF for Relative Pitch Lag
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>
-    pub const ICDF_RELATIVE_DELTA_PITCH_LAG: [u32; 22] = [
-        256, 46, 48, 50, 53, 57, 63, 73, 88, 114, 152,
-        182, 204, 219, 229, 236, 242, 246, 250, 252, 254, 256,
-    ];
+    pub(crate) const CDF_RELATIVE_DELTA_PITCH_LAG: Cdf<'static> = Cdf::new(&[
+        256, 46, 48, 50, 53, 57, 63, 73, 88, 114, 152, 182, 204, 219, 229, 236, 242, 246, 250, 252,
+        254, 256,
+    ]);
 
     /// Codebook for LTP Scaling Parameter (Q14)
     /// ```text
@@ -1751,11 +1764,13 @@ pub mod ltp {
     /// Table 42: Codebook for LTP Scaling Parameter
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.3>
-    pub const CODEBOOK_LTP_SCALING_Q14: [i16; 3] = [15565, 12288, 8192];
+    pub(crate) const CODEBOOK_LTP_SCALING_Q14: [i16; 3] = [15565, 12288, 8192];
 }
 
 /// SILK Excitation PVQ Shell Coding, Signs & LCG Constants (RFC 6716 §4.2.7.8)
-pub mod excitation {
+pub(crate) mod excitation {
+    use crate::entropy::Cdf;
+
     /// ```text
     /// +----------------------+
     /// | PDF                  |
@@ -1764,7 +1779,8 @@ pub mod excitation {
     /// +----------------------+
     /// Table 43: PDF for LCG Seed
     /// ```
-    pub const ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED: [u32; 5] = [256, 64, 128, 192, 256, ];
+    pub(crate) const CDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED: Cdf<'static> =
+        Cdf::new(&[256, 64, 128, 192, 256]);
 
     /// ```text
     /// +----------------------+------------------------------------------+
@@ -1776,8 +1792,10 @@ pub mod excitation {
     /// +----------------------+------------------------------------------+
     /// Table 45: PDFs for the Rate Level
     /// ```
-    pub const ICDF_RATE_LEVEL_UNVOICED: [u32; 10] = [256, 15, 66, 78, 124, 169, 182, 215, 242, 256];
-    pub const ICDF_RATE_LEVEL_VOICED: [u32; 10] = [256, 33, 63, 99, 116, 150, 199, 217, 238, 256];
+    pub(crate) const CDF_RATE_LEVEL_UNVOICED: Cdf<'static> =
+        Cdf::new(&[256, 15, 66, 78, 124, 169, 182, 215, 242, 256]);
+    pub(crate) const CDF_RATE_LEVEL_VOICED: Cdf<'static> =
+        Cdf::new(&[256, 33, 63, 99, 116, 150, 199, 217, 238, 256]);
 
     /// ```text
     /// +----------+--------------------------------------------------------+
@@ -1819,18 +1837,46 @@ pub mod excitation {
     /// +----------+--------------------------------------------------------+
     /// Table 46: PDFs for the Pulse Count
     /// ```
-    pub const ICDF_PULSE_COUNT: [[u32; 19]; 11] = [
-        [256, 131, 205, 230, 238, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
-        [256, 58, 151, 211, 234, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
-        [256, 43, 94, 140, 173, 197, 213, 224, 232, 238, 241, 244, 247, 249, 250, 251, 253, 254, 256],
-        [256, 17, 69, 140, 197, 228, 240, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256],
-        [256, 6, 27, 68, 121, 170, 205, 226, 237, 243, 246, 248, 250, 251, 252, 253, 254, 255, 256],
-        [256, 7, 21, 43, 71, 100, 128, 153, 173, 190, 203, 214, 223, 230, 235, 239, 243, 246, 256],
-        [256, 2, 7, 21, 50, 92, 138, 179, 210, 229, 240, 246, 249, 251, 252, 253, 254, 255, 256],
-        [256, 1, 3, 7, 17, 36, 65, 100, 137, 171, 199, 219, 233, 241, 246, 250, 252, 254, 256],
-        [256, 1, 3, 5, 10, 19, 33, 53, 77, 104, 132, 158, 181, 201, 216, 227, 235, 241, 256],
-        [256, 1, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256],
-        [256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256, 256],
+    pub(crate) const CDF_PULSE_COUNT: [Cdf<'static>; 11] = [
+        Cdf::new(&[
+            256, 131, 205, 230, 238, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254,
+            255, 256,
+        ]),
+        Cdf::new(&[
+            256, 58, 151, 211, 234, 241, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254,
+            255, 256,
+        ]),
+        Cdf::new(&[
+            256, 43, 94, 140, 173, 197, 213, 224, 232, 238, 241, 244, 247, 249, 250, 251, 253, 254,
+            256,
+        ]),
+        Cdf::new(&[
+            256, 17, 69, 140, 197, 228, 240, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255,
+            256,
+        ]),
+        Cdf::new(&[
+            256, 6, 27, 68, 121, 170, 205, 226, 237, 243, 246, 248, 250, 251, 252, 253, 254, 255,
+            256,
+        ]),
+        Cdf::new(&[
+            256, 7, 21, 43, 71, 100, 128, 153, 173, 190, 203, 214, 223, 230, 235, 239, 243, 246,
+            256,
+        ]),
+        Cdf::new(&[
+            256, 2, 7, 21, 50, 92, 138, 179, 210, 229, 240, 246, 249, 251, 252, 253, 254, 255, 256,
+        ]),
+        Cdf::new(&[
+            256, 1, 3, 7, 17, 36, 65, 100, 137, 171, 199, 219, 233, 241, 246, 250, 252, 254, 256,
+        ]),
+        Cdf::new(&[
+            256, 1, 3, 5, 10, 19, 33, 53, 77, 104, 132, 158, 181, 201, 216, 227, 235, 241, 256,
+        ]),
+        Cdf::new(&[
+            256, 1, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256,
+        ]),
+        Cdf::new(&[
+            256, 2, 3, 9, 36, 94, 150, 189, 214, 228, 238, 244, 247, 250, 252, 253, 254, 256, 256,
+        ]),
     ];
 
     /// ```text
@@ -1876,23 +1922,23 @@ pub mod excitation {
     /// +------------+------------------------------------------------------+
     /// Table 47: PDFs for Pulse Count Split, 16 Sample Partitions
     /// ```
-    pub const ICDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS: [&[u32]; 16] = [
-        &[256, 126, 256],
-        &[256, 56, 198, 256],
-        &[256, 25, 126, 230, 256],
-        &[256, 12, 72, 180, 244, 256],
-        &[256, 7, 42, 126, 213, 250, 256],
-        &[256, 4, 24, 83, 169, 232, 253, 256],
-        &[256, 3, 15, 53, 125, 200, 242, 254, 256],
-        &[256, 2, 10, 35, 89, 162, 221, 248, 255, 256],
-        &[256, 2, 7, 24, 63, 126, 191, 233, 251, 255, 256],
-        &[256, 1, 5, 17, 45, 94, 157, 211, 241, 252, 255, 256],
-        &[256, 1, 5, 13, 33, 70, 125, 182, 223, 245, 253, 255, 256],
-        &[256, 1, 4, 11, 26, 54, 98, 151, 199, 232, 248, 254, 255, 256],
-        &[256, 1, 3, 9, 21, 42, 77, 124, 172, 212, 237, 249, 254, 255, 256],
-        &[256, 1, 2, 6, 16, 33, 60, 97, 144, 187, 220, 241, 250, 254, 255, 256],
-        &[256, 1, 2, 3, 11, 25, 47, 80, 120, 163, 201, 229, 245, 253, 254, 255, 256],
-        &[256, 1, 2, 3, 4, 17, 35, 62, 98, 139, 180, 214, 238, 252, 253, 254, 255, 256],
+    pub(crate) const CDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS: [Cdf<'static>; 16] = [
+        Cdf::new(&[256, 126, 256]),
+        Cdf::new(&[256, 56, 198, 256]),
+        Cdf::new(&[256, 25, 126, 230, 256]),
+        Cdf::new(&[256, 12, 72, 180, 244, 256]),
+        Cdf::new(&[256, 7, 42, 126, 213, 250, 256]),
+        Cdf::new(&[256, 4, 24, 83, 169, 232, 253, 256]),
+        Cdf::new(&[256, 3, 15, 53, 125, 200, 242, 254, 256]),
+        Cdf::new(&[256, 2, 10, 35, 89, 162, 221, 248, 255, 256]),
+        Cdf::new(&[256, 2, 7, 24, 63, 126, 191, 233, 251, 255, 256]),
+        Cdf::new(&[256, 1, 5, 17, 45, 94, 157, 211, 241, 252, 255, 256]),
+        Cdf::new(&[256, 1, 5, 13, 33, 70, 125, 182, 223, 245, 253, 255, 256]),
+        Cdf::new(&[256, 1, 4, 11, 26, 54, 98, 151, 199, 232, 248, 254, 255, 256]),
+        Cdf::new(&[256, 1, 3, 9, 21, 42, 77, 124, 172, 212, 237, 249, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 6, 16, 33, 60, 97, 144, 187, 220, 241, 250, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 3, 11, 25, 47, 80, 120, 163, 201, 229, 245, 253, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 3, 4, 17, 35, 62, 98, 139, 180, 214, 238, 252, 253, 254, 255, 256]),
     ];
 
     /// ```text
@@ -1938,23 +1984,23 @@ pub mod excitation {
     /// +------------+------------------------------------------------------+
     /// Table 48: PDFs for Pulse Count Split, 8 Sample Partitions
     /// ```
-    pub const ICDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS: [&[u32]; 16] = [
-        &[256, 127, 256],
-        &[256, 53, 202, 256],
-        &[256, 22, 127, 233, 256],
-        &[256, 11, 72, 183, 246, 256],
-        &[256, 6, 41, 127, 215, 251, 256],
-        &[256, 4, 24, 83, 170, 232, 253, 256],
-        &[256, 3, 16, 56, 127, 200, 241, 254, 256],
-        &[256, 3, 12, 39, 92, 162, 218, 246, 255, 256],
-        &[256, 3, 11, 30, 67, 124, 185, 229, 249, 255, 256],
-        &[256, 3, 10, 25, 53, 97, 151, 200, 233, 250, 255, 256],
-        &[256, 1, 8, 21, 43, 77, 123, 171, 209, 237, 251, 255, 256],
-        &[256, 1, 2, 13, 35, 62, 97, 139, 186, 219, 244, 254, 255, 256],
-        &[256, 1, 2, 8, 22, 48, 85, 128, 171, 208, 234, 248, 254, 255, 256],
-        &[256, 1, 2, 6, 16, 36, 67, 107, 149, 189, 220, 240, 250, 254, 255, 256],
-        &[256, 1, 2, 5, 13, 29, 55, 90, 128, 166, 201, 227, 243, 251, 254, 255, 256],
-        &[256, 1, 2, 4, 10, 22, 43, 73, 109, 147, 183, 213, 234, 246, 252, 254, 255, 256],
+    pub(crate) const CDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS: [Cdf<'static>; 16] = [
+        Cdf::new(&[256, 127, 256]),
+        Cdf::new(&[256, 53, 202, 256]),
+        Cdf::new(&[256, 22, 127, 233, 256]),
+        Cdf::new(&[256, 11, 72, 183, 246, 256]),
+        Cdf::new(&[256, 6, 41, 127, 215, 251, 256]),
+        Cdf::new(&[256, 4, 24, 83, 170, 232, 253, 256]),
+        Cdf::new(&[256, 3, 16, 56, 127, 200, 241, 254, 256]),
+        Cdf::new(&[256, 3, 12, 39, 92, 162, 218, 246, 255, 256]),
+        Cdf::new(&[256, 3, 11, 30, 67, 124, 185, 229, 249, 255, 256]),
+        Cdf::new(&[256, 3, 10, 25, 53, 97, 151, 200, 233, 250, 255, 256]),
+        Cdf::new(&[256, 1, 8, 21, 43, 77, 123, 171, 209, 237, 251, 255, 256]),
+        Cdf::new(&[256, 1, 2, 13, 35, 62, 97, 139, 186, 219, 244, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 8, 22, 48, 85, 128, 171, 208, 234, 248, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 6, 16, 36, 67, 107, 149, 189, 220, 240, 250, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 5, 13, 29, 55, 90, 128, 166, 201, 227, 243, 251, 254, 255, 256]),
+        Cdf::new(&[256, 1, 2, 4, 10, 22, 43, 73, 109, 147, 183, 213, 234, 246, 252, 254, 255, 256]),
     ];
 
     /// ```text
@@ -2000,23 +2046,23 @@ pub mod excitation {
     /// +------------+------------------------------------------------------+
     /// Table 49: PDFs for Pulse Count Split, 4 Sample Partitions
     /// ```
-    pub const ICDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS: [&[u32]; 16] = [
-        &[256, 127, 256],
-        &[256, 49, 206, 256],
-        &[256, 20, 127, 236, 256],
-        &[256, 11, 71, 184, 246, 256],
-        &[256, 7, 43, 127, 214, 250, 256],
-        &[256, 6, 30, 87, 169, 229, 252, 256],
-        &[256, 5, 23, 62, 126, 194, 236, 252, 256],
-        &[256, 6, 20, 49, 96, 157, 209, 239, 253, 256],
-        &[256, 1, 16, 39, 74, 125, 175, 215, 245, 255, 256],
-        &[256, 1, 2, 23, 55, 97, 149, 195, 236, 254, 255, 256],
-        &[256, 1, 7, 23, 50, 86, 128, 170, 206, 233, 249, 255, 256],
-        &[256, 1, 6, 18, 39, 70, 108, 148, 186, 217, 238, 250, 255, 256],
-        &[256, 1, 4, 13, 30, 56, 90, 128, 166, 200, 226, 243, 252, 255, 256],
-        &[256, 1, 4, 11, 25, 47, 76, 110, 146, 180, 209, 231, 245, 252, 255, 256],
-        &[256, 1, 3, 8, 19, 37, 62, 93, 128, 163, 194, 219, 237, 248, 253, 255, 256],
-        &[256, 1, 2, 6, 15, 30, 51, 79, 111, 145, 177, 205, 226, 241, 250, 254, 255, 256],
+    pub(crate) const CDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS: [Cdf<'static>; 16] = [
+        Cdf::new(&[256, 127, 256]),
+        Cdf::new(&[256, 49, 206, 256]),
+        Cdf::new(&[256, 20, 127, 236, 256]),
+        Cdf::new(&[256, 11, 71, 184, 246, 256]),
+        Cdf::new(&[256, 7, 43, 127, 214, 250, 256]),
+        Cdf::new(&[256, 6, 30, 87, 169, 229, 252, 256]),
+        Cdf::new(&[256, 5, 23, 62, 126, 194, 236, 252, 256]),
+        Cdf::new(&[256, 6, 20, 49, 96, 157, 209, 239, 253, 256]),
+        Cdf::new(&[256, 1, 16, 39, 74, 125, 175, 215, 245, 255, 256]),
+        Cdf::new(&[256, 1, 2, 23, 55, 97, 149, 195, 236, 254, 255, 256]),
+        Cdf::new(&[256, 1, 7, 23, 50, 86, 128, 170, 206, 233, 249, 255, 256]),
+        Cdf::new(&[256, 1, 6, 18, 39, 70, 108, 148, 186, 217, 238, 250, 255, 256]),
+        Cdf::new(&[256, 1, 4, 13, 30, 56, 90, 128, 166, 200, 226, 243, 252, 255, 256]),
+        Cdf::new(&[256, 1, 4, 11, 25, 47, 76, 110, 146, 180, 209, 231, 245, 252, 255, 256]),
+        Cdf::new(&[256, 1, 3, 8, 19, 37, 62, 93, 128, 163, 194, 219, 237, 248, 253, 255, 256]),
+        Cdf::new(&[256, 1, 2, 6, 15, 30, 51, 79, 111, 145, 177, 205, 226, 241, 250, 254, 255, 256]),
     ];
 
     /// ```text
@@ -2062,23 +2108,23 @@ pub mod excitation {
     /// +------------+------------------------------------------------------+
     /// Table 50: PDFs for Pulse Count Split, 2 Sample Partitions
     /// ```
-    pub const ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS: [&[u32]; 16] = [
-        &[256, 128, 256],
-        &[256, 42, 214, 256],
-        &[256, 21, 128, 235, 256],
-        &[256, 12, 72, 184, 245, 256],
-        &[256, 8, 42, 128, 214, 249, 256],
-        &[256, 8, 31, 86, 176, 231, 251, 256],
-        &[256, 5, 20, 58, 130, 202, 238, 253, 256],
-        &[256, 6, 18, 45, 97, 174, 221, 241, 251, 256],
-        &[256, 6, 25, 53, 88, 128, 168, 203, 231, 250, 256],
-        &[256, 4, 18, 40, 71, 108, 148, 185, 216, 238, 252, 256],
-        &[256, 3, 13, 31, 57, 90, 128, 166, 199, 225, 243, 253, 256],
-        &[256, 2, 10, 23, 44, 73, 109, 147, 183, 212, 233, 246, 254, 256],
-        &[256, 1, 6, 16, 33, 58, 90, 128, 166, 198, 223, 240, 250, 255, 256],
-        &[256, 1, 5, 12, 25, 46, 75, 110, 146, 181, 210, 231, 244, 251, 255, 256],
-        &[256, 1, 3, 8, 18, 35, 60, 92, 128, 164, 196, 221, 238, 248, 253, 255, 256],
-        &[256, 1, 3, 7, 14, 27, 48, 76, 110, 146, 180, 208, 229, 242, 249, 253, 255, 256],
+    pub(crate) const CDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS: [Cdf<'static>; 16] = [
+        Cdf::new(&[256, 128, 256]),
+        Cdf::new(&[256, 42, 214, 256]),
+        Cdf::new(&[256, 21, 128, 235, 256]),
+        Cdf::new(&[256, 12, 72, 184, 245, 256]),
+        Cdf::new(&[256, 8, 42, 128, 214, 249, 256]),
+        Cdf::new(&[256, 8, 31, 86, 176, 231, 251, 256]),
+        Cdf::new(&[256, 5, 20, 58, 130, 202, 238, 253, 256]),
+        Cdf::new(&[256, 6, 18, 45, 97, 174, 221, 241, 251, 256]),
+        Cdf::new(&[256, 6, 25, 53, 88, 128, 168, 203, 231, 250, 256]),
+        Cdf::new(&[256, 4, 18, 40, 71, 108, 148, 185, 216, 238, 252, 256]),
+        Cdf::new(&[256, 3, 13, 31, 57, 90, 128, 166, 199, 225, 243, 253, 256]),
+        Cdf::new(&[256, 2, 10, 23, 44, 73, 109, 147, 183, 212, 233, 246, 254, 256]),
+        Cdf::new(&[256, 1, 6, 16, 33, 58, 90, 128, 166, 198, 223, 240, 250, 255, 256]),
+        Cdf::new(&[256, 1, 5, 12, 25, 46, 75, 110, 146, 181, 210, 231, 244, 251, 255, 256]),
+        Cdf::new(&[256, 1, 3, 8, 18, 35, 60, 92, 128, 164, 196, 221, 238, 248, 253, 255, 256]),
+        Cdf::new(&[256, 1, 3, 7, 14, 27, 48, 76, 110, 146, 180, 208, 229, 242, 249, 253, 255, 256]),
     ];
 
     /// ```text
@@ -2089,7 +2135,7 @@ pub mod excitation {
     /// +----------------+
     ///  Table 51: PDF for Excitation LSBs
     /// ```
-    pub const ICDF_EXCITATION_LSB: [u32; 3] = [256, 136, 256];
+    pub(crate) const CDF_EXCITATION_LSB: Cdf<'static> = Cdf::new(&[256, 136, 256]);
 
     /// ```text
     /// +-------------+-----------------------+-------------+---------------+
@@ -2184,49 +2230,95 @@ pub mod excitation {
     /// +-------------+-----------------------+-------------+---------------+
     ///  Table 52: PDFs for Excitation Signs
     /// ```
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_0_PULSE: [u32; 3] = [256, 2, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_1_PULSE: [u32; 3] = [256, 207, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_2_PULSE: [u32; 3] = [256, 189, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_3_PULSE: [u32; 3] = [256, 179, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_4_PULSE: [u32; 3] = [256, 174, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_5_PULSE: [u32; 3] = [256, 163, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 157, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_0_PULSE: [u32; 3] = [256, 58, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_1_PULSE: [u32; 3] = [256, 245, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_2_PULSE: [u32; 3] = [256, 238, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_3_PULSE: [u32; 3] = [256, 232, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_4_PULSE: [u32; 3] = [256, 225, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_5_PULSE: [u32; 3] = [256, 220, 256];
-    pub const ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 211, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE: [u32; 3] = [256, 1, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE: [u32; 3] = [256, 210, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE: [u32; 3] = [256, 190, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE: [u32; 3] = [256, 178, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE: [u32; 3] = [256, 169, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE: [u32; 3] = [256, 162, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 152, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE: [u32; 3] = [256, 48, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE: [u32; 3] = [256, 242, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE: [u32; 3] = [256, 235, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE: [u32; 3] = [256, 224, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE: [u32; 3] = [256, 214, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE: [u32; 3] = [256, 205, 256];
-    pub const ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 190, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE: [u32; 3] = [256, 1, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE: [u32; 3] = [256, 162, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE: [u32; 3] = [256, 152, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE: [u32; 3] = [256, 147, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE: [u32; 3] = [256, 144, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE: [u32; 3] = [256, 141, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 138, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE: [u32; 3] = [256, 8, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE: [u32; 3] = [256, 203, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE: [u32; 3] = [256, 187, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE: [u32; 3] = [256, 176, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE: [u32; 3] = [256, 168, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE: [u32; 3] = [256, 161, 256];
-    pub const ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: [u32; 3] = [256, 154, 256];
-
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 2, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 207, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 189, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 179, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 174, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 163, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: Cdf<
+        'static,
+    > = Cdf::new(&[256, 157, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 58, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 245, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 238, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 232, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 225, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 220, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: Cdf<
+        'static,
+    > = Cdf::new(&[256, 211, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 1, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 210, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 190, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 178, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 169, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 162, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: Cdf<
+        'static,
+    > = Cdf::new(&[256, 152, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 48, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 242, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 235, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 224, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 214, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 205, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: Cdf<
+        'static,
+    > = Cdf::new(&[256, 190, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 1, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 162, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 152, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 147, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 144, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 141, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 138, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 8, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 203, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 187, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 176, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 168, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE: Cdf<'static> =
+        Cdf::new(&[256, 161, 256]);
+    pub(crate) const CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE: Cdf<
+        'static,
+    > = Cdf::new(&[256, 154, 256]);
 
     /// Unified 3D iCDF table for Excitation Signs indexed by:
     /// `[signal_type][quantization_offset_type][pulse_count.min(6)]`
@@ -2235,74 +2327,74 @@ pub mod excitation {
     /// - `pulse_count`: `0..=6` (where `6` represents `6 or more` pulses)
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.5>
-    pub const ICDF_EXCITATION_SIGN: [[[[u32; 3]; 7]; 2]; 3] = [
+    pub(crate) const CDF_EXCITATION_SIGN: [[[Cdf<'static>; 7]; 2]; 3] = [
         // SignalType::Inactive
         [
             // QuantizationOffsetType::Low (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
             ],
             // QuantizationOffsetType::High (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_INACTIVE_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
             ],
         ],
         // SignalType::Unvoiced
         [
             // QuantizationOffsetType::Low (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
             ],
             // QuantizationOffsetType::High (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_UNVOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
             ],
         ],
         // SignalType::Voiced
         [
             // QuantizationOffsetType::Low (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_LOW_QUANTIZATION_6_PLUS_PULSE,
             ],
             // QuantizationOffsetType::High (0..=6+ pulses)
             [
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
-                ICDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_0_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_1_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_2_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_3_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_4_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_5_PULSE,
+                CDF_EXCITATION_SIGN_VOICED_SIGNAL_HIGH_QUANTIZATION_6_PLUS_PULSE,
             ],
         ],
     ];
@@ -2322,7 +2414,7 @@ pub mod excitation {
     /// Table 13 / §4.2.7.8.6: Excitation Quantization Offsets
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.6>
-    pub const QUANTIZATION_OFFSETS: [[i32; 2]; 3] = [
+    pub(crate) const QUANTIZATION_OFFSETS: [[i32; 2]; 3] = [
         [25, 60], // Inactive: [Low, High]
         [25, 60], // Unvoiced: [Low, High]
         [8, 25],  // Voiced:   [Low, High]
@@ -2330,42 +2422,39 @@ pub mod excitation {
 }
 
 /// SILK Resampler Filter Coefficients (RFC 6716 Section 4.2.9)
-pub mod resampler {
+pub(crate) mod resampler {
     /// Maximum batch duration in milliseconds processed per resampler iteration.
-    pub const RESAMPLER_MAX_BATCH_SIZE_MS: usize = 10;
+    pub(crate) const RESAMPLER_MAX_BATCH_SIZE_MS: usize = 10;
 
     /// Order of the 12-phase polyphase FIR interpolation filter (`RESAMPLER_ORDER_FIR_12`).
-    pub const RESAMPLER_ORDER_FIR_12: usize = 8;
+    pub(crate) const RESAMPLER_ORDER_FIR_12: usize = 8;
 
     /// Downsampler FIR filter orders (`RESAMPLER_DOWN_ORDER_FIR0/1/2`).
-    pub const RESAMPLER_DOWN_ORDER_FIR0: usize = 18;
-    pub const RESAMPLER_DOWN_ORDER_FIR1: usize = 24;
-    pub const RESAMPLER_DOWN_ORDER_FIR2: usize = 36;
+    pub(crate) const RESAMPLER_DOWN_ORDER_FIR0: usize = 18;
+    pub(crate) const RESAMPLER_DOWN_ORDER_FIR1: usize = 24;
+    pub(crate) const RESAMPLER_DOWN_ORDER_FIR2: usize = 36;
 
     /// Decoder resampler delay matrix in input samples (`[in_rate_id][out_rate_id]`),
     /// where `in_rate_id` is `[8, 12, 16]` kHz and `out_rate_id` is `[8, 12, 16, 24, 48]` kHz.
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_DELAY_MATRIX_DEC: [[u8; 5]; 3] = [
-        [4, 0, 2, 0, 0],
-        [0, 9, 4, 7, 4],
-        [0, 3, 12, 7, 7],
-    ];
+    pub(crate) const RESAMPLER_DELAY_MATRIX_DEC: [[u8; 5]; 3] =
+        [[4, 0, 2, 0, 0], [0, 9, 4, 7, 4], [0, 3, 12, 7, 7]];
 
     /// High-quality 2x allpass upsampler coefficients for even output samples (Q16, third wrapped by -65536).
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_UP2_HQ_0: [i16; 3] = [1746, 14986, -26453];
+    pub(crate) const RESAMPLER_UP2_HQ_0: [i16; 3] = [1746, 14986, -26453];
 
     /// High-quality 2x allpass upsampler coefficients for odd output samples (Q16, third wrapped by -65536).
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_UP2_HQ_1: [i16; 3] = [6854, 25769, -9994];
+    pub(crate) const RESAMPLER_UP2_HQ_1: [i16; 3] = [6854, 25769, -9994];
 
     /// 12-phase symmetric 8-tap FIR interpolation coefficients for fractions 1/24, 3/24, ..., 23/24 (Q15).
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>
-    pub const RESAMPLER_FRAC_FIR_12: [[i16; 4]; 12] = [
+    pub(crate) const RESAMPLER_FRAC_FIR_12: [[i16; 4]; 12] = [
         [189, -600, 617, 30567],
         [117, -159, -1070, 29704],
         [52, 221, -2392, 28276],
@@ -2381,36 +2470,35 @@ pub mod resampler {
     ];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 3:4 (`16 kHz -> 12 kHz`).
-    pub const RESAMPLER_3_4_COEFS: [i16; 29] = [
-        -20694, -13867, -49, 64, 17, -157, 353, -496, 163, 11047, 22205, -39, 6, 91, -170, 186,
-        23, -896, 6336, 19928, -19, -36, 102, -89, -24, 328, -951, 2568, 15909,
+    pub(crate) const RESAMPLER_3_4_COEFS: [i16; 29] = [
+        -20694, -13867, -49, 64, 17, -157, 353, -496, 163, 11047, 22205, -39, 6, 91, -170, 186, 23,
+        -896, 6336, 19928, -19, -36, 102, -89, -24, 328, -951, 2568, 15909,
     ];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 2:3 (`12 kHz -> 8 kHz`).
-    pub const RESAMPLER_2_3_COEFS: [i16; 20] = [
+    pub(crate) const RESAMPLER_2_3_COEFS: [i16; 20] = [
         -14457, -14019, 64, 128, -122, 36, 310, -768, 584, 9267, 17733, 12, 128, 18, -142, 288,
         -117, -865, 4123, 14459,
     ];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 1:2 (`16 kHz -> 8 kHz`).
-    pub const RESAMPLER_1_2_COEFS: [i16; 14] = [
-        616, -14323, -10, 39, 58, -46, -84, 120, 184, -315, -541, 1284, 5380, 9024,
-    ];
+    pub(crate) const RESAMPLER_1_2_COEFS: [i16; 14] =
+        [616, -14323, -10, 39, 58, -46, -84, 120, 184, -315, -541, 1284, 5380, 9024];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 1:3.
-    pub const RESAMPLER_1_3_COEFS: [i16; 20] = [
+    pub(crate) const RESAMPLER_1_3_COEFS: [i16; 20] = [
         16102, -15162, -13, 0, 20, 26, 5, -31, -43, -4, 65, 90, 7, -157, -248, -44, 593, 1583,
         2612, 3271,
     ];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 1:4.
-    pub const RESAMPLER_1_4_COEFS: [i16; 20] = [
+    pub(crate) const RESAMPLER_1_4_COEFS: [i16; 20] = [
         22500, -15099, 3, -14, -20, -15, 2, 25, 37, 25, -16, -71, -107, -79, 50, 292, 623, 982,
         1288, 1464,
     ];
 
     /// Fractional downsampler AR2 + FIR coefficients for ratio 1:6.
-    pub const RESAMPLER_1_6_COEFS: [i16; 20] = [
+    pub(crate) const RESAMPLER_1_6_COEFS: [i16; 20] = [
         27540, -15257, 17, 12, 8, 1, -10, -22, -30, -32, -22, 3, 44, 100, 168, 243, 317, 381, 429,
         455,
     ];
@@ -2442,7 +2530,7 @@ mod tests {
     macro_rules! assert_valid_icdfs {
         ($($table:ident),+ $(,)?) => {
             $(
-                assert_valid_icdf(stringify!($table), &$table, false);
+                assert_valid_icdf(stringify!($table), $table.as_slice(), false);
             )+
         };
     }
@@ -2451,74 +2539,82 @@ mod tests {
     fn icdf_tables_invariants() {
         assert_valid_icdfs!(
             // Header iCDFs
-            ICDF_FRAME_TYPE_VAD_INACTIVE,
-            ICDF_FRAME_TYPE_VAD_ACTIVE,
-            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE,
-            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO,
-            ICDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE,
-            ICDF_STEREO_MID_ONLY,
-            ICDF_PER_FRAME_LBRR_FLAGS_40_MS,
-            ICDF_PER_FRAME_LBRR_FLAGS_60_MS,
+            CDF_FRAME_TYPE_VAD_INACTIVE,
+            CDF_FRAME_TYPE_VAD_ACTIVE,
+            CDF_STEREO_PREDICTION_WEIGHT_STAGE_ONE,
+            CDF_STEREO_PREDICTION_WEIGHT_STAGE_TWO,
+            CDF_STEREO_PREDICTION_WEIGHT_STAGE_THREE,
+            CDF_STEREO_MID_ONLY,
+            CDF_PER_FRAME_LBRR_FLAGS_40_MS,
+            CDF_PER_FRAME_LBRR_FLAGS_60_MS,
             // Gain iCDFs
-            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE,
-            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
-            ICDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
-            ICDF_INDEPENDENT_QUANTIZATION_GAIN_LSB,
-            ICDF_DELTA_QUANTIZATION_GAIN,
+            CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_INACTIVE,
+            CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_UNVOICED,
+            CDF_INDEPENDENT_QUANTIZATION_GAIN_MSB_VOICED,
+            CDF_INDEPENDENT_QUANTIZATION_GAIN_LSB,
+            CDF_DELTA_QUANTIZATION_GAIN,
             // LSF iCDFs
-            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
-            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
-            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
-            ICDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED,
-            ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION,
-            ICDF_NORMALIZED_LSF_INTERPOLATION_INDEX,
+            CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
+            CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
+            CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
+            CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED,
+            CDF_NORMALIZED_LSF_STAGE_TWO_INDEX_EXTENSION,
+            CDF_NORMALIZED_LSF_INTERPOLATION_INDEX,
             // LTP iCDFs
-            ICDF_PRIMARY_PITCH_LAG_HIGH_PART,
-            ICDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND,
-            ICDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND,
-            ICDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND,
-            ICDF_RELATIVE_DELTA_PITCH_LAG,
-            ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS,
-            ICDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS,
-            ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS,
-            ICDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS,
-            ICDF_PERIODICITY_INDEX,
-            ICDF_LTP_FILTER_INDEX_0,
-            ICDF_LTP_FILTER_INDEX_1,
-            ICDF_LTP_FILTER_INDEX_2,
-            ICDF_LTP_SCALING_PARAMETER,
+            CDF_PRIMARY_PITCH_LAG_HIGH_PART,
+            CDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND,
+            CDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND,
+            CDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND,
+            CDF_RELATIVE_DELTA_PITCH_LAG,
+            CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS,
+            CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS,
+            CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS,
+            CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS,
+            CDF_PERIODICITY_INDEX,
+            CDF_LTP_FILTER_INDEX_0,
+            CDF_LTP_FILTER_INDEX_1,
+            CDF_LTP_FILTER_INDEX_2,
+            CDF_LTP_SCALING_PARAMETER,
             // Excitation iCDFs
-            ICDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED,
-            ICDF_RATE_LEVEL_UNVOICED,
-            ICDF_RATE_LEVEL_VOICED,
-            ICDF_EXCITATION_LSB,
+            CDF_LINEAR_CONGRUENTIAL_GENERATOR_SEED,
+            CDF_RATE_LEVEL_UNVOICED,
+            CDF_RATE_LEVEL_VOICED,
+            CDF_EXCITATION_LSB,
         );
 
-        for (i, row) in ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX.iter().enumerate() {
-            assert_valid_icdf(&format!("ICDF_NORMALIZED_LSF_STAGE_TWO_INDEX[{i}]"), row, false);
+        for (i, row) in CDF_NORMALIZED_LSF_STAGE_TWO_INDEX.iter().enumerate() {
+            assert_valid_icdf(
+                &format!("CDF_NORMALIZED_LSF_STAGE_TWO_INDEX[{i}]"),
+                row.as_slice(),
+                false,
+            );
         }
 
-        for (i, row) in ICDF_PULSE_COUNT.iter().enumerate() {
+        for (i, row) in CDF_PULSE_COUNT.iter().enumerate() {
             // Rate level 10 has probability 0 for symbol 17 per RFC 6716 Table 46
-            assert_valid_icdf(&format!("ICDF_PULSE_COUNT[{i}]"), row, i == 10);
+            assert_valid_icdf(&format!("CDF_PULSE_COUNT[{i}]"), row.as_slice(), i == 10);
         }
-        for (i, row) in ICDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS.iter().enumerate() {
-            assert_valid_icdf(&format!("SPLIT_16[{i}]"), row, false);
+        for (i, row) in CDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS.iter().enumerate() {
+            assert_valid_icdf(&format!("SPLIT_16[{i}]"), row.as_slice(), false);
         }
-        for (i, row) in ICDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS.iter().enumerate() {
-            assert_valid_icdf(&format!("SPLIT_8[{i}]"), row, false);
+        for (i, row) in CDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS.iter().enumerate() {
+            assert_valid_icdf(&format!("SPLIT_8[{i}]"), row.as_slice(), false);
         }
-        for (i, row) in ICDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS.iter().enumerate() {
-            assert_valid_icdf(&format!("SPLIT_4[{i}]"), row, false);
+        for (i, row) in CDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS.iter().enumerate() {
+            assert_valid_icdf(&format!("SPLIT_4[{i}]"), row.as_slice(), false);
         }
-        for (i, row) in ICDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS.iter().enumerate() {
-            assert_valid_icdf(&format!("SPLIT_2[{i}]"), row, false);
+        for (i, row) in CDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS.iter().enumerate() {
+            assert_valid_icdf(&format!("SPLIT_2[{i}]"), row.as_slice(), false);
         }
 
-        for (sig, sig_table) in ICDF_EXCITATION_SIGN.iter().enumerate() {
+        for (sig, sig_table) in CDF_EXCITATION_SIGN.iter().enumerate() {
             for (q, q_table) in sig_table.iter().enumerate() {
                 for (p, icdf) in q_table.iter().enumerate() {
-                    assert_valid_icdf(&format!("ICDF_EXCITATION_SIGN[{sig}][{q}][{p}]"), icdf, false);
+                    assert_valid_icdf(
+                        &format!("CDF_EXCITATION_SIGN[{sig}][{q}][{p}]"),
+                        icdf.as_slice(),
+                        false,
+                    );
                 }
             }
         }

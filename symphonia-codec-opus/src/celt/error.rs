@@ -1,57 +1,82 @@
-//! CELT Layer Error Types
+//! Errors of the CELT layer
+//! ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)).
 
 use symphonia_core::errors::Error as SymphoniaError;
 use thiserror::Error;
 
-/// Errors that can occur during CELT frame decoding and synthesis.
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum Error {
-    #[error("opus celt: unsupported frame duration for CELT mode")]
-    UnsupportedFrameDuration,
-
-    #[error("opus celt: invalid band range ({start}..{end})")]
+/// Errors of CELT decoding; each converts into a decode error carrying its message, and the
+/// fields keep the offending value for `Debug`.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Error {
+    /// A start band outside the coded bands of the frame (RFC 6716 Section 4.3).
+    #[error("{}", self.message())]
     InvalidBandRange { start: usize, end: usize },
-
-    #[error("opus celt: invalid channel count ({0})")]
+    /// A coded or output channel count other than `1` or `2` (RFC 6716 Section 4.3).
+    #[error("{}", self.message())]
     InvalidChannelCount(usize),
-
-    #[error("opus celt: invalid post-filter period ({0})")]
-    InvalidPostFilterPeriod(usize),
-
-    #[error("opus celt: invalid PVQ pulse count or vector dimension")]
+    /// A pulse vector whose pulse count or dimension the codeword tables do not cover
+    /// (RFC 6716 Section 4.3.4.2).
+    #[error("{}", self.message())]
     InvalidPvqParameters,
-
-    #[error("opus celt: invalid IMDCT block size ({0})")]
+    /// A frame size other than the four CELT block sizes (RFC 6716 Section 4.3.7).
+    #[error("{}", self.message())]
     InvalidMdctSize(usize),
-
-    #[error("opus celt: output buffer too small")]
+    /// An output plane shorter than the decoded frame (RFC 6716 Section 4.3.7.2).
+    #[error("{}", self.message())]
     BufferTooSmall,
+    /// A spreading symbol outside `0..=3` (RFC 6716 Section 4.3.4.3, Table 59).
+    #[error("{}", self.message())]
+    InvalidSpread(u32),
+}
+
+impl Error {
+    /// The message of the error, which is also the static message of the decode error it
+    /// converts into.
+    const fn message(&self) -> &'static str {
+        return match self {
+            Self::InvalidBandRange { .. } => "opus celt: invalid band range",
+            Self::InvalidChannelCount(_) => "opus celt: invalid channel count",
+            Self::InvalidPvqParameters => "opus celt: invalid PVQ pulse count or vector dimension",
+            Self::InvalidMdctSize(_) => "opus celt: invalid MDCT block size",
+            Self::BufferTooSmall => "opus celt: output buffer too small",
+            Self::InvalidSpread(_) => "opus celt: invalid spread symbol",
+        };
+    }
 }
 
 impl From<Error> for SymphoniaError {
     fn from(err: Error) -> Self {
-        return match err {
-            Error::UnsupportedFrameDuration => {
-                SymphoniaError::DecodeError("opus celt: unsupported frame duration for CELT mode")
-            }
-            Error::InvalidBandRange { .. } => {
-                SymphoniaError::DecodeError("opus celt: invalid band range")
-            }
-            Error::InvalidChannelCount(_) => {
-                SymphoniaError::DecodeError("opus celt: invalid channel count")
-            }
-            Error::InvalidPostFilterPeriod(_) => {
-                SymphoniaError::DecodeError("opus celt: invalid post-filter period")
-            }
-            Error::InvalidPvqParameters => {
-                SymphoniaError::DecodeError("opus celt: invalid PVQ parameters")
-            }
-            Error::InvalidMdctSize(_) => {
-                SymphoniaError::DecodeError("opus celt: invalid IMDCT block size")
-            }
-            Error::BufferTooSmall => {
-                SymphoniaError::DecodeError("opus celt: output buffer too small")
-            }
-        };
+        return SymphoniaError::DecodeError(err.message());
+    }
+}
+
+#[cfg(test)]
+impl Error {
+    /// Whether `result` failed with this error; the decode error keeps only the message, which
+    /// is unique per variant.
+    pub(crate) fn matches<T>(&self, result: &Result<T, SymphoniaError>) -> bool {
+        return matches!(result, Err(SymphoniaError::DecodeError(message)) if *message == self.message());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every message names the layer and differs from the others, so a decode error identifies
+    /// its variant.
+    #[test]
+    fn messages_are_unique_and_name_the_layer() {
+        let messages = [
+            Error::InvalidBandRange { start: 0, end: 0 },
+            Error::InvalidChannelCount(0),
+            Error::InvalidPvqParameters,
+            Error::InvalidMdctSize(0),
+            Error::BufferTooSmall,
+            Error::InvalidSpread(0),
+        ]
+        .map(|error| error.message());
+        assert!(messages.iter().all(|message| message.starts_with("opus celt: ")));
+        assert!(messages.iter().enumerate().all(|(i, message)| !messages[..i].contains(message)));
     }
 }
