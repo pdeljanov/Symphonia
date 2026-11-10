@@ -47,6 +47,8 @@ pub(crate) struct Decoder {
     prev_decode_only_middle: bool,
     /// Coded channel count of the previous Opus frame (`0` before the first frame).
     prev_internal_channels: usize,
+    /// Whether the last configuration changed the internal rate (RFC 6716 Section 4.2.9).
+    internal_rate_changed: bool,
 }
 
 impl Default for Decoder {
@@ -66,6 +68,7 @@ impl Decoder {
             stereo: StereoState::new(),
             prev_decode_only_middle: false,
             prev_internal_channels: 0,
+            internal_rate_changed: false,
         };
     }
 
@@ -99,6 +102,8 @@ impl Decoder {
     ) -> Result<()> {
         debug_assert!(matches!(coded_channels, 1 | 2));
         let layout = SilkLayout::new(bandwidth, frame_duration)?;
+        self.internal_rate_changed =
+            self.channels[0].core.sample_rate_khz != layout.sample_rate_khz();
         let output_sample_rate = self.output_sample_rate;
         for channel in self.channels.iter_mut() {
             channel.set_sample_rate(layout.sample_rate_khz(), output_sample_rate)?;
@@ -156,7 +161,7 @@ impl Decoder {
 
     /// Applies the coded channel count of the Opus frame about to be decoded or concealed, for
     /// a stereo (`api_stereo`) or mono output stream, and returns whether a stereo stream just
-    /// turned mono.
+    /// turned mono at an unchanged internal rate.
     ///
     /// A side channel that the previous frame did not code restarts as after a reset, so its next
     /// frame skips the gain clamp and the NLSF interpolation
@@ -175,7 +180,10 @@ impl Decoder {
             self.stereo.reset_side();
             self.channels[1].core.resampler = self.channels[0].core.resampler;
         }
-        return api_stereo && internal_channels == 1 && previous == 2;
+        return api_stereo
+            && internal_channels == 1
+            && previous == 2
+            && !self.internal_rate_changed;
     }
 
     /// Conceals one channel's lost SILK frame (non-normative,
@@ -619,6 +627,26 @@ mod tests {
         let fresh_side = decode_side(&mut fresh, stereo_1);
 
         assert_eq!(switched_side.output_pcm, fresh_side.output_pcm);
+    }
+
+    /// The first frame after a stereo stream turns mono renders the right channel through the side
+    /// resampler only when the internal rate is unchanged; at a new rate that resampler still
+    /// holds the old rate, so the mid channel is duplicated instead (RFC 6716 Appendix A).
+    #[test]
+    fn stereo_to_mono_resamples_the_right_channel_only_at_an_unchanged_rate() {
+        let stereo_0 = &crate::test_vectors::STEREO_MB.packets[0].packet[1..];
+        let mut out = [[0.0_f32; 960]; 2];
+        let mut decoder =
+            create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        let mut dec = entropy::Decoder::new(stereo_0);
+        decoder.decode_frame_planar(&mut dec, true, Planes::from_rows(&mut out, true)).unwrap();
+
+        let mut same_rate = decoder.clone();
+        same_rate.configure(1, FrameDuration::Ms20, Bandwidth::MediumBand).unwrap();
+        assert!(same_rate.begin_frame(false, true));
+
+        decoder.configure(1, FrameDuration::Ms20, Bandwidth::Narrowband).unwrap();
+        assert!(!decoder.begin_frame(false, true));
     }
 
     #[test]
