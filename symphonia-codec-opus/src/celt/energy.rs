@@ -296,19 +296,15 @@ fn step_size(bits: i32) -> f32 {
 /// Adds the fine energy refinement of `bands` to every channel row of `band_e`
 /// ([RFC 6716 Section 4.3.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2>)):
 /// a band with `B = fine_quant[i] > 0` reads a `B`-bit integer `f` per channel, which moves its
-/// energy by `(f + 1/2) / 2^B - 1/2`. A band whose bits no longer fit in the frame is skipped.
+/// energy by `(f + 1/2) / 2^B - 1/2`.
 pub(crate) fn unquant_fine_energy(
     range_decoder: &mut Decoder<'_>,
     bands: Range<usize>,
     fine_quant: &[i32; MAX_BANDS],
     band_e: &mut [[f32; MAX_BANDS]],
 ) -> Result<()> {
-    let channels = band_e.len() as i32;
     for band in bands.filter(|&i| fine_quant[i] > 0) {
         let fine_bits = fine_quant[band];
-        if range_decoder.tell() + channels * fine_bits > range_decoder.storage_bits() {
-            continue;
-        }
         let step = step_size(fine_bits);
         for energies in band_e.iter_mut() {
             let f = range_decoder.decode_raw_bits(fine_bits as u32)? as f32;
@@ -611,6 +607,27 @@ mod tests {
             );
         }
 
+        return;
+    }
+
+    /// Fine energy reads `fine_quant[i]` raw bits per channel for every band with
+    /// `fine_quant[i] > 0` and never checks the frame budget, so `tell()` advances by every bit
+    /// the allocation granted
+    /// ([RFC 6716 Section 4.3.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2>),
+    /// Appendix A `unquant_fine_energy`). Raw bits come from the end of the frame backwards.
+    #[test]
+    fn fine_energy_reads_every_band_without_budget_check() {
+        let packet = [0x5A_u8, 0xC3];
+        let mut dec = Decoder::new(&packet);
+        let mut fine_quant = [0_i32; MAX_BANDS];
+        fine_quant[..2].fill(8);
+        let mut old_band_e = [[0.0_f32; MAX_BANDS]; MAX_CHANNELS];
+
+        unquant_fine_energy(&mut dec, 0..2, &fine_quant, &mut old_band_e[..1]).unwrap();
+
+        // Band 0 takes the last byte, band 1 the first: offset = (f + 1/2) / 2^8 - 1/2.
+        assert_eq!(old_band_e[0][..2], [(195.5 - 128.0) / 256.0, (90.5 - 128.0) / 256.0]);
+        assert_eq!(dec.tell(), 17);
         return;
     }
 }
