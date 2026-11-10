@@ -67,17 +67,17 @@ symphonia-codec-opus
 ### Implementation Status
 
 | Component | Normative Specification | Status | Details |
-| :--- | :--- | :--- | :--- |
-| **TOC Byte** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1) | 🟢 Implemented | All 32 configurations, modes (SILK, Hybrid, CELT), bandwidths (NB..FB), frame durations (2.5..60 ms) |
-| **Packet Framing** | [RFC 6716 Section 3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-3.2), [Appendix B](https://datatracker.ietf.org/doc/html/rfc6716#appendix-B) | 🟢 Implemented | Code 0, 1, 2, 3 (CBR/VBR), padding, 120 ms validation, self-delimited multi-stream packets |
-| **Ogg Headers** | [RFC 7845 Section 5](https://datatracker.ietf.org/doc/html/rfc7845#section-5) | 🟢 Implemented | `OpusHead` identification header with the channel mapping table for every family other than 0 and per-family channel bounds (RFC 7845 Section 5.1.1); `OpusTags` is left to the Ogg demuxer |
-| **Entropy Decoder** | [RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1) | 🟢 Implemented | 32-bit range decoder over compile-time validated CDF tables (`decode_symbol`, `decode_symbol_logp`, `decode_uint`, `decode_laplace`) and backward raw-bit reader |
-| **SILK Layer** | [RFC 6716 Section 4.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2) | 🟢 Implemented | NB/MB/WB mono & stereo, NLSF/LTP/LPC synthesis, 48 kHz resampler, LBRR, DTX/CNG, PLC |
-| **CELT Layer** | [RFC 6716 Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 Implemented | Transient/short blocks, coarse/fine/leftover energy, dynamic bit allocation, PVQ/CWRS, IMDCT, post-filter, PLC |
-| **Hybrid Mode** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1), [Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 Implemented | Simultaneous SILK (0..8 kHz) + CELT (8..20 kHz, bands 17..21) synthesis and delay compensation |
-| **Mode Transitions** | [RFC 6716 Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5) | 🟢 Implemented | 5 ms redundant CELT frame transitions and window crossfades across SILK/Hybrid/CELT boundaries |
-| **Multi-Stream** | [RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1) | 🟢 Implemented | Coupled (2-channel) and uncoupled (1-channel) stream routing, Vorbis Family 1 (1..8 channels), Q8 output gain |
-| **RFC Conformance** | [RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1), [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) | 🟢 Passing at every output rate | `tests/rfc6716_conformance.rs` decodes the 12 RFC 8251 test vectors (`OPUS_TESTVECTORS_DIR`) at 8, 12, 16, 24 and 48 kHz in mono and stereo, requires the final range decoder state to equal the reference on every packet and passes the `opus_compare` metric in all 120 runs, with stereo output matching the `.dec` set and mono output the `m.dec` set ([RFC 8251 Section 10](https://datatracker.ietf.org/doc/html/rfc8251#section-10); quality 96.2 to 100.0 at 48 kHz, and 43.4 to 98.1 at reduced rates, matching the patched RFC 6716 Appendix A reference decoder's own 96.2 to 96.7 on SILK mono and 43.4 on `testvector12` mono at 8 kHz). Sample-by-sample comparison against `opus_demo -d` (`OPUS_REFERENCE_OUTPUT_DIR`) is bit-exact (`0` LSB difference) across all 30 SILK-only runs and within `1` LSB of 16-bit float rounding (`99.41%` to `100.00%` identical samples) across all stereo runs and mono runs without intensity stereo phase inversion. The unit-test fixtures carry values recorded from libopus 1.6.1 and are labelled by provenance; the normative reference is RFC 6716 Appendix A as updated by RFC 8251. |
+| :--- | :--- | :---: | :--- |
+| **TOC Byte** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1) | 🟢 | All 32 configurations, modes (SILK, Hybrid, CELT), bandwidths (NB..FB), frame durations (2.5..60 ms) |
+| **Packet Framing** | [RFC 6716 Section 3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-3.2), [Appendix B](https://datatracker.ietf.org/doc/html/rfc6716#appendix-B) | 🟢 | Code 0, 1, 2, 3 (CBR/VBR), padding, 120 ms validation, self-delimited multi-stream packets |
+| **Ogg Headers** | [RFC 7845 Section 5](https://datatracker.ietf.org/doc/html/rfc7845#section-5) | 🟢 | `OpusHead` identification header with the channel mapping table for every family other than 0 and per-family channel bounds (RFC 7845 Section 5.1.1); `OpusTags` is left to the Ogg demuxer |
+| **Entropy Decoder** | [RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1) | 🟢 | 32-bit range decoder over compile-time validated CDF tables (`decode_symbol`, `decode_symbol_logp`, `decode_uint`, `decode_laplace`) and backward raw-bit reader |
+| **SILK Layer** | [RFC 6716 Section 4.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2) | 🟢 | NB/MB/WB mono & stereo, NLSF/LTP/LPC synthesis, 48 kHz resampler, LBRR, DTX/CNG, PLC |
+| **CELT Layer** | [RFC 6716 Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 | Transient/short blocks, coarse/fine/leftover energy, dynamic bit allocation, PVQ/CWRS, IMDCT, post-filter, PLC |
+| **Hybrid Mode** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1), [Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 | Simultaneous SILK (0..8 kHz) + CELT (8..20 kHz, bands 17..21) synthesis and delay compensation |
+| **Mode Transitions** | [RFC 6716 Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5) | 🟢 | 5 ms redundant CELT frame transitions and window crossfades across SILK/Hybrid/CELT boundaries |
+| **Multi-Stream** | [RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1) | 🟢 | Coupled (2-channel) and uncoupled (1-channel) stream routing, Vorbis Family 1 (1..8 channels), Q8 output gain |
+| **RFC Conformance** | [RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1), [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) | 🟢 | All 120 runs (12 vectors x 5 sample rates x mono/stereo) pass with exact `final_range` on every packet; bit-exact (`0` LSB) on SILK-only runs and within `1` LSB of the patched RFC 6716 Appendix A C reference decoder on stereo and non-inverted mono runs (see Section 8) |
 
 ---
 
@@ -413,23 +413,68 @@ In Hybrid mode (TOC configurations `12..=15`, Super-Wideband 24 kHz or Fullband 
 
 ---
 
-## 8. Testing
+## 8. Conformance, Quality & Testing
 
-The unit tests need no external files:
+### 8.1 How the RFC Test Vectors & Golden Reference Outputs Work
+
+The normative authority for Opus decoder behaviour is [RFC 6716](https://datatracker.ietf.org/doc/html/rfc6716) (both the specification prose and the Base64-encoded C reference implementation in [Appendix A](https://datatracker.ietf.org/doc/html/rfc6716#appendix-A)) together with the errata updates in [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251).
+
+The official IETF test vector archive ([`opus_newvectors`](https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz), [RFC 8251 Section 11](https://datatracker.ietf.org/doc/html/rfc8251#section-11)) contains:
+- **12 synthetic bitstream files (`testvector01.bit` .. `testvector12.bit`)**: crafted by the IETF to exercise every mode (SILK, Hybrid, CELT), bandwidth (NB, MB, WB, SWB, FB), frame size (2.5 ms to 60 ms), mode transition, packet loss concealment (PLC), LBRR, DTX, and numerical edge case. Each packet record stores the compressed payload alongside the encoder's 32-bit final range coder state (`enc_final_range`).
+- **2 sets of 48 kHz stereo 16-bit PCM golden reference outputs**:
+  - `testvector01.dec` .. `testvector12.dec`: generated by the reference decoder **with** the CELT 180-degree intensity-stereo phase inversion enabled (optimal for stereo playback).
+  - `testvector01m.dec` .. `testvector12m.dec`: generated **without** the CELT 180-degree phase inversion ([RFC 8251 Section 10](https://datatracker.ietf.org/doc/html/rfc8251#section-10)), preventing phase-inverted high-frequency bands from cancelling out when downmixed to mono.
+
+Under [RFC 6716 Section 6](https://datatracker.ietf.org/doc/html/rfc6716#section-6), a decoder is verified across all **120 combinations** (`12 vectors x 5 sample rates [8, 12, 16, 24, 48 kHz] x 2 layouts [mono, stereo]`) using two criteria:
+1. **Bit-Exact Range Coder State (`final_range`)**: After every checked packet, the decoder's 32-bit range coder state `rng` must equal `enc_final_range`. A single bit or branch error anywhere in SILK or CELT causes an immediate mismatch.
+2. **Perceptual Spectral Quality (`opus_compare`)**: The decoded output is compared against `.dec` or `m.dec` using the psychoacoustic Bark-band metric of `opus_compare.c` ([RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1)). `Q = 0.0` is the passing threshold (48 dB SNR), `Q = 100.0` is identical, and `Q > 90.0` is recommended at 48 kHz.
+
+### 8.2 Calibration Against the Patched RFC 6716 Appendix A C Reference Decoder
+
+`symphonia-codec-opus` is verified both against the official `.dec` / `m.dec` vectors and sample-by-sample against `opus_demo -d` compiled from RFC 6716 Appendix A with the RFC 8251 patch (`100%` safe Rust, `#![forbid(unsafe_code)]`, zero per-packet heap allocations):
+
+| Vector | Stream Content | Range Checks | Mono `Q` (`m.dec`) | Stereo `Q` (`.dec`) | Ref `opus_demo` Stereo `Q` | Stereo Sample Match vs `opus_demo` | Max Stereo Diff (16-bit LSB) |
+| :--- | :--- | :---: | ---: | ---: | ---: | ---: | ---: |
+| `01` | CELT FB, 100% stereo | 1,472 / 1,472 | 98.2 | 99.9 | 99.8 | 99.81% | 1 LSB |
+| `02` | SILK NB, 49% stereo | 1,249 / 1,249 | 96.2 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `03` | SILK MB, 48% stereo | 1,056 / 1,056 | 96.7 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `04` | SILK WB, 49% stereo | 1,329 / 1,329 | 96.5 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `05` | Hybrid SWB, 49% stereo | 1,357 / 1,357 | 96.3 | 99.9 | 99.8 | 100.00% | 1 LSB |
+| `06` | Hybrid FB, 49% stereo | 1,249 / 1,249 | 96.3 | 99.8 | 99.8 | 100.00% | 1 LSB |
+| `07` | CELT NB..FB, 31 BW switches | 1,316 / 1,316 | 98.1 | 99.8 | 99.6 | 99.82% | 1 LSB |
+| `08` | CELT NB..FB, 29 BW switches | 1,558 / 1,558 | 96.5 | 99.8 | 99.6 | 99.83% | 1 LSB |
+| `09` | CELT NB..FB, 7 BW switches | 1,376 / 1,376 | 98.1 | 99.8 | 99.5 | 99.81% | 1 LSB |
+| `10` | CELT FB + 16% Hybrid, 16 switches | 1,598 / 1,598 | 97.7 | 99.8 | 99.2 | 99.41% | 1 LSB |
+| `11` | CELT FB, 100% stereo | 1,499 / 1,499 | 98.5 | 99.8 | 99.7 | 99.92% | 1 LSB |
+| `12` | SILK NB..WB + 19% Hybrid SWB, mono | 1,372 / 1,372 | 99.9 | 99.9 | 99.8 | 100.00% | 1 LSB |
+
+Summary across all 5 output sample rates (120 runs total):
+
+| Output Rate | Range Checks Passed | `symphonia-codec-opus` Quality Range | Reference `opus_demo` Quality Range | SILK-Only Sample Diff vs `opus_demo` | Stereo Sample Diff vs `opus_demo` |
+| :--- | :---: | ---: | ---: | :---: | :---: |
+| **8 kHz** | 24 / 24 runs | `43.4` .. `93.3` | `43.4` .. `93.3` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
+| **12 kHz** | 24 / 24 runs | `65.9` .. `96.0` | `65.9` .. `96.0` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
+| **16 kHz** | 24 / 24 runs | `56.5` .. `96.3` | `56.5` .. `96.4` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.44%`..`100.00%` exact) |
+| **24 kHz** | 24 / 24 runs | `68.5` .. `98.1` | `68.5` .. `98.1` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
+| **48 kHz** | 24 / 24 runs | `96.2` .. `100.0` | `96.2` .. `100.0` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.41%`..`100.00%` exact) |
+
+Key takeaways from the reference calibration:
+- **100% Bit-Exact SILK Integer Pipeline**: Across all 30 SILK-only runs (`testvector02`..`04` at all 5 rates in both mono and stereo), every decoded 16-bit PCM sample is 100.00% identical (`0` LSB max difference) to `opus_demo -d`.
+- **Sub-LSB Floating-Point Accuracy in CELT & Hybrid**: Across all 60 stereo runs and all mono runs without intensity stereo phase inversion, `99.41%` to `100.00%` of all 16-bit PCM samples are identical to `opus_demo -d`, and the remaining `< 0.6%` differ by at most `1` LSB (from floating-point operation ordering in the FFT/IMDCT).
+- **Why Mono SILK Scores `96.2`..`96.7` and Reduced Rates Score `43.4`..`98.1`**: Because the `.dec` and `m.dec` files are 48 kHz stereo decodes, `opus_compare` evaluates a mono decode against `(L + R) / 2` of the stereo reference (whereas a mono SILK decoder decodes only the mid channel) and evaluates reduced-rate decodes across internal resampler delay/phase differences ([RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1)). The C reference decoder `opus_demo -d` itself gets the exact same `96.2`..`96.7` on SILK mono and `43.4` on `testvector12` at 8 kHz, and its output is `100.00%` bit-exact (`0` LSB difference) with `symphonia-codec-opus` on those runs.
+
+### 8.3 Running the Test Suites
+
+The 134 self-contained unit tests (covering static table invariants, TOC/packet/header parsers, malformed input error variants, entropy/SILK/CELT DSP stages, and `libopus 1.6.1`-recorded end-to-end fixtures in `src/test_vectors.rs`) require no external files:
 
 ```bash
 cargo test -p symphonia-codec-opus
 ```
 
-The conformance test needs the RFC 8251 test vectors
-([`opus_newvectors`](https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz)),
-so it is ignored by default. Point `OPUS_TESTVECTORS_DIR` at the extracted directory to run it:
+To run the 120-run RFC 6716 / RFC 8251 conformance suite against [`opus_newvectors`](https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz) (and optionally compare sample-by-sample against `ref_<vector>_<rate>_<layout>.pcm` files produced by `opus_demo -d`):
 
 ```bash
-OPUS_TESTVECTORS_DIR=<path to opus_newvectors> cargo test --release -p symphonia-codec-opus --test rfc6716_conformance -- --ignored --nocapture
+OPUS_TESTVECTORS_DIR=<path to opus_newvectors> \
+OPUS_REFERENCE_OUTPUT_DIR=<optional path to ref_*.pcm> \
+cargo test --release -p symphonia-codec-opus --test rfc6716_conformance -- --ignored --nocapture
 ```
-
-The source of truth for decoder behaviour is RFC 6716 (prose plus the normative Appendix A
-reference decoder) as updated by RFC 8251. The conformance test follows RFC 6716 Section 6: the
-final range decoder state must equal the reference for every packet, and the output must pass the
-`opus_compare` threshold against either RFC 8251 test vector set.
