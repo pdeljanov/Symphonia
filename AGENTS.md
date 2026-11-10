@@ -45,7 +45,7 @@ Prefer deterministic bitstream and DSP transformations with explicit inputs and 
 All code in `symphonia-codec-opus/` must preserve the readability, transparency, and idiomatic Rust style established in `toc.rs`, `header.rs`, and `packet.rs`:
 
 - **Zero `else if` Chains (`match`-First Control Flow)**:
-  - Never use `else if` anywhere in `symphonia-codec-opus/src/`.
+  - Never use `else if` anywhere in `symphonia-codec-opus/src/` (`rg "else if" symphonia-codec-opus/src/` must return `0` matches).
   - Replace multi-branch conditionals with exhaustive `match` expressions (`match a.cmp(&b)` with `std::cmp::Ordering`, tuple patterns `match (mode, bandwidth)`, or `match` guards) and early guard clauses (`if !active { return; }`) to avoid deep nesting.
   - Use concise one-line standard library arithmetic methods such as `value.checked_shr(shift).unwrap_or(0)` instead of multi-line shift-guard `if / else` blocks.
 - **Functional Array & Slice Transformations**:
@@ -53,7 +53,7 @@ All code in `symphonia-codec-opus/` must preserve the readability, transparency,
   - Shift delay lines and history buffers with `slice.copy_within(src_range, dst_start)` and clear buffers with `slice.fill(0)` rather than manual index-copy loops.
   - Express dot products, energy accumulations, and max-gain searches with `.iter().zip(...).fold(...)` or `.iter().enumerate().fold(...)`.
 - **Consistent Index Naming (`i`, `j`, `k`) & Minimal Type Casting**:
-  - Always name loop and closure index variables `i` (and `j`, `k` for nested loops).
+  - Always name loop and closure index variables `i` (and `j`, `k` for nested loops). Never use `ix` or any name containing `idx` (`idx`, `s_idx`, `b_idx`, `frame_idx`, `subframe_idx`, `idx0`).
   - Use `usize` natively for slice indices, band indices, and block sizes (`lm: usize`, `start_band: usize`, `end_band: usize`) to avoid noisy `as usize`, `as isize`, and `as i32` casts.
 - **Named Q-Format & Domain Constants (No Magic Numbers)**:
   - Never write unexplained bit-shift or fixed-point magic numbers (`1 << 16`, `1 << 21`, `1 << 23`, `5`, `6`, `32767`) inline. Define named, documented constants that state the exact Q-format and RFC 6716 meaning (e.g., `UNIT_GAIN_Q16 = 1 << 16`, `CNG_HIGH_PLC_GAIN_THRES_Q16 = 1 << 21`, `CNG_HIGH_SMTH_GAIN_THRES_Q16 = 1 << 23`, `CNG_PLC_ENERGY_SUB_SHIFT = 5`, `Q16_TO_Q10_SHIFT = 6`).
@@ -196,14 +196,16 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 
 ### 5.3 Mandatory verification gate
 
-Before reporting any Rust change complete or closing an issue, execute and pass all three checks:
+Before reporting any Rust change complete or closing an issue, execute and pass all four checks:
 
 ```bash
+rg -n "else if|\bix\b|\w*idx\w*" symphonia-codec-opus/src/
 cargo test -p symphonia-codec-opus -- --test-threads=1
 cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
 cargo doc -p symphonia-codec-opus --no-deps --document-private-items
 ```
 
+- `rg` must report `0` matches for `else if`, `ix`, or any identifier containing `idx` (`idx`, `s_idx`, `block_idx`, `idx0`, and so on).
 - All unit, integration, and doc tests must pass (`0 failed`).
 - `cargo clippy` must report zero warnings for this crate (`--no-deps` scopes the lints to it; `-D warnings` fails the gate on any).
 - `cargo doc -p symphonia-codec-opus --no-deps --document-private-items` must complete with `0 warnings`; the crate's modules are private, so the flag is what checks their intra-doc links.
