@@ -26,33 +26,42 @@ Opus is a low-latency audio codec standardized by the IETF in [RFC 6716](https:/
 symphonia-codec-opus
 ├── src/
 │   ├── lib.rs            - Crate root, public exports, #![forbid(unsafe_code)]
-│   ├── toc.rs            - Table of Contents (TOC) byte parser (RFC 6716 Section 3.1)
-│   ├── packet.rs         - Opus packet framing (Codes 0-3, VBR/CBR, self-delimited, padding)
-│   ├── header.rs         - Ogg Opus Identification (OpusHead) and Comment (OpusTags) headers
-│   ├── entropy.rs        - Forward range coder and backward raw-bit reader (RFC 6716 Section 4.1)
-│   ├── decoder.rs        - Top-level OpusDecoder, Hybrid fusion, mode transitions, multi-stream
-│   ├── silk/             - SILK LP layer decoder (RFC 6716 Section 4.2)
-│   │   ├── mod.rs        - SILK decoder state, LBRR, DTX, and 48 kHz output orchestration
-│   │   ├── constant.rs   - RFC 6716 SILK iCDF tables, codebooks, and filter coefficients
-│   │   ├── error.rs      - SILK error definitions
-│   │   ├── params.rs     - Header, stereo weights, logarithmic gain, and LTP unpacking
-│   │   ├── lsf.rs        - Two-stage VQ NLSF decoding, stabilization, and interpolation
-│   │   ├── excitation.rs - Rate-distortion LCG, shell coding, pulse signs, and scaling
-│   │   ├── synthesis.rs  - NLSF-to-LPC conversion, LTP synthesis, LPC IIR, stereo unmixing
-│   │   ├── resampler.rs  - Stateful polyphase IIR/FIR resampler (8/12/16 kHz -> 48 kHz)
-│   │   └── plc.rs        - Packet Loss Concealment (PLC) and Comfort Noise Generation (CNG)
-│   └── celt/             - CELT MDCT layer decoder (RFC 6716 Section 4.3)
-│       ├── mod.rs        - CELT module exports and band/block constants
-│       ├── constant.rs   - Bark frequency bands, bit-allocation tables, window & trig tables
-│       ├── error.rs      - CELT error definitions
-│       ├── energy.rs     - Coarse (2D IIR + Laplace) and fine energy quantization
-│       ├── rate.rs       - Dynamic bit allocation, trim, intensity stereo, dual stereo
-│       ├── cwrs.rs       - Combinatorial Pulse Vector Quantization (CWRS) index decoding
-│       ├── vq.rs         - Algebraic PVQ search, Haar1 spreading rotations, pitch folding
-│       ├── mdct.rs       - Short/long IMDCT wrapper over symphonia_core::dsp::mdct::Imdct
-│       └── decoder.rs    - Complete CELT frame synthesis, pre-filter, post-filter, and PLC
+│   ├── toc.rs            - TOC byte: configuration table, stereo flag, frame count code (RFC 6716 Section 3.1)
+│   ├── packet.rs         - Packet framing for Codes 0 to 3 and self-delimited packets, no heap allocation (RFC 6716 Section 3.2, Appendix B)
+│   ├── header.rs         - Ogg Opus identification header and channel mapping table (RFC 7845 Section 5.1)
+│   ├── entropy.rs        - Range decoder, raw-bit reader and compile-time validated CDF tables (RFC 6716 Section 4.1)
+│   ├── fixed.rs          - Q-format fixed-point arithmetic shared by the SILK layer (RFC 6716 Section 4.2)
+│   ├── sample_rate.rs    - Output sample rates, samples per frame duration, 48 kHz decimation factor
+│   ├── planes.rs         - Planar f32 channel pair handed down the decode chain
+│   ├── decoder.rs        - OpusDecoder: layer sequencing, loss concealment, transitions and redundancy, multi-stream routing (RFC 6716 Sections 4.4, 4.5; RFC 7845 Section 5.1.1)
+│   ├── silk/             - SILK linear prediction layer (RFC 6716 Section 4.2)
+│   │   ├── mod.rs        - Frame geometry (SilkLayout), channel state and coding references, frame types
+│   │   ├── constant.rs   - CDF tables, codebooks and filter coefficients
+│   │   ├── error.rs      - SILK error type
+│   │   ├── params.rs     - Header flags, stereo weights, gains and LTP parameters (Sections 4.2.3 to 4.2.7.6)
+│   │   ├── lsf.rs        - NLSF decoding, stabilisation and interpolation (Section 4.2.7.5)
+│   │   ├── lpc.rs        - NLSF to LPC conversion, coefficient limits and prediction kernels (Sections 4.2.7.5.6 to 4.2.7.5.8, 4.2.7.9)
+│   │   ├── excitation.rs - LCG seed and shell-coded excitation (Sections 4.2.7.7, 4.2.7.8)
+│   │   ├── synthesis.rs  - LTP and LPC synthesis, stereo unmixing (Sections 4.2.7.9, 4.2.8)
+│   │   ├── resampler.rs  - Resampling to the output rate (Section 4.2.9)
+│   │   ├── plc.rs        - Loss concealment and comfort noise (Section 4.4, non-normative)
+│   │   └── decoder.rs    - Channel transitions and the LBRR and regular frame schedule (Sections 4.2.4 to 4.2.6)
+│   └── celt/             - CELT transform layer (RFC 6716 Section 4.3)
+│       ├── mod.rs        - Block size (LM), band constants, silence frame, module index
+│       ├── constant.rs   - Band boundaries, energy models, allocation tables, window
+│       ├── error.rs      - CELT error type
+│       ├── energy.rs     - Coarse, fine and final energy decoding (Section 4.3.2)
+│       ├── rate.rs       - Bit allocation and time-frequency parameters (Sections 4.3.1, 4.3.3)
+│       ├── cwrs.rs       - PVQ codeword index decoding (Section 4.3.4.2)
+│       ├── vq.rs         - PVQ shape decoding, spreading, folding, anti-collapse (Sections 4.3.4, 4.3.5)
+│       ├── fft.rs        - Mixed-radix FFT kernel of the inverse MDCT (Section 4.3.7)
+│       ├── mdct.rs       - Inverse MDCT with overlap-add (Section 4.3.7)
+│       ├── synthesis.rs  - Band denormalisation and de-emphasis (Sections 4.3.6, 4.3.7.2)
+│       ├── postfilter.rs - Pitch comb post-filter (Section 4.3.7.1)
+│       ├── plc.rs        - LPC analysis and pitch search for concealment (Section 4.4)
+│       └── decoder.rs    - CELT frame decoder state and synthesis orchestration (Sections 4.3, 4.4)
 └── tests/
-    └── rfc6716_conformance.rs - Official IETF RFC 6716 / RFC 8251 testvector01..12 suite
+    └── rfc6716_conformance.rs - RFC 6716 Section 6 conformance on the RFC 8251 vectors (ignored unless OPUS_TESTVECTORS_DIR is set)
 ```
 
 ### Implementation Status
@@ -61,14 +70,14 @@ symphonia-codec-opus
 | :--- | :--- | :--- | :--- |
 | **TOC Byte** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1) | 🟢 Implemented | All 32 configurations, modes (SILK, Hybrid, CELT), bandwidths (NB..FB), frame durations (2.5..60 ms) |
 | **Packet Framing** | [RFC 6716 Section 3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-3.2), [Appendix B](https://datatracker.ietf.org/doc/html/rfc6716#appendix-B) | 🟢 Implemented | Code 0, 1, 2, 3 (CBR/VBR), padding, 120 ms validation, self-delimited multi-stream packets |
-| **Ogg Headers** | [RFC 7845 Section 5](https://datatracker.ietf.org/doc/html/rfc7845#section-5) | 🟢 Implemented | `OpusHead` (Mapping Families 0, 1, 255) and `OpusTags` vendor/comment parsing |
-| **Entropy Decoder** | [RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1) | 🟢 Implemented | 32-bit range decoder (`icdf`, `logp`, `uint`, Laplace) and backward bit reader (`raw_bits`) |
+| **Ogg Headers** | [RFC 7845 Section 5](https://datatracker.ietf.org/doc/html/rfc7845#section-5) | 🟢 Implemented | `OpusHead` identification header with the channel mapping table for every family other than 0 and per-family channel bounds (RFC 7845 Section 5.1.1); `OpusTags` is left to the Ogg demuxer |
+| **Entropy Decoder** | [RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1) | 🟢 Implemented | 32-bit range decoder over compile-time validated CDF tables (`decode_symbol`, `decode_symbol_logp`, `decode_uint`, `decode_laplace`) and backward raw-bit reader |
 | **SILK Layer** | [RFC 6716 Section 4.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2) | 🟢 Implemented | NB/MB/WB mono & stereo, NLSF/LTP/LPC synthesis, 48 kHz resampler, LBRR, DTX/CNG, PLC |
 | **CELT Layer** | [RFC 6716 Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 Implemented | Transient/short blocks, coarse/fine/leftover energy, dynamic bit allocation, PVQ/CWRS, IMDCT, post-filter, PLC |
 | **Hybrid Mode** | [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1), [Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3) | 🟢 Implemented | Simultaneous SILK (0..8 kHz) + CELT (8..20 kHz, bands 17..21) synthesis and delay compensation |
-| **Mode Transitions** | [RFC 6716 Section 4.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.4), [Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5) | 🟢 Implemented | 5 ms redundant CELT frame transitions and window crossfades across SILK/Hybrid/CELT boundaries |
+| **Mode Transitions** | [RFC 6716 Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5) | 🟢 Implemented | 5 ms redundant CELT frame transitions and window crossfades across SILK/Hybrid/CELT boundaries |
 | **Multi-Stream** | [RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1) | 🟢 Implemented | Coupled (2-channel) and uncoupled (1-channel) stream routing, Vorbis Family 1 (1..8 channels), Q8 output gain |
-| **RFC Conformance** | [RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1), [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) | 🟢 Verified | Verified against `libopus` C oracle and official IETF `testvector01`..`testvector12` |
+| **RFC Conformance** | [RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1), [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) | 🟢 Passing at every output rate | `tests/rfc6716_conformance.rs` decodes the 12 RFC 8251 test vectors (`OPUS_TESTVECTORS_DIR`) at 8, 12, 16, 24 and 48 kHz in mono and stereo, requires the final range decoder state to equal the reference on every packet and passes the `opus_compare` metric against the `.dec` set in all 120 runs (quality 96.2 to 100.0 at 48 kHz; 43.4 to 98.1 at reduced rates, where RFC 6716 Section 6.1 expects lower figures from the internal rate conversion). The unit-test fixtures carry values recorded from libopus 1.6.1 and are labelled by provenance; the normative reference is RFC 6716 Appendix A as updated by RFC 8251. |
 
 ---
 
@@ -116,7 +125,7 @@ symphonia-codec-opus
 
 ## 4. Top-Level Decoder & Dual-Ended Range Coder (`decoder.rs`, `entropy.rs`)
 
-### Top-Level Opus Decoder Block Diagram ([RFC 6716 Section 4, Figure 12](https://datatracker.ietf.org/doc/html/rfc6716#section-4))
+### Top-Level Opus Decoder Block Diagram ([RFC 6716 Section 4](https://datatracker.ietf.org/doc/html/rfc6716#section-4))
 
 ```text
                             +---------+    +------------+
@@ -135,7 +144,7 @@ symphonia-codec-opus
 ### Dual-Ended Range Decoder & Raw-Bit Reader ([RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1))
 
 Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]` slice:
-- **Forward Range Decoder ([Section 4.1.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1) - [Section 4.1.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.5))**: Reads from byte `0` forward, maintaining 32-bit interval size `rng` and offset `val` normalized to `2^23 < rng <= 2^24`. Decodes inverse-CDF symbols (`decode_symbol_with_icdf`), log-probability flags (`decode_symbol_logp`), uniform unsigned integers (`decode_uint`), and Laplace-distributed coarse energy deltas (`decode_laplace`).
+- **Forward Range Decoder ([Section 4.1.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1) - [Section 4.1.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.5))**: Reads from byte `0` forward, maintaining 32-bit interval size `rng` and offset `val` normalized to `2^23 < rng <= 2^24`. Decodes symbols from compile-time validated cumulative distribution tables (`decode_symbol` over `Cdf`), log-probability flags (`decode_symbol_logp`), uniform unsigned integers (`decode_uint`), and Laplace-distributed coarse energy deltas (`decode_laplace`).
 - **Backward Raw-Bit Reader ([Section 4.1.3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2))**: Reads raw bits (`decode_raw_bits`) from byte `N - 1` backward toward the front for CELT fine energy and PVQ pulse signs/LSBs.
 - **Bit Accounting ([Section 4.1.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.6))**: `tell()` and `tell_frac()` compute the exact total bits (in whole bits and `1/8`th-bit units) consumed by both ends of the frame buffer.
 
@@ -154,7 +163,7 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
 
 ## 5. SILK LP Layer Decoder (`silk/*`, [RFC 6716 Section 4.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2))
 
-### SILK Decoder Block Diagram ([RFC 6716 Section 4.2.1, Figure 13](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.1))
+### SILK Decoder Block Diagram ([RFC 6716 Section 4.2.1, Figure 14](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.1))
 
 ```text
         +---------+    +------------+
@@ -251,17 +260,17 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
   (10th/16th-order Q12 IIR filter + Q16 subframe gain scaling -> saturating i16)
                                       |
                                       v
-  [Mid-Side to Left-Right Stereo Unmixing (silk/synthesis.rs, Section 4.2.7.9.3)]
+  [Mid-Side to Left-Right Stereo Unmixing (silk/synthesis.rs, Section 4.2.8)]
                                       |
                                       v
-  [Polyphase IIR/FIR Resampler (silk/resampler.rs, Section 4.2.7.9.4) & PLC/CNG (silk/plc.rs)]
+  [Polyphase IIR/FIR Resampler (silk/resampler.rs, Section 4.2.9) & PLC/CNG (silk/plc.rs)]
 ```
 
 ---
 
 ## 6. CELT MDCT Layer Decoder (`celt/*`, [RFC 6716 Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3))
 
-### CELT Decoder Block Diagram ([RFC 6716 Section 4.3, Figure 14](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3))
+### CELT Decoder Block Diagram ([RFC 6716 Section 4.3, Figure 17](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3))
 
 ```text
                                      +--+
@@ -335,7 +344,7 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
                |        - Haar1 spreading rotations (exp_rotation) & intra/inter spectral folding
                |        - Mid-Side theta unmixing, dual stereo, intensity stereo & anti-collapse noise
                |
-               +---> 6. Leftover Energy Finalization & Denormalization (celt/energy.rs, Section 4.3.2.3)
+               +---> 6. Leftover Energy Finalization & Denormalization (celt/energy.rs, Section 4.3.2.2)
                         - Consumes remaining bit budget on priority fine-energy bits
                         - Scales unit-norm band shapes by 2^energy linear amplitudes
                                       |
@@ -376,8 +385,9 @@ In Hybrid mode (TOC configurations `12..=15`, Super-Wideband 24 kHz or Fullband 
 
 ### Seamless Mode Transitions & 5 ms Redundant CELT Frames ([RFC 6716 Section 4.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.4), [Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5))
 
-- **CELT -> SILK/Hybrid (`celt_to_silk == true`)**: Decodes the appended 5 ms (`F120`) redundant CELT frame before the new frame's CELT layer and crossfades the first 2.5 ms (`F240`) of the arriving SILK output with the second half of the redundant 5 ms CELT frame using `CELT_WINDOW` (`smooth_fade_into_second`).
-- **SILK/Hybrid -> CELT (`celt_to_silk == false`)**: Advances the departing SILK decoder by 5 ms via PLC concealment (`conceal_up_to_20ms`), decodes the redundant 5 ms CELT frame (if present) to prime the CELT overlap buffer, and crossfades the departing SILK tail into the arriving CELT output (`smooth_fade_from_first`).
+- **CELT -> SILK/Hybrid (`Redundancy::CeltToSilk`)**: The 5 ms redundant CELT frame appended to the first SILK or Hybrid frame is decoded before that frame's own CELT layer; its first 2.5 ms replace the start of the frame and its second 2.5 ms are cross-lapped with the arriving SILK output through the squared `CELT_WINDOW` (`crossfade` with `FadeDirection::In`, RFC 6716 Section 4.5.1.4).
+- **SILK/Hybrid -> CELT (`Redundancy::SilkToCelt`)**: The redundant 5 ms CELT frame at the end of the last SILK or Hybrid frame is decoded after a CELT state reset and its second half is cross-lapped with the last 2.5 ms of that frame (`FadeDirection::Out`); the following CELT-only frame then needs no concealment.
+- **Switches without redundancy (`Transition::IntoCelt`, `Transition::OutOfCelt`)**: 5 ms of audio concealed from the outgoing decoder is cross-lapped with the start of the new frame, the recommended behaviour of RFC 6716 Section 4.5.3, Figure 19.
 
 ### Ogg Opus Multi-Stream Surround Decoding ([RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1))
 
@@ -403,11 +413,23 @@ In Hybrid mode (TOC configurations `12..=15`, Super-Wideband 24 kHz or Fullband 
 
 ---
 
-## 8. Verification
+## 8. Testing
+
+The unit tests need no external files:
 
 ```bash
-rg -n "else if|\b(ix|idx|s_idx|b_idx|frame_idx|subframe_idx)\b" symphonia-codec-opus/src/
-cargo test -p symphonia-codec-opus -- --test-threads=1
-cargo clippy -p symphonia-codec-opus --all-targets
-cargo doc -p symphonia-codec-opus --no-deps
+cargo test -p symphonia-codec-opus
 ```
+
+The conformance test needs the RFC 8251 test vectors
+([`opus_newvectors`](https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz)),
+so it is ignored by default. Point `OPUS_TESTVECTORS_DIR` at the extracted directory to run it:
+
+```bash
+OPUS_TESTVECTORS_DIR=<path to opus_newvectors> cargo test --release -p symphonia-codec-opus --test rfc6716_conformance -- --ignored --nocapture
+```
+
+The source of truth for decoder behaviour is RFC 6716 (prose plus the normative Appendix A
+reference decoder) as updated by RFC 8251. The conformance test follows RFC 6716 Section 6: the
+final range decoder state must equal the reference for every packet, and the output must pass the
+`opus_compare` threshold against either RFC 8251 test vector set.
