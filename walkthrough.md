@@ -102,9 +102,8 @@
 ## 3. Handoff Notes for Next Worker
 
 - **Verification Commands**:
-  Before any commit on `symphonia-codec-opus`, run all four checks specified in `AGENTS.md`:
+  Before any commit on `symphonia-codec-opus`, run all three checks specified in `AGENTS.md`:
   ```bash
-  rg -n "else if|\bix\b|\w*idx\w*" symphonia-codec-opus/src/
   cargo test -p symphonia-codec-opus -- --test-threads=1
   cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
   cargo doc -p symphonia-codec-opus --no-deps --document-private-items
