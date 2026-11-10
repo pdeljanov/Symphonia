@@ -1,117 +1,257 @@
-//! CELT Dynamic Bit Allocation, Pulse Cache Lookup, and Time-Frequency Resolution
-//! (RFC 6716 Sections 4.3.1, 4.3.3, and 4.3.4.1).
+//! CELT bit allocation, pulse cache lookup, post-filter parameters and time-frequency resolution
+//! ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+//! [Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>),
+//! [Section 4.3.4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.5>) and
+//! [Section 4.3.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1>)).
 //!
-//! Unlike fixed-rate transform codecs that transmit explicit scale-factor and codebook indices for
-//! every subband, CELT derives almost the entire per-band bit allocation implicitly from the known
-//! total frame bit budget (`rate.c`). Both encoder and decoder run the exact same deterministic
-//! bit-allocation algorithm on the range coder state, modified only by a small number of
-//! bitstream-signaled parameters:
-//!
-//! 1. **Per-Band Caps ([`init_caps`])**: Maximum PVQ bit capacity per band for the frame size
-//!    `lm` and channel count `channels`.
-//! 2. **Dynamic Band Boosts ([`decode_band_boosts_and_trim`])**: Optional per-band bit boosts
-//!    (`offsets[i]`) and global spectral tilt adjustment (`alloc_trim`).
-//! 3. **Rate-Distortion Curve Interpolation ([`clt_compute_allocation`])**: Binary search across
-//!    the 11 static rate-allocation vectors ([`ALLOC_VECTORS`]) followed by 6-step linear
-//!    interpolation, backwards band-skipping signaling, stereo intensity/dual-stereo parameter
-//!    decoding, and partitioning of each band's bit budget into fine energy bits (`fine_quant`)
-//!    and PVQ shape bits (`pulses` in Q3 `1/8`-bit units).
-//! 4. **Pulse Cache Lookup ([`bits2pulses`], [`pulses2bits`], [`get_pulses`])**: Maps Q3 bit
-//!    allocations to exact PVQ pulse counts $K$ via precomputed CWRS codebook size tables.
+//! CELT derives almost the entire per-band bit allocation implicitly from the frame's bit budget:
+//! encoder and decoder run the same deterministic allocation on the range coder state, modified
+//! only by a few signalled parameters. Per-band caps ([`init_caps`]) bound each band, dynamic
+//! boosts and the allocation trim ([`decode_band_boosts_and_trim`]) tilt the static allocation
+//! table ([`ALLOC_VECTORS`]), and [`BandAllocation::compute`] interpolates between its rows,
+//! decodes band skipping and the stereo parameters, and splits each band's budget into fine
+//! energy bits (`fine_quant`) and PVQ shape bits (`pulses`, in `1/8` bit units), which the pulse
+//! cache ([`bits2pulses_at_level`], [`pulses2bits_at_level`], [`get_pulses`]) maps to exact pulse
+//! counts.
 
-use crate::celt::constant::{
-    ALLOC_STEPS, ALLOC_VECTORS, BITRES, CACHE_BITS, CACHE_CAPS, CACHE_INDEX, EBANDS, FINE_OFFSET,
-    LOG2_FRAC_TABLE, LOGN, LOG_MAX_PSEUDO, MAX_BANDS, MAX_FINE_BITS, NB_ALLOC_VECTORS, SPREAD_ICDF,
-    SPREAD_NORMAL, TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF, band_width,
-};
-use crate::entropy::Decoder;
+use std::ops::Range;
+
 use symphonia_core::errors::Result;
 
-/// Result of CELT dynamic bit allocation for a single frame (RFC 6716 Section 4.3.3).
+use crate::celt::BlockSize;
+use crate::celt::constant::{
+    ALLOC_STEPS, ALLOC_VECTORS, BITRES, CACHE_BITS, CACHE_CAPS, CACHE_INDEX, CDF_SPREAD,
+    CDF_TAPSET, CDF_TRIM, EBANDS, FINE_OFFSET, LOG2_FRAC_TABLE, LOGN, MAX_BANDS, MAX_FINE_BITS,
+    MAX_PSEUDO, NB_ALLOC_VECTORS, Spread, TF_SELECT_TABLE, band_width,
+};
+use crate::entropy::Decoder;
+
+/// One bit in `1/8` bit units, the unit of every allocation quantity.
+const ONE_BIT_Q3: i32 = 1 << BITRES;
+
+/// Pseudo-pulse index from which [`get_pulses`] grows semi-logarithmically
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
+const PULSE_CODE_LINEAR_LIMIT: usize = 8;
+
+/// Fewest bits that must remain in the frame for the post-filter flag and its parameters
+/// ([RFC 6716 Section 4.3.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1>),
+/// Appendix A).
+const POSTFILTER_MIN_BITS: i32 = 16;
+
+/// Number of equiprobable pitch octave symbols
+/// ([RFC 6716 Section 4.3.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1>)).
+const PITCH_OCTAVE_SYMBOLS: u32 = 6;
+
+/// Raw bits of the fine pitch in octave `0`; each higher octave adds one.
+const PITCH_FINE_BITS_BASE: u32 = 4;
+
+/// Pitch period of octave `0` before the fine pitch: `period = (16 << octave) + fine_pitch - 1`.
+const PITCH_PERIOD_BASE: u32 = 16;
+
+/// Raw bits of the post-filter gain index.
+const POSTFILTER_GAIN_BITS: u32 = 3;
+
+/// Post-filter gain step: `G = 3 * (int_gain + 1) / 32`.
+const POSTFILTER_GAIN_STEP: f32 = 3.0 / 32.0;
+
+/// Fewest bits that must remain for the tapset symbol.
+const TAPSET_MIN_BITS: i32 = 2;
+
+/// Cost in bits of the improbable time-frequency change symbol in a non-transient frame, for
+/// the first coded band (PDF `{15, 1}/16`) and for each later band (PDF `{31, 1}/32`)
+/// ([RFC 6716 Section 4.3.4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.5>)).
+const TF_CHANGE_LOGP_STEADY: (i32, i32) = (4, 5);
+
+/// The same costs in a transient frame (PDFs `{3, 1}/4` and `{15, 1}/16`).
+const TF_CHANGE_LOGP_TRANSIENT: (i32, i32) = (2, 4);
+
+/// Fewest bits that must remain for the spreading decision
+/// ([RFC 6716 Section 4.3.4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.3>)).
+const SPREAD_MIN_BITS: i32 = 4;
+
+/// Cost in bits of the first boost of a band (`p = 1/64`)
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+const BOOST_INITIAL_LOGP: i32 = 6;
+
+/// Cost in bits of every further boost of the same band (`p = 1/2`).
+const BOOST_REPEAT_LOGP: i32 = 1;
+
+/// Lowest first-boost cost after boosted bands lowered it (`p = 1/4`).
+const BOOST_MIN_LOGP: i32 = 2;
+
+/// Upper bound of the boost quantum in bits: `quanta = min(8 * N, max(48, N))` eighth bits.
+const BOOST_QUANTA_CAP_BITS: i32 = 6;
+
+/// Fewest bits that must remain for the allocation trim symbol
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>), Table 58).
+const TRIM_MIN_BITS: i32 = 6;
+
+/// Allocation trim that leaves the static allocation untilted.
+const TRIM_NEUTRAL: i32 = 5;
+
+/// Shape threshold of a band: `24 * N / 16` eighth bits, written `3 * (N << BITRES) >> 4`
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+const SHAPE_THRESHOLD_NUMERATOR: i32 = 3;
+
+/// Divisor shift of the shape threshold (`/ 16`).
+const SHAPE_THRESHOLD_SHIFT: u32 = 4;
+
+/// Divisor shift of the trim offset (`/ 64`).
+const TRIM_OFFSET_SHIFT: u32 = 6;
+
+/// Converts the `1/32` bit per bin of [`ALLOC_VECTORS`] into `1/8` bit units (`>> 2`).
+const ALLOC_TABLE_SHIFT: u32 = 2;
+
+/// Half the log2 of the bins per degree of freedom goes to fine energy (`>> 1`)
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// fine-energy versus shape split).
+const FINE_HALF_LOG_SHIFT: u32 = 1;
+
+/// Two-bin bands receive a quarter bit per degree of freedom more fine energy (`>> 2`).
+const FINE_TWO_BIN_SHIFT: u32 = 2;
+
+/// Below two bits per degree of freedom the fine share grows by a quarter of the log term.
+const FINE_LOW_RATE_TWO_BITS: i32 = 2;
+
+/// Below three bits per degree of freedom the fine share grows by an eighth of the log term.
+const FINE_LOW_RATE_THREE_BITS: i32 = 3;
+
+/// Quarter of the log term (`>> 2`).
+const FINE_LOW_RATE_QUARTER_SHIFT: u32 = 2;
+
+/// Eighth of the log term (`>> 3`).
+const FINE_LOW_RATE_EIGHTH_SHIFT: u32 = 3;
+
+/// Bias of the stored caps: [`CACHE_CAPS`] holds the per-bin maximum minus `64`
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+const CAP_BIAS: i32 = 64;
+
+/// Divisor shift of the cap product (`/ 4`).
+const CAP_SHIFT: u32 = 2;
+
+/// Result of the CELT bit allocation of one frame
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BandAllocation {
-    /// PVQ shape bit allocation per band in Q3 (`1/8`-bit) units (`pulses` in `libopus`).
-    pub pulses: [i32; MAX_BANDS],
-    /// Number of fine energy quantization bits per channel in each band (`0..=8`).
-    pub fine_quant: [i32; MAX_BANDS],
-    /// Priority class (`0` or `1`) for the final 1-bit energy refinement pass.
-    pub fine_priority: [i32; MAX_BANDS],
-    /// Surplus Q3 bits exceeding the cap on the highest coded bands, carried into PVQ rebalancing.
-    pub balance: i32,
-    /// One past the index of the highest non-skipped band (`start < coded_bands <= end`).
-    pub coded_bands: usize,
-    /// First band index at which stereo intensity coding begins (`0..=coded_bands`).
-    pub intensity: usize,
-    /// Whether dual-stereo (independent L/R PVQ coding rather than mid/side) is enabled.
-    pub dual_stereo: bool,
+pub(crate) struct BandAllocation {
+    /// PVQ shape bits per band in `1/8` bit units.
+    pub(crate) pulses: [i32; MAX_BANDS],
+    /// Fine energy bits per channel in each band (`0..=8`)
+    /// ([RFC 6716 Section 4.3.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2>)).
+    pub(crate) fine_quant: [i32; MAX_BANDS],
+    /// Final energy priority of each band: bands marked `false` take the bits left at the end of
+    /// the frame first, then bands marked `true`
+    /// ([RFC 6716 Section 4.3.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2>)).
+    pub(crate) fine_priority: [bool; MAX_BANDS],
+    /// Surplus `1/8` bits above the cap of the highest coded bands, carried into PVQ rebalancing.
+    pub(crate) balance: i32,
+    /// One past the highest non-skipped band (`start < coded_bands <= end`).
+    pub(crate) coded_bands: usize,
+    /// First band coded with intensity stereo (`0` when intensity stereo is off).
+    pub(crate) intensity: usize,
+    /// Whether the two channels are coded independently rather than as mid and side.
+    pub(crate) dual_stereo: bool,
 }
 
 /// Pitch comb post-filter parameters decoded at the start of a CELT frame
-/// (RFC 6716 Section 4.3.1, `celt_decoder.c` lines 1434-1450).
+/// ([RFC 6716 Section 4.3.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1>)).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct PostFilterParams {
-    /// Pitch period in 48 kHz samples (`0` when the post-filter is disabled, or `15..=1022`).
-    pub pitch: usize,
-    /// Comb filter gain (`0.0` when disabled, or $0.09375 \times (q_g + 1)$).
-    pub gain: f32,
-    /// Comb filter tapset index (`0`, `1`, or `2`, indexing [`COMB_FILTER_GAINS`](crate::celt::constant::COMB_FILTER_GAINS)).
-    pub tapset: usize,
+pub(crate) struct PostFilterParams {
+    /// Pitch period `T` in 48 kHz samples (`0` when the post-filter is off, else `15..=1022`).
+    pub(crate) period: usize,
+    /// Comb filter gain (`0.0` when off, else `3 * (int_gain + 1) / 32`).
+    pub(crate) gain: f32,
+    /// Tapset (`0..=2`) selecting a row of
+    /// [`COMB_FILTER_GAINS`](crate::celt::constant::COMB_FILTER_GAINS).
+    pub(crate) tapset: usize,
 }
 
-/// Converts a pseudo-pulse index $i \in [0, 40]$ to the actual number of PVQ pulses $K$
-/// (RFC 6716 Section 4.3.4, `get_pulses` in `rate.h`).
+/// Converts a pseudo-pulse index `pulse_code` (`0..=40`) into the pulse count `K`
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 ///
-/// For $i < 8$, $K = i$. For $i \ge 8$, the pulse count grows semi-logarithmically:
-/// $$K = (8 + (i \bmod 8)) \cdot 2^{\lfloor i / 8 \rfloor - 1}$$
+/// Below `8` the index is the pulse count; from `8` on the count grows semi-logarithmically:
+/// `K = (8 + (i mod 8)) << (i / 8 - 1)`.
 #[inline]
-pub const fn get_pulses(pseudo_pulse_idx: usize) -> usize {
-    if pseudo_pulse_idx < 8 {
-        return pseudo_pulse_idx;
+pub(crate) const fn get_pulses(pulse_code: usize) -> usize {
+    if pulse_code < PULSE_CODE_LINEAR_LIMIT {
+        return pulse_code;
     }
-    return (8 + (pseudo_pulse_idx & 7)) << ((pseudo_pulse_idx >> 3) - 1);
+    return (PULSE_CODE_LINEAR_LIMIT + (pulse_code & (PULSE_CODE_LINEAR_LIMIT - 1)))
+        << ((pulse_code / PULSE_CODE_LINEAR_LIMIT) - 1);
 }
 
-/// Returns the pulse-cache slice for a given block-size exponent `lm` (`-1..=3`) and `band`
-/// (`0..21`) from [`CACHE_BITS`] and [`CACHE_INDEX`].
+/// Level of the pulse cache a PVQ partition is looked up at
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 ///
-/// Note that during recursive PVQ band splitting (`quant_partition` in `bands.c`), `lm` can be
-/// decremented down to `-1`, which maps to row `(lm + 1) = 0` of [`CACHE_INDEX`].
-#[inline]
-pub fn pulse_cache_slice(lm: isize, band: usize) -> &'static [u8] {
-    let row = (lm + 1) as usize;
-    let start_offset = CACHE_INDEX[row * MAX_BANDS + band] as usize;
-    return &CACHE_BITS[start_offset..];
+/// An unsplit band of a frame of block size `LM` sits at the level of exponent `LM`; every PVQ
+/// split halves the partition and lowers the exponent by one
+/// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)),
+/// down to `-1` for the halves of a 2.5 ms band, the lowest level the cache holds. The value is
+/// stored as the row of [`CACHE_INDEX`], `exponent + 1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CacheLevel(usize);
+
+impl CacheLevel {
+    /// Level of an unsplit band at block size `lm`.
+    pub(crate) const fn from_block_size(lm: BlockSize) -> Self {
+        return Self(lm.log2() + 1);
+    }
+
+    /// Level of each half after one PVQ split, `None` at the lowest level, where a partition is
+    /// never split again
+    /// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
+    pub(crate) const fn split(self) -> Option<Self> {
+        return match self.0 {
+            0 => None,
+            row => Some(Self(row - 1)),
+        };
+    }
+
+    /// Signed block-size exponent of the level (`-1..=3`), the `LM` in which the split-angle
+    /// resolution and the short-block bit differential are defined
+    /// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
+    pub(crate) const fn exponent(self) -> i32 {
+        return self.0 as i32 - 1;
+    }
+
+    /// Row of [`CACHE_INDEX`].
+    const fn row(self) -> usize {
+        return self.0;
+    }
 }
 
-/// Returns the maximum cached Q3 bit count for `lm` (`-1..=3`) and `band` (`0..21`), used by
-/// PVQ partition splitting (`b > max_cache_bits(lm, band) + 12` in `bands.c`).
+/// Pulse cache sub-table of `band` at `level`: `[max_pseudo, cost_1 - 1, ..., cost_max - 1]`
+/// in `1/8` bit units
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 #[inline]
-pub fn max_cache_bits(lm: isize, band: usize) -> i32 {
-    let cache = pulse_cache_slice(lm, band);
+fn pulse_cache(level: CacheLevel, band: usize) -> &'static [u8] {
+    let start = CACHE_INDEX[level.row()][band] as usize;
+    return &CACHE_BITS[start..];
+}
+
+/// Largest cached `1/8` bit cost of `band` at `level`; a partition needing more than this plus
+/// `12` is split
+/// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
+#[inline]
+pub(crate) fn max_cache_bits(level: CacheLevel, band: usize) -> i32 {
+    let cache = pulse_cache(level, band);
     let max_pseudo = usize::from(cache[0]);
     return i32::from(cache[max_pseudo]);
 }
 
-/// Maps a Q3 bit budget `bits` to a pseudo-pulse index $q \in [0, 40]$ for level `lm` (`-1..=3`)
-/// and `band` (`0..21`) via 6-step binary search (`bits2pulses` in `rate.h`).
-///
-/// Selects the pseudo-pulse index whose cached bit cost is closest to `bits` (preferring the
-/// lower index on ties).
+/// Maps a `1/8` bit budget `bits` to the pseudo-pulse index (`0..=40`) whose cached cost is
+/// nearest, rounding down on a tie, for `band` at `level`
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 #[inline]
-pub fn bits2pulses_at_level(lm: isize, band: usize, bits: i32) -> i32 {
-    let cache = pulse_cache_slice(lm, band);
-    let mut lo = 0usize;
-    let mut hi = usize::from(cache[0]);
+pub(crate) fn bits2pulses_at_level(level: CacheLevel, band: usize, bits: i32) -> i32 {
+    let cache = pulse_cache(level, band);
+    let max_pseudo = usize::from(cache[0]);
+    debug_assert!(max_pseudo <= MAX_PSEUDO);
     let target = bits - 1;
 
-    for _ in 0..LOG_MAX_PSEUDO {
-        let mid = (lo + hi + 1) >> 1;
-        if i32::from(cache[mid]) >= target {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
+    // `cache[1..=max_pseudo]` is non-decreasing: `lo` is the last index below the target and
+    // `hi` the first at or above it (or `max_pseudo` when no entry reaches the target).
+    let lo = cache[1..=max_pseudo].partition_point(|&cost| i32::from(cost) < target);
+    let hi = (lo + 1).min(max_pseudo);
 
     let lo_bits = if lo == 0 { -1 } else { i32::from(cache[lo]) };
     let hi_bits = i32::from(cache[hi]);
@@ -121,181 +261,147 @@ pub fn bits2pulses_at_level(lm: isize, band: usize, bits: i32) -> i32 {
     return hi as i32;
 }
 
-/// Maps a Q3 bit budget `bits` to a pseudo-pulse index $q \in [0, 40]$ for frame size exponent
-/// `lm` (`0..=3`) and `band` (`0..21`) (`bits2pulses` in `rate.h`).
+/// Exact `1/8` bit cost of pseudo-pulse index `pulses` (`0..=40`) for `band` at `level`
+/// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
 #[inline]
-pub fn bits2pulses(lm: usize, band: usize, bits: i32) -> i32 {
-    return bits2pulses_at_level(lm as isize, band, bits);
-}
-
-/// Maps a pseudo-pulse index `pulses` ($q \in [0, 40]$) back to its exact Q3 bit cost for level
-/// `lm` (`-1..=3`) and `band` (`0..21`) (`pulses2bits` in `rate.h`).
-#[inline]
-pub fn pulses2bits_at_level(lm: isize, band: usize, pulses: i32) -> i32 {
+pub(crate) fn pulses2bits_at_level(level: CacheLevel, band: usize, pulses: i32) -> i32 {
     if pulses <= 0 {
         return 0;
     }
-    let cache = pulse_cache_slice(lm, band);
+    let cache = pulse_cache(level, band);
     return i32::from(cache[pulses as usize]) + 1;
 }
 
-/// Maps a pseudo-pulse index `pulses` ($q \in [0, 40]$) back to its exact Q3 bit cost for frame
-/// size exponent `lm` (`0..=3`) and `band` (`0..21`) (`pulses2bits` in `rate.h`).
-#[inline]
-pub fn pulses2bits(lm: usize, band: usize, pulses: i32) -> i32 {
-    return pulses2bits_at_level(lm as isize, band, pulses);
-}
-
-/// Computes the maximum allowable Q3 bit allocation (`cap[band]`) for each of the 21 Bark bands
-/// given frame size exponent `lm` (`0..=3`) and `channels` (`1` or `2`) (`init_caps` in `celt.c`).
-///
-/// $$\text{cap}[i] = \left\lfloor \frac{(\text{CACHE\_CAPS}[21 \cdot (2 \cdot \text{lm} + C - 1) + i] + 64) \cdot C \cdot (N_0[i] \ll \text{lm})}{4} \right\rfloor$$
-pub fn init_caps(lm: usize, channels: usize) -> [i32; MAX_BANDS] {
-    let mut cap = [0i32; MAX_BANDS];
-    let table_offset = MAX_BANDS * (2 * lm + channels - 1);
+/// Maximum `1/8` bit allocation of every band at block size `lm` for `channels` channels:
+/// `cap[i] = (CACHE_CAPS[lm][channels - 1][i] + 64) * channels * N[i] / 4`
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+pub(crate) fn init_caps(lm: BlockSize, channels: usize) -> [i32; MAX_BANDS] {
+    let caps = &CACHE_CAPS[lm.log2()][channels - 1];
     let c = channels as i32;
-
-    for (band, cap_slot) in cap.iter_mut().enumerate() {
-        let n = band_width(band, lm) as i32;
-        let cached = i32::from(CACHE_CAPS[table_offset + band]);
-        *cap_slot = ((cached + 64) * c * n) >> 2;
-    }
-
-    return cap;
+    return std::array::from_fn(|i| {
+        return ((i32::from(caps[i]) + CAP_BIAS) * c * (band_width(i, lm) as i32)) >> CAP_SHIFT;
+    });
 }
 
-/// Decodes the pitch comb post-filter parameters at the beginning of a CELT frame when
-/// `start == 0` and at least 16 bits remain in the frame (`celt_decoder.c` lines 1434-1450,
-/// RFC 6716 Section 4.3.1).
-pub fn decode_postfilter(
+/// Decodes the pitch comb post-filter parameters at the start of a CELT frame, which are coded
+/// only when band `0` is coded and at least 16 bits remain
+/// ([RFC 6716 Section 4.3.7.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1>)).
+pub(crate) fn decode_postfilter(
     range_decoder: &mut Decoder<'_>,
     start: usize,
     total_bits: i32,
 ) -> Result<PostFilterParams> {
-    if start == 0 && range_decoder.tell() + 16 <= total_bits {
-        let enabled = range_decoder.decode_symbol_logp(1)? != 0;
-        if enabled {
-            let octave = range_decoder.decode_uint(6)?;
-            let fine_pitch = range_decoder.decode_raw_bits(4 + octave)?;
-            let pitch = ((16u32 << octave) + fine_pitch - 1) as usize;
-            let qg = range_decoder.decode_raw_bits(3)?;
-            let tapset = if range_decoder.tell() + 2 <= total_bits {
-                range_decoder.decode_symbol_with_icdf(&TAPSET_ICDF)? as usize
-            } else {
-                0
-            };
-            let gain = 0.09375_f32 * ((qg + 1) as f32);
-            return Ok(PostFilterParams {
-                pitch,
-                gain,
-                tapset,
-            });
-        }
+    if start != 0 || range_decoder.tell() + POSTFILTER_MIN_BITS > total_bits {
+        return Ok(PostFilterParams::default());
+    }
+    if range_decoder.decode_symbol_logp(1)? == 0 {
+        return Ok(PostFilterParams::default());
     }
 
-    return Ok(PostFilterParams::default());
+    let octave = range_decoder.decode_uint(PITCH_OCTAVE_SYMBOLS)?;
+    let fine_pitch = range_decoder.decode_raw_bits(PITCH_FINE_BITS_BASE + octave)?;
+    let period = ((PITCH_PERIOD_BASE << octave) + fine_pitch - 1) as usize;
+    let gain_index = range_decoder.decode_raw_bits(POSTFILTER_GAIN_BITS)?;
+    let gain = POSTFILTER_GAIN_STEP * ((gain_index + 1) as f32);
+
+    let mut tapset = 0usize;
+    if range_decoder.tell() + TAPSET_MIN_BITS <= total_bits {
+        tapset = range_decoder.decode_symbol(CDF_TAPSET)? as usize;
+    }
+    return Ok(PostFilterParams { period, gain, tapset });
 }
 
-/// Decodes the per-band Time-Frequency (TF) resolution changes (`tf_res[start..end]`) from the
-/// bitstream (`tf_decode` in `celt_decoder.c`, RFC 6716 Section 4.3.4.1).
+/// Decodes the per-band time-frequency resolution changes of bands `start..end`
+/// ([RFC 6716 Section 4.3.4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.5>),
+/// Tables 60 to 63).
 ///
-/// Differential 1-bit flags are decoded across bands `start..end` with log-probabilities
-/// `(2, 4)` in transient frames or `(4, 5)` in non-transient frames, reserving 1 bit for the
-/// table-column selector `tf_select` whenever `lm > 0` and budget permits. Each band's binary
-/// flag is then mapped through [`TF_SELECT_TABLE`].
-pub fn decode_tf_changes(
-    range_decoder: &mut Decoder<'_>,
+/// Each band codes whether its choice differs from the previous band's; one bit is reserved for
+/// the table selector `tf_select` whenever `lm > 0` and the budget allows it, and is read only
+/// when the selector would change the adjustment of some band.
+pub(crate) fn tf_decode(
     start: usize,
     end: usize,
     is_transient: bool,
-    lm: usize,
-    tf_res: &mut [i32; MAX_BANDS],
-) -> Result<()> {
-    let mut budget = (range_decoder.storage_bytes() * 8) as i32;
+    lm: BlockSize,
+    range_decoder: &mut Decoder<'_>,
+) -> Result<[i32; MAX_BANDS]> {
+    let mut budget = range_decoder.storage_bits();
     let mut tell = range_decoder.tell();
-    let mut logp: i32 = if is_transient { 2 } else { 4 };
-    let tf_select_rsv = lm > 0 && tell + logp < budget;
+    let (first_logp, later_logp) =
+        if is_transient { TF_CHANGE_LOGP_TRANSIENT } else { TF_CHANGE_LOGP_STEADY };
+    let tf_select_rsv = lm.log2() > 0 && tell + first_logp < budget;
     if tf_select_rsv {
         budget -= 1;
     }
 
+    let mut tf_changes = [0usize; MAX_BANDS];
     let mut tf_changed = 0usize;
     let mut curr = 0usize;
-    for tf_slot in tf_res.iter_mut().take(end).skip(start) {
+    let mut logp = first_logp;
+    for change in &mut tf_changes[start..end] {
         if tell + logp <= budget {
-            let bit = range_decoder.decode_symbol_logp(logp as u32)? as usize;
-            curr ^= bit;
+            curr ^= range_decoder.decode_symbol_logp(logp as u32)? as usize;
             tell = range_decoder.tell();
             tf_changed |= curr;
         }
-        *tf_slot = curr as i32;
-        logp = if is_transient { 4 } else { 5 };
+        *change = curr;
+        logp = later_logp;
     }
 
-    let transient_offset = 4 * usize::from(is_transient);
+    let table = &TF_SELECT_TABLE[lm.log2()][usize::from(is_transient)];
     let mut tf_select = 0usize;
-    if tf_select_rsv
-        && TF_SELECT_TABLE[lm][transient_offset + tf_changed]
-            != TF_SELECT_TABLE[lm][transient_offset + 2 + tf_changed]
-    {
+    if tf_select_rsv && table[0][tf_changed] != table[1][tf_changed] {
         tf_select = range_decoder.decode_symbol_logp(1)? as usize;
     }
+    let adjustments = table[tf_select];
 
-    let table_base = transient_offset + 2 * tf_select;
-    for tf_slot in tf_res.iter_mut().take(end).skip(start) {
-        let flag = *tf_slot as usize;
-        *tf_slot = i32::from(TF_SELECT_TABLE[lm][table_base + flag]);
-    }
-
-    return Ok(());
-}
-
-/// Convenience wrapper around [`decode_tf_changes`] that returns the decoded `[i32; MAX_BANDS]`
-/// Time-Frequency resolution array (`tf_decode` in `celt_decoder.c`).
-pub fn tf_decode(
-    start: usize,
-    end: usize,
-    is_transient: bool,
-    lm: usize,
-    range_decoder: &mut Decoder<'_>,
-) -> Result<[i32; MAX_BANDS]> {
     let mut tf_res = [0i32; MAX_BANDS];
-    decode_tf_changes(range_decoder, start, end, is_transient, lm, &mut tf_res)?;
+    tf_res[start..end]
+        .iter_mut()
+        .zip(&tf_changes[start..end])
+        .for_each(|(res, &change)| *res = i32::from(adjustments[change]));
     return Ok(tf_res);
 }
 
-/// Decodes the PVQ spreading decision (`SPREAD_NONE = 0`, `SPREAD_LIGHT = 1`,
-/// `SPREAD_NORMAL = 2`, `SPREAD_AGGRESSIVE = 3`) from the bitstream (`celt_decoder.c` lines 1505-1508).
-pub fn decode_spread_decision(range_decoder: &mut Decoder<'_>, total_bits: i32) -> Result<usize> {
-    if range_decoder.tell() + 4 <= total_bits {
-        let spread = range_decoder.decode_symbol_with_icdf(&SPREAD_ICDF)? as usize;
-        return Ok(spread);
+/// Decodes the PVQ spreading decision, which defaults
+/// to normal spreading when fewer than four bits remain
+/// ([RFC 6716 Section 4.3.4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.3>),
+/// Table 59).
+pub(crate) fn decode_spread_decision(
+    range_decoder: &mut Decoder<'_>,
+    total_bits: i32,
+) -> Result<Spread> {
+    if range_decoder.tell() + SPREAD_MIN_BITS > total_bits {
+        return Ok(Spread::Normal);
     }
-    return Ok(SPREAD_NORMAL);
+    return Ok(Spread::try_from(range_decoder.decode_symbol(CDF_SPREAD)?)?);
 }
 
-/// Decodes dynamic per-band bit boosts (`offsets[start..end]`) and the global allocation tilt
-/// parameter (`alloc_trim`) (`celt_decoder.c` lines 1516-1550, RFC 6716 Section 4.3.3).
+/// Decodes the band boosts (`offsets[start..end]`, in `1/8` bit units) and the allocation trim
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// Table 58).
 ///
-/// Returns `(offsets, alloc_trim)`.
-pub fn decode_band_boosts_and_trim(
+/// Each boost symbol costs `dynalloc_logp` bits the first time and one bit afterwards; a boosted
+/// band lowers the first-boost cost of the following bands down to two bits. The trim defaults
+/// to the neutral `5` when fewer than six bits remain.
+pub(crate) fn decode_band_boosts_and_trim(
     range_decoder: &mut Decoder<'_>,
     start: usize,
     end: usize,
-    lm: usize,
+    lm: BlockSize,
     channels: usize,
     total_bits: i32,
     cap: &[i32; MAX_BANDS],
 ) -> Result<([i32; MAX_BANDS], i32)> {
     let mut offsets = [0i32; MAX_BANDS];
-    let mut dynalloc_logp = 6i32;
+    let mut dynalloc_logp = BOOST_INITIAL_LOGP;
     let mut total_bits_q3 = total_bits << BITRES;
     let mut tell_q3 = range_decoder.tell_frac() as i32;
     let c = channels as i32;
 
     for band in start..end {
         let width = c * (band_width(band, lm) as i32);
-        let quanta = (width << BITRES).min((6 << BITRES).max(width));
+        let quanta = (width << BITRES).min((BOOST_QUANTA_CAP_BITS << BITRES).max(width));
         let mut dynalloc_loop_logp = dynalloc_logp;
         let mut boost = 0i32;
 
@@ -307,452 +413,594 @@ pub fn decode_band_boosts_and_trim(
             }
             boost += quanta;
             total_bits_q3 -= quanta;
-            dynalloc_loop_logp = 1;
+            dynalloc_loop_logp = BOOST_REPEAT_LOGP;
         }
 
         offsets[band] = boost;
         if boost > 0 {
-            dynalloc_logp = (dynalloc_logp - 1).max(2);
+            dynalloc_logp = (dynalloc_logp - 1).max(BOOST_MIN_LOGP);
         }
     }
 
-    let alloc_trim = if tell_q3 + (6 << BITRES) <= total_bits_q3 {
-        range_decoder.decode_symbol_with_icdf(&TRIM_ICDF)? as i32
-    } else {
-        5
-    };
-
+    let mut alloc_trim = TRIM_NEUTRAL;
+    if tell_q3 + (TRIM_MIN_BITS << BITRES) <= total_bits_q3 {
+        alloc_trim = range_decoder.decode_symbol(CDF_TRIM)? as i32;
+    }
     return Ok((offsets, alloc_trim));
 }
 
-/// Interpolates between adjacent allocation curve bounds `bits1` and `bits1 + bits2`, decodes
-/// backwards band-skipping flags and stereo coding parameters (`intensity`, `dual_stereo`),
-/// redistributes leftover bits, and partitions each band's budget into fine energy bits and PVQ
-/// pulse bits (`interp_bits2pulses` in `rate.c`, RFC 6716 Section 4.3.3).
-#[allow(clippy::too_many_arguments)]
-fn interpolate_and_partition_bits(
-    range_decoder: &mut Decoder<'_>,
-    start: usize,
-    end: usize,
-    skip_start: usize,
-    bits1: &[i32; MAX_BANDS],
-    bits2: &[i32; MAX_BANDS],
-    thresh: &[i32; MAX_BANDS],
-    cap: &[i32; MAX_BANDS],
-    mut total: i32,
-    skip_rsv: i32,
-    mut intensity_rsv: i32,
-    mut dual_stereo_rsv: i32,
-    channels: usize,
-    lm: usize,
-) -> Result<BandAllocation> {
-    let c = channels as i32;
-    let alloc_floor = c << BITRES;
-    let stereo_shift = usize::from(channels > 1);
-    let log_m = (lm as i32) << BITRES;
+/// Bands, channels and block size an allocation covers
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AllocationLayout {
+    /// First coded band (`0`, or `17` in Hybrid mode).
+    pub(crate) start: usize,
+    /// One past the last coded band.
+    pub(crate) end: usize,
+    /// Coded channels (`1` or `2`).
+    pub(crate) channels: usize,
+    /// Block size of the frame.
+    pub(crate) lm: BlockSize,
+}
 
-    // 1. 6-step binary search for the fine interpolation weight `lo` in [0, 64].
-    let mut lo = 0i32;
-    let mut hi = 1i32 << ALLOC_STEPS;
-    for _ in 0..ALLOC_STEPS {
-        let mid = (lo + hi) >> 1;
+impl AllocationLayout {
+    /// The coded bands.
+    fn bands(self) -> Range<usize> {
+        return self.start..self.end;
+    }
+
+    /// Channel count as the signed arithmetic type of the allocation.
+    fn channels_i32(self) -> i32 {
+        return self.channels as i32;
+    }
+
+    /// One bit per channel in `1/8` bit units, the least any coded band receives.
+    fn floor_q3(self) -> i32 {
+        return self.channels_i32() << BITRES;
+    }
+
+    /// `1` in stereo and `0` in mono: halves a per-frame count into a per-channel count.
+    fn stereo_shift(self) -> usize {
+        return usize::from(self.channels > 1);
+    }
+}
+
+/// Signalled inputs of the allocation
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AllocationBudget<'a> {
+    /// Band boosts in `1/8` bit units.
+    pub(crate) offsets: &'a [i32; MAX_BANDS],
+    /// Per-band caps from [`init_caps`].
+    pub(crate) cap: &'a [i32; MAX_BANDS],
+    /// Allocation trim (`0..=10`, neutral at `5`).
+    pub(crate) alloc_trim: i32,
+    /// Remaining `1/8` bits after the conservative one-eighth and the anti-collapse reservation.
+    pub(crate) total: i32,
+}
+
+/// Bits set aside before the search and released when their symbol is not coded
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+#[derive(Debug, Clone, Copy)]
+struct Reservations {
+    /// Budget left for the bands.
+    total: i32,
+    /// One bit for the final skip flag, when it fits.
+    skip: i32,
+    /// `log2(end - start)` bits for the intensity stereo band, when they fit.
+    intensity: i32,
+    /// One bit for the dual stereo flag, when it fits.
+    dual_stereo: i32,
+}
+
+impl Reservations {
+    /// Takes the skip, intensity and dual stereo reservations from `total`.
+    fn take(layout: AllocationLayout, total: i32) -> Self {
+        let mut total = total.max(0);
+        let skip = reserve_bit(&mut total);
+        if layout.channels != 2 {
+            return Self { total, skip, intensity: 0, dual_stereo: 0 };
+        }
+        let intensity = i32::from(LOG2_FRAC_TABLE[layout.end - layout.start]);
+        if intensity > total {
+            return Self { total, skip, intensity: 0, dual_stereo: 0 };
+        }
+        total -= intensity;
+        let dual_stereo = reserve_bit(&mut total);
+        return Self { total, skip, intensity, dual_stereo };
+    }
+}
+
+/// Takes one bit from `total` when at least one bit is left and returns what was taken.
+fn reserve_bit(total: &mut i32) -> i32 {
+    let reserved = if *total >= ONE_BIT_Q3 { ONE_BIT_Q3 } else { 0 };
+    *total -= reserved;
+    return reserved;
+}
+
+/// Shape threshold of band `j`: one bit per channel or `24 / 16` eighth bits per bin, whichever
+/// is greater ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+fn shape_threshold(layout: AllocationLayout, j: usize) -> i32 {
+    let n = band_width(j, layout.lm) as i32;
+    return layout
+        .floor_q3()
+        .max((SHAPE_THRESHOLD_NUMERATOR * (n << BITRES)) >> SHAPE_THRESHOLD_SHIFT);
+}
+
+/// Tilt of band `j` from the allocation trim,
+/// `channels * N0 * (trim - 5 - LM) * remaining_bands * 2^LM * 8 / 64`, one bit per channel less
+/// for single-bin bands
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+fn trim_offset(layout: AllocationLayout, alloc_trim: i32, j: usize) -> i32 {
+    let lm = layout.lm.log2();
+    let n0 = band_width(j, BlockSize::SHORT) as i32;
+    let remaining_bands = (layout.end - j - 1) as i32;
+    let tilt = alloc_trim - TRIM_NEUTRAL - (lm as i32);
+    let mut offset =
+        (layout.channels_i32() * n0 * tilt * remaining_bands * (1 << (lm + BITRES as usize)))
+            >> TRIM_OFFSET_SHIFT;
+    if band_width(j, layout.lm) == 1 {
+        offset -= layout.floor_q3();
+    }
+    return offset;
+}
+
+/// Per-band limits shared by every allocation phase: thresholds, trim offsets, caps and boosts
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+struct BandLimits<'a> {
+    layout: AllocationLayout,
+    cap: &'a [i32; MAX_BANDS],
+    offsets: &'a [i32; MAX_BANDS],
+    /// Least shape allocation of each coded band.
+    thresh: [i32; MAX_BANDS],
+    /// Tilt added to the static allocation of each coded band.
+    trim_offset: [i32; MAX_BANDS],
+}
+
+impl<'a> BandLimits<'a> {
+    /// Computes the thresholds and trim offsets of the coded bands.
+    fn new(layout: AllocationLayout, budget: AllocationBudget<'a>) -> Self {
+        let coded = |j: usize| layout.bands().contains(&j);
+        let thresh = std::array::from_fn(|j| if coded(j) { shape_threshold(layout, j) } else { 0 });
+        let trim_offset = std::array::from_fn(|j| {
+            if coded(j) { trim_offset(layout, budget.alloc_trim, j) } else { 0 }
+        });
+        return Self { layout, cap: budget.cap, offsets: budget.offsets, thresh, trim_offset };
+    }
+
+    /// Static allocation of `row` for band `j` in `1/8` bits before trim and boosts:
+    /// `channels * N0 * row[j] << LM >> 2`.
+    fn static_bits(&self, row: &[u8; MAX_BANDS], j: usize) -> i32 {
+        let n0 = band_width(j, BlockSize::SHORT) as i32;
+        return ((self.layout.channels_i32() * n0 * i32::from(row[j])) << self.layout.lm.log2())
+            >> ALLOC_TABLE_SHIFT;
+    }
+
+    /// Applies the trim tilt to a non-zero static allocation, never below zero.
+    fn trimmed(&self, bits: i32, j: usize) -> i32 {
+        if bits > 0 {
+            return (bits + self.trim_offset[j]).max(0);
+        }
+        return bits;
+    }
+
+    /// Static allocation of `row` for band `j` with trim and boost applied.
+    fn row_bits(&self, row: &[u8; MAX_BANDS], j: usize) -> i32 {
+        return self.trimmed(self.static_bits(row, j), j) + self.offsets[j];
+    }
+
+    /// Total of the candidate allocation `band_bits` over the coded bands, walking down from the
+    /// top band: until a band reaches its threshold, bands receive the floor or nothing; from
+    /// there down every band counts up to its cap.
+    fn curve_total(&self, band_bits: impl Fn(usize) -> i32) -> i32 {
+        let floor = self.layout.floor_q3();
+        let (psum, _) = self.layout.bands().rev().fold((0i32, false), |(psum, done), j| {
+            let bits = band_bits(j);
+            return match (bits >= self.thresh[j] || done, bits >= floor) {
+                (true, _) => (psum + bits.min(self.cap[j]), true),
+                (false, true) => (psum + floor, false),
+                (false, false) => (psum, false),
+            };
+        });
+        return psum;
+    }
+
+    /// First row of [`ALLOC_VECTORS`] whose total exceeds `total` (`1..=NB_ALLOC_VECTORS`); the
+    /// allocation interpolates between it and the row below. Row totals are non-decreasing, so
+    /// the search is a partition point.
+    fn first_row_over_budget(&self, total: i32) -> usize {
+        return 1 + ALLOC_VECTORS[1..]
+            .partition_point(|row| self.curve_total(|j| self.row_bits(row, j)) <= total);
+    }
+}
+
+/// The two allocations the budget falls between: `lower` fits and `lower + delta` exceeds it
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// linear interpolation).
+struct InterpolationCurve {
+    lower: [i32; MAX_BANDS],
+    delta: [i32; MAX_BANDS],
+    /// Highest boosted band (or `start`); skipping never descends past it.
+    skip_start: usize,
+}
+
+impl InterpolationCurve {
+    /// Builds the bounds from the rows around `over_row`; above the last row the cap bounds the
+    /// allocation, and the row of all zeros carries no boosts.
+    fn new(limits: &BandLimits<'_>, over_row: usize) -> Self {
+        let layout = limits.layout;
+        let under_row = over_row - 1;
+        let coded = |j: usize| layout.bands().contains(&j);
+        let lower = std::array::from_fn(|j| {
+            if !coded(j) {
+                return 0;
+            }
+            let bits = limits.trimmed(limits.static_bits(&ALLOC_VECTORS[under_row], j), j);
+            if under_row > 0 {
+                return bits + limits.offsets[j];
+            }
+            return bits;
+        });
+        let delta = std::array::from_fn(|j| {
+            if !coded(j) {
+                return 0;
+            }
+            let raw = if over_row >= NB_ALLOC_VECTORS {
+                limits.cap[j]
+            } else {
+                limits.static_bits(&ALLOC_VECTORS[over_row], j)
+            };
+            let upper = limits.trimmed(raw, j) + limits.offsets[j];
+            return (upper - lower[j]).max(0);
+        });
+        let skip_start =
+            layout.bands().rev().find(|&j| limits.offsets[j] > 0).unwrap_or(layout.start);
+        return Self { lower, delta, skip_start };
+    }
+
+    /// Allocation of band `j` at interpolation `weight` (`0..64`).
+    fn at(&self, weight: i32, j: usize) -> i32 {
+        return self.lower[j] + ((weight * self.delta[j]) >> ALLOC_STEPS);
+    }
+
+    /// Largest interpolation weight (`0..64`) whose total fits `total`. Totals are non-decreasing
+    /// in the weight, so the search is a partition point.
+    fn weight_within(&self, limits: &BandLimits<'_>, total: i32) -> i32 {
+        let weights: [i32; 1 << ALLOC_STEPS] = std::array::from_fn(|i| i as i32);
+        return weights[1..]
+            .partition_point(|&weight| limits.curve_total(|j| self.at(weight, j)) <= total)
+            as i32;
+    }
+
+    /// Per-band allocation at `weight` with thresholds, floor and caps applied, and its total.
+    fn evaluate(&self, limits: &BandLimits<'_>, weight: i32) -> ([i32; MAX_BANDS], i32) {
+        let floor = limits.layout.floor_q3();
+        let mut bits = [0i32; MAX_BANDS];
         let mut psum = 0i32;
         let mut done = false;
-        for j in (start..end).rev() {
-            let tmp = bits1[j] + ((mid * bits2[j]) >> ALLOC_STEPS);
-            match (tmp >= thresh[j] || done, tmp >= alloc_floor) {
+        for j in limits.layout.bands().rev() {
+            let interpolated = self.at(weight, j);
+            let shape = match (interpolated >= limits.thresh[j] || done, interpolated >= floor) {
                 (true, _) => {
                     done = true;
-                    psum += tmp.min(cap[j]);
+                    interpolated
                 }
-                (false, true) => psum += alloc_floor,
-                (false, false) => {}
-            }
+                (false, true) => floor,
+                (false, false) => 0,
+            };
+            bits[j] = shape.min(limits.cap[j]);
+            psum += bits[j];
         }
-        if psum > total {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
+        return (bits, psum);
     }
+}
 
-    // 2. Evaluate the interpolated per-band bit curve at `lo`.
-    let mut psum = 0i32;
-    let mut done = false;
-    let mut bits = [0i32; MAX_BANDS];
-    for j in (start..end).rev() {
-        let mut tmp = bits1[j] + ((lo * bits2[j]) >> ALLOC_STEPS);
-        if tmp < thresh[j] && !done {
-            if tmp >= alloc_floor {
-                tmp = alloc_floor;
-            } else {
-                tmp = 0;
-            }
-        } else {
-            done = true;
-        }
-        tmp = tmp.min(cap[j]);
-        bits[j] = tmp;
-        psum += tmp;
-    }
-
-    // 3. Work backwards from `end` to decide which high-frequency bands are skipped.
-    let mut coded_bands = end;
+/// Decodes band skipping from the top band down and returns the number of coded bands: a band
+/// is skipped (reduced to its floor or nothing) until its flag says otherwise or the boosted
+/// `skip_start` band is reached, while the unused bits are redistributed to the bands below
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// reallocation of unused bits with concurrent skip decoding).
+fn decode_band_skips(
+    range_decoder: &mut Decoder<'_>,
+    limits: &BandLimits<'_>,
+    skip_start: usize,
+    bits: &mut [i32; MAX_BANDS],
+    psum: &mut i32,
+    reservations: &mut Reservations,
+) -> Result<usize> {
+    let layout = limits.layout;
+    let floor = layout.floor_q3();
+    let mut coded_bands = layout.end;
     loop {
         let j = coded_bands - 1;
         if j <= skip_start {
-            total += skip_rsv;
-            break;
+            reservations.total += reservations.skip;
+            return Ok(coded_bands);
         }
 
-        let left = total - psum;
-        let coeff_span = (EBANDS[coded_bands] - EBANDS[start]) as i32;
+        // Bits this band would receive from the per-bin redistribution of what is left.
+        let left = reservations.total - *psum;
+        let coeff_span = (EBANDS[coded_bands] - EBANDS[layout.start]) as i32;
         let percoeff = left / coeff_span;
         let rem_total = left - coeff_span * percoeff;
-        let rem = (rem_total - ((EBANDS[j] - EBANDS[start]) as i32)).max(0);
+        let rem = (rem_total - ((EBANDS[j] - EBANDS[layout.start]) as i32)).max(0);
         let band_w = (EBANDS[coded_bands] - EBANDS[j]) as i32;
         let mut band_bits = bits[j] + percoeff * band_w + rem;
 
-        if band_bits >= thresh[j].max(alloc_floor + (1 << BITRES)) {
+        if band_bits >= limits.thresh[j].max(floor + ONE_BIT_Q3) {
             if range_decoder.decode_symbol_logp(1)? != 0 {
-                break;
+                return Ok(coded_bands);
             }
-            psum += 1 << BITRES;
-            band_bits -= 1 << BITRES;
+            *psum += ONE_BIT_Q3;
+            band_bits -= ONE_BIT_Q3;
         }
 
-        psum -= bits[j] + intensity_rsv;
-        if intensity_rsv > 0 {
-            intensity_rsv = i32::from(LOG2_FRAC_TABLE[j - start]);
+        *psum -= bits[j] + reservations.intensity;
+        if reservations.intensity > 0 {
+            reservations.intensity = i32::from(LOG2_FRAC_TABLE[j - layout.start]);
         }
-        psum += intensity_rsv;
+        *psum += reservations.intensity;
 
-        if band_bits >= alloc_floor {
-            psum += alloc_floor;
-            bits[j] = alloc_floor;
-        } else {
-            bits[j] = 0;
-        }
-
+        bits[j] = if band_bits >= floor { floor } else { 0 };
+        *psum += bits[j];
         coded_bands -= 1;
     }
+}
 
-    // 4. Decode stereo intensity start band and dual-stereo flag.
-    let intensity = if intensity_rsv > 0 {
-        let count = (coded_bands + 1 - start) as u32;
-        start + (range_decoder.decode_uint(count)? as usize)
-    } else {
-        0
-    };
-
-    if intensity <= start {
-        total += dual_stereo_rsv;
-        dual_stereo_rsv = 0;
+/// Decodes the intensity stereo band and the dual stereo flag when their bits were reserved
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+fn decode_stereo_params(
+    range_decoder: &mut Decoder<'_>,
+    layout: AllocationLayout,
+    coded_bands: usize,
+    reservations: &mut Reservations,
+) -> Result<(usize, bool)> {
+    let mut intensity = 0usize;
+    if reservations.intensity > 0 {
+        let count = (coded_bands + 1 - layout.start) as u32;
+        intensity = layout.start + (range_decoder.decode_uint(count)? as usize);
     }
+    if intensity <= layout.start {
+        reservations.total += reservations.dual_stereo;
+        reservations.dual_stereo = 0;
+    }
+    let dual_stereo = reservations.dual_stereo > 0 && range_decoder.decode_symbol_logp(1)? != 0;
+    return Ok((intensity, dual_stereo));
+}
 
-    let dual_stereo = if dual_stereo_rsv > 0 {
-        range_decoder.decode_symbol_logp(1)? != 0
-    } else {
-        false
-    };
-
-    // 5. Distribute remaining bits uniformly per MDCT coefficient across `start..coded_bands`.
-    let mut left = total - psum;
-    let coded_span = (EBANDS[coded_bands] - EBANDS[start]) as i32;
+/// Spreads the `left` unallocated bits over the coded bands in proportion to their 2.5 ms
+/// width, then hands out the remainder one bin at a time from the lowest band
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// final reallocation).
+fn distribute_remainder(
+    layout: AllocationLayout,
+    coded_bands: usize,
+    mut left: i32,
+    bits: &mut [i32; MAX_BANDS],
+) {
+    let coded_span = (EBANDS[coded_bands] - EBANDS[layout.start]) as i32;
     let percoeff = left / coded_span;
     left -= coded_span * percoeff;
 
-    for (j, bit_slot) in bits.iter_mut().enumerate().take(coded_bands).skip(start) {
-        *bit_slot += percoeff * (band_width(j, 0) as i32);
+    for (shape, j) in bits[layout.start..coded_bands].iter_mut().zip(layout.start..) {
+        *shape += percoeff * (band_width(j, BlockSize::SHORT) as i32);
     }
-    for (j, bit_slot) in bits.iter_mut().enumerate().take(coded_bands).skip(start) {
-        let add = left.min(band_width(j, 0) as i32);
-        *bit_slot += add;
+    for (shape, j) in bits[layout.start..coded_bands].iter_mut().zip(layout.start..) {
+        let add = left.min(band_width(j, BlockSize::SHORT) as i32);
+        *shape += add;
         left -= add;
     }
-
-    // 6. Partition each band's total bits into fine energy (`fine_quant`) and PVQ shape (`bits`).
-    let mut balance = 0i32;
-    let mut fine_quant = [0i32; MAX_BANDS];
-    let mut fine_priority = [0i32; MAX_BANDS];
-
-    for j in start..coded_bands {
-        let n = band_width(j, lm) as i32;
-        let bit = bits[j] + balance;
-        let mut excess;
-
-        if n > 1 {
-            excess = (bit - cap[j]).max(0);
-            bits[j] = bit - excess;
-
-            let extra_dof = i32::from(channels == 2 && n > 2 && !dual_stereo && j < intensity);
-            let den = c * n + extra_dof;
-            let nc_log_n = den * (i32::from(LOGN[j]) + log_m);
-
-            let mut offset = (nc_log_n >> 1) - den * FINE_OFFSET;
-            if n == 2 {
-                offset += (den << BITRES) >> 2;
-            }
-            offset += match (
-                bits[j] + offset < (den * 2) << BITRES,
-                bits[j] + offset < (den * 3) << BITRES,
-            ) {
-                (true, _) => nc_log_n >> 2,
-                (false, true) => nc_log_n >> 3,
-                (false, false) => 0,
-            };
-
-            let num = (bits[j] + offset + (den << (BITRES - 1))).max(0);
-            let mut ebits_j = (num / den) >> BITRES;
-
-            if c * ebits_j > (bits[j] >> BITRES) {
-                ebits_j = (bits[j] >> stereo_shift) >> BITRES;
-            }
-            ebits_j = ebits_j.min(MAX_FINE_BITS);
-
-            fine_priority[j] = i32::from(ebits_j * (den << BITRES) >= bits[j] + offset);
-            bits[j] -= (c * ebits_j) << BITRES;
-            fine_quant[j] = ebits_j;
-        } else {
-            excess = (bit - (c << BITRES)).max(0);
-            bits[j] = bit - excess;
-            fine_quant[j] = 0;
-            fine_priority[j] = 1;
-        }
-
-        if excess > 0 {
-            let max_add = MAX_FINE_BITS - fine_quant[j];
-            let extra_fine = (excess >> (stereo_shift + BITRES as usize)).min(max_add);
-            fine_quant[j] += extra_fine;
-            let extra_bits = (extra_fine * c) << BITRES;
-            fine_priority[j] = i32::from(extra_bits >= excess - balance);
-            excess -= extra_bits;
-        }
-        balance = excess;
-    }
-
-    // Skipped high-frequency bands (`coded_bands..end`) assign all their floor bits to fine energy.
-    for j in coded_bands..end {
-        fine_quant[j] = (bits[j] >> stereo_shift) >> BITRES;
-        bits[j] = 0;
-        fine_priority[j] = i32::from(fine_quant[j] < 1);
-    }
-
-    return Ok(BandAllocation {
-        pulses: bits,
-        fine_quant,
-        fine_priority,
-        balance,
-        coded_bands,
-        intensity,
-        dual_stereo,
-    });
+    return;
 }
 
-/// Computes the complete CELT per-band bit allocation for bands `start..end`
-/// (RFC 6716 Section 4.3.3, `clt_compute_allocation` in `rate.c`).
-///
-/// Given per-band dynamic boosts `offsets`, per-band caps `cap`, spectral tilt `alloc_trim`,
-/// and remaining Q3 bit budget `total`, performs binary search and interpolation over
-/// [`ALLOC_VECTORS`] and decodes band-skipping, intensity stereo, and dual-stereo flags from
-/// `range_decoder`.
-#[allow(clippy::too_many_arguments)]
-pub fn clt_compute_allocation(
-    range_decoder: &mut Decoder<'_>,
-    start: usize,
-    end: usize,
-    offsets: &[i32; MAX_BANDS],
-    cap: &[i32; MAX_BANDS],
-    alloc_trim: i32,
-    total: i32,
-    channels: usize,
-    lm: usize,
-) -> Result<BandAllocation> {
-    let mut total = total.max(0);
-    let mut skip_start = start;
+/// Fine energy bits, priority and shape bits of one band, plus the excess over its cap.
+#[derive(Debug, Clone, Copy)]
+struct BandSplit {
+    shape: i32,
+    fine: i32,
+    priority: bool,
+    excess: i32,
+}
 
-    // Reserve 1 bit (8 Q3 units) to signal the end of manually skipped bands.
-    let skip_rsv = if total >= (1 << BITRES) {
-        1 << BITRES
-    } else {
-        0
+/// Offset that biases the fine energy share of a band of `n` bins and `den` degrees of freedom
+/// holding `shape` bits: half the log2 of the bins per degree of freedom minus [`FINE_OFFSET`],
+/// a quarter bit more for two-bin bands, and more again at very low rates
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+fn fine_energy_offset(layout: AllocationLayout, j: usize, n: i32, den: i32, shape: i32) -> i32 {
+    let log_m = (layout.lm.log2() as i32) << BITRES;
+    let nc_log_n = den * (i32::from(LOGN[j]) + log_m);
+    let mut offset = (nc_log_n >> FINE_HALF_LOG_SHIFT) - den * FINE_OFFSET;
+    if n == 2 {
+        offset += (den << BITRES) >> FINE_TWO_BIN_SHIFT;
+    }
+    offset += match (
+        shape + offset < (den * FINE_LOW_RATE_TWO_BITS) << BITRES,
+        shape + offset < (den * FINE_LOW_RATE_THREE_BITS) << BITRES,
+    ) {
+        (true, _) => nc_log_n >> FINE_LOW_RATE_QUARTER_SHIFT,
+        (false, true) => nc_log_n >> FINE_LOW_RATE_EIGHTH_SHIFT,
+        (false, false) => 0,
     };
-    total -= skip_rsv;
-
-    // In stereo, reserve fractional bits for intensity stereo and 1 bit for dual stereo.
-    let mut intensity_rsv = 0i32;
-    let mut dual_stereo_rsv = 0i32;
-    if channels == 2 {
-        intensity_rsv = i32::from(LOG2_FRAC_TABLE[end - start]);
-        if intensity_rsv > total {
-            intensity_rsv = 0;
-        } else {
-            total -= intensity_rsv;
-            dual_stereo_rsv = if total >= (1 << BITRES) {
-                1 << BITRES
-            } else {
-                0
-            };
-            total -= dual_stereo_rsv;
-        }
-    }
-
-    let c = channels as i32;
-    let mut thresh = [0i32; MAX_BANDS];
-    let mut trim_offset = [0i32; MAX_BANDS];
-
-    for j in start..end {
-        let n0 = band_width(j, 0) as i32;
-        // Minimum threshold below which no PVQ shape bits are allocated.
-        thresh[j] = (c << BITRES).max((3 * (n0 << lm << BITRES)) >> 4);
-        // Spectral tilt offset controlled by `alloc_trim` (neutral at 5).
-        trim_offset[j] = (c
-            * n0
-            * (alloc_trim - 5 - (lm as i32))
-            * ((end - j - 1) as i32)
-            * (1 << (lm + BITRES as usize)))
-            >> 6;
-        // Single-coefficient bands get slightly lower threshold tilt because coarse energy
-        // already provides one value per coefficient.
-        if (n0 << lm) == 1 {
-            trim_offset[j] -= c << BITRES;
-        }
-    }
-
-    // Coarse binary search across the 11 static allocation vectors.
-    let mut lo: isize = 1;
-    let mut hi: isize = (NB_ALLOC_VECTORS as isize) - 1;
-    while lo <= hi {
-        let mut done = false;
-        let mut psum = 0i32;
-        let mid = ((lo + hi) >> 1) as usize;
-
-        for j in (start..end).rev() {
-            let n0 = band_width(j, 0) as i32;
-            let mut bits_j = ((c * n0 * i32::from(ALLOC_VECTORS[mid][j])) << lm) >> 2;
-            if bits_j > 0 {
-                bits_j = (bits_j + trim_offset[j]).max(0);
-            }
-            bits_j += offsets[j];
-
-            match (bits_j >= thresh[j] || done, bits_j >= (c << BITRES)) {
-                (true, _) => {
-                    done = true;
-                    psum += bits_j.min(cap[j]);
-                }
-                (false, true) => psum += c << BITRES,
-                (false, false) => {}
-            }
-        }
-
-        if psum > total {
-            hi = (mid as isize) - 1;
-        } else {
-            lo = (mid as isize) + 1;
-        }
-    }
-
-    let hi_idx = lo as usize;
-    let lo_idx = (lo - 1) as usize;
-
-    let mut bits1 = [0i32; MAX_BANDS];
-    let mut bits2 = [0i32; MAX_BANDS];
-
-    for j in start..end {
-        let n0 = band_width(j, 0) as i32;
-        let mut bits1_j = ((c * n0 * i32::from(ALLOC_VECTORS[lo_idx][j])) << lm) >> 2;
-        let mut bits2_j = if hi_idx >= NB_ALLOC_VECTORS {
-            cap[j]
-        } else {
-            ((c * n0 * i32::from(ALLOC_VECTORS[hi_idx][j])) << lm) >> 2
-        };
-
-        if bits1_j > 0 {
-            bits1_j = (bits1_j + trim_offset[j]).max(0);
-        }
-        if bits2_j > 0 {
-            bits2_j = (bits2_j + trim_offset[j]).max(0);
-        }
-        if lo_idx > 0 {
-            bits1_j += offsets[j];
-        }
-        bits2_j += offsets[j];
-
-        if offsets[j] > 0 {
-            skip_start = j;
-        }
-
-        bits2_j = (bits2_j - bits1_j).max(0);
-        bits1[j] = bits1_j;
-        bits2[j] = bits2_j;
-    }
-
-    return interpolate_and_partition_bits(
-        range_decoder,
-        start,
-        end,
-        skip_start,
-        &bits1,
-        &bits2,
-        &thresh,
-        cap,
-        total,
-        skip_rsv,
-        intensity_rsv,
-        dual_stereo_rsv,
-        channels,
-        lm,
-    );
+    return offset;
 }
 
-/// High-level helper that decodes dynamic band boosts, `alloc_trim`, anti-collapse reservation,
-/// and the full [`BandAllocation`] for a CELT frame (`celt_decoder.c` lines 1510-1560).
-///
-/// Returns `(allocation, anti_collapse_rsv)` where `anti_collapse_rsv` is `1 << BITRES` (8 Q3
-/// bits) if `is_transient && lm >= 2 && bits >= (lm + 2) << BITRES`, or `0` otherwise.
-pub fn decode_frame_allocation(
+/// Turns the excess above the cap into extra fine energy bits, up to [`MAX_FINE_BITS`], and
+/// leaves the rest in `excess` as the balance carried into the next band.
+fn carry_excess_into_fine(
+    mut split: BandSplit,
+    layout: AllocationLayout,
+    balance: i32,
+) -> BandSplit {
+    if split.excess <= 0 {
+        return split;
+    }
+    let extra_fine =
+        (split.excess >> (layout.stereo_shift() + BITRES as usize)).min(MAX_FINE_BITS - split.fine);
+    split.fine += extra_fine;
+    let extra_bits = (extra_fine * layout.channels_i32()) << BITRES;
+    split.priority = extra_bits >= split.excess - balance;
+    split.excess -= extra_bits;
+    return split;
+}
+
+/// Splits the `bit` budget of band `j` (its allocation plus the carried `balance`) into fine
+/// energy bits per channel and PVQ shape bits
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// fine-energy versus shape split).
+fn split_band_bits(
+    limits: &BandLimits<'_>,
+    j: usize,
+    bit: i32,
+    balance: i32,
+    intensity: usize,
+    dual_stereo: bool,
+) -> BandSplit {
+    let layout = limits.layout;
+    let c = layout.channels_i32();
+    let n = band_width(j, layout.lm) as i32;
+    if n <= 1 {
+        // A single bin has no shape to code: one bit per channel, everything else is excess.
+        let excess = (bit - layout.floor_q3()).max(0);
+        let split = BandSplit { shape: bit - excess, fine: 0, priority: true, excess };
+        return carry_excess_into_fine(split, layout, balance);
+    }
+
+    let excess = (bit - limits.cap[j]).max(0);
+    let shape = bit - excess;
+    let extra_dof = i32::from(layout.channels == 2 && n > 2 && !dual_stereo && j < intensity);
+    let den = c * n + extra_dof;
+    let offset = fine_energy_offset(layout, j, n, den, shape);
+
+    // Whole fine bits per degree of freedom, rounded, and never more than the shape bits allow.
+    let num = (shape + offset + (den << (BITRES - 1))).max(0);
+    let mut fine = (num / den) >> BITRES;
+    if c * fine > (shape >> BITRES) {
+        fine = (shape >> layout.stereo_shift()) >> BITRES;
+    }
+    fine = fine.min(MAX_FINE_BITS);
+    let priority = fine * (den << BITRES) >= shape + offset;
+    let split = BandSplit { shape: shape - ((c * fine) << BITRES), fine, priority, excess };
+    return carry_excess_into_fine(split, layout, balance);
+}
+
+impl BandAllocation {
+    /// Computes the per-band allocation of a frame in the order of
+    /// [RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>):
+    /// reservations, thresholds and trim offsets, search of the static table, interpolation,
+    /// skip decoding with reallocation, stereo parameters, final reallocation, and the
+    /// fine-energy versus shape split.
+    pub(crate) fn compute(
+        range_decoder: &mut Decoder<'_>,
+        layout: AllocationLayout,
+        budget: AllocationBudget<'_>,
+    ) -> Result<Self> {
+        let mut reservations = Reservations::take(layout, budget.total);
+        let limits = BandLimits::new(layout, budget);
+        let over_row = limits.first_row_over_budget(reservations.total);
+        let curve = InterpolationCurve::new(&limits, over_row);
+        let weight = curve.weight_within(&limits, reservations.total);
+        let (mut bits, mut psum) = curve.evaluate(&limits, weight);
+        let coded_bands = decode_band_skips(
+            range_decoder,
+            &limits,
+            curve.skip_start,
+            &mut bits,
+            &mut psum,
+            &mut reservations,
+        )?;
+        let (intensity, dual_stereo) =
+            decode_stereo_params(range_decoder, layout, coded_bands, &mut reservations)?;
+        distribute_remainder(layout, coded_bands, reservations.total - psum, &mut bits);
+        return Ok(Self::split_fine_and_shape(&limits, coded_bands, intensity, dual_stereo, bits));
+    }
+
+    /// Splits every coded band's bits into fine energy and shape bits, carrying the excess over
+    /// the caps upwards, and turns the floor of the skipped bands into fine energy bits
+    /// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
+    fn split_fine_and_shape(
+        limits: &BandLimits<'_>,
+        coded_bands: usize,
+        intensity: usize,
+        dual_stereo: bool,
+        mut bits: [i32; MAX_BANDS],
+    ) -> Self {
+        let layout = limits.layout;
+        let mut fine_quant = [0i32; MAX_BANDS];
+        let mut fine_priority = [false; MAX_BANDS];
+        let mut balance = 0i32;
+
+        for j in layout.start..coded_bands {
+            let split =
+                split_band_bits(limits, j, bits[j] + balance, balance, intensity, dual_stereo);
+            bits[j] = split.shape;
+            fine_quant[j] = split.fine;
+            fine_priority[j] = split.priority;
+            balance = split.excess;
+        }
+
+        for j in coded_bands..layout.end {
+            fine_quant[j] = (bits[j] >> layout.stereo_shift()) >> BITRES;
+            bits[j] = 0;
+            fine_priority[j] = fine_quant[j] < 1;
+        }
+
+        return Self {
+            pulses: bits,
+            fine_quant,
+            fine_priority,
+            balance,
+            coded_bands,
+            intensity,
+            dual_stereo,
+        };
+    }
+}
+
+/// Smallest block size exponent whose transient frames can code the anti-collapse flag
+/// ([RFC 6716 Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>)).
+const ANTI_COLLAPSE_MIN_LM: usize = 2;
+
+/// Decodes the band boosts and the allocation trim, reserves one bit for the anti-collapse flag
+/// of a transient frame, and computes the bit allocation of a frame of `total_bits`
+/// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
+/// [Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>)). Returns the
+/// allocation and the eighth bits reserved for the anti-collapse flag (`0` or `8`).
+pub(crate) fn decode_bit_allocation(
     range_decoder: &mut Decoder<'_>,
-    start: usize,
-    end: usize,
-    lm: usize,
-    channels: usize,
+    layout: AllocationLayout,
     is_transient: bool,
     total_bits: i32,
 ) -> Result<(BandAllocation, i32)> {
+    let AllocationLayout { start, end, channels, lm } = layout;
     let cap = init_caps(lm, channels);
     let (offsets, alloc_trim) =
         decode_band_boosts_and_trim(range_decoder, start, end, lm, channels, total_bits, &cap)?;
 
-    let mut bits = (total_bits << BITRES) - (range_decoder.tell_frac() as i32) - 1;
-    let anti_collapse_rsv = if is_transient && lm >= 2 && bits >= (((lm as i32) + 2) << BITRES) {
-        1 << BITRES
-    } else {
-        0
-    };
-    bits -= anti_collapse_rsv;
-
-    let allocation = clt_compute_allocation(
-        range_decoder,
-        start,
-        end,
-        &offsets,
-        &cap,
+    let available = (total_bits << BITRES) - (range_decoder.tell_frac() as i32) - 1;
+    let reserve_anti_collapse = is_transient
+        && lm.log2() >= ANTI_COLLAPSE_MIN_LM
+        && available >= (((lm.log2() as i32) + 2) << BITRES);
+    let anti_collapse_rsv = if reserve_anti_collapse { ONE_BIT_Q3 } else { 0 };
+    let budget = AllocationBudget {
+        offsets: &offsets,
+        cap: &cap,
         alloc_trim,
-        bits,
-        channels,
-        lm,
-    )?;
-
+        total: available - anti_collapse_rsv,
+    };
+    let allocation = BandAllocation::compute(range_decoder, layout, budget)?;
     return Ok((allocation, anti_collapse_rsv));
 }
 
 #[cfg(test)]
 mod tests {
+    // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
+    // normative (RFC 6716 Section 4.3.3) and is verified against the RFC 8251 test vectors by
+    // `tests/rfc6716_conformance.rs`.
     use super::*;
 
-    /// Verifies `get_pulses`, `bits2pulses`, and `pulses2bits` against the `libopus 1.6.1` C oracle.
+    /// Verifies `get_pulses`, `bits2pulses`, and `pulses2bits` against the recorded values.
     #[test]
-    fn test_bits2pulses_and_pulses2bits_oracle() {
+    fn pulse_cache_conversions_match_recorded_values() {
         assert_eq!(get_pulses(0), 0);
         assert_eq!(get_pulses(7), 7);
         assert_eq!(get_pulses(8), 8);
@@ -761,7 +1009,7 @@ mod tests {
         assert_eq!(get_pulses(40), 128);
 
         // Tuple format: (lm, band, input_bits, expected_pulses, expected_roundtrip_bits)
-        static ORACLE_CASES: [(usize, usize, i32, i32, i32); 32] = [
+        static PULSE_CACHE_CASES: [(usize, usize, i32, i32, i32); 32] = [
             (0, 0, 0, 0, 0),
             (0, 0, 13, 40, 8),
             (0, 10, 13, 1, 16),
@@ -796,9 +1044,10 @@ mod tests {
             (3, 20, 39, 1, 68),
         ];
 
-        for &(lm, band, bits, expected_p, expected_b) in &ORACLE_CASES {
-            let p = bits2pulses(lm, band, bits);
-            let b = pulses2bits(lm, band, p);
+        for &(lm, band, bits, expected_p, expected_b) in &PULSE_CACHE_CASES {
+            let p =
+                bits2pulses_at_level(CacheLevel::from_block_size(BlockSize::new(lm)), band, bits);
+            let b = pulses2bits_at_level(CacheLevel::from_block_size(BlockSize::new(lm)), band, p);
             assert_eq!(
                 p, expected_p,
                 "bits2pulses mismatch for lm={} band={} bits={}",
@@ -815,31 +1064,34 @@ mod tests {
     }
 
     /// Verifies `tf_decode` across non-transient, transient, and hybrid (`start = 17`) configurations
-    /// against the `libopus 1.6.1` C oracle.
+    /// against the recorded values.
     #[test]
-    fn test_tf_decode_oracle() {
+    fn tf_decode_matches_recorded_values() {
         let mut packet = [0u8; 16];
         for (i, byte) in packet.iter_mut().enumerate() {
             *byte = ((i * 97 + 11) & 0xFF) as u8;
         }
 
         // Case 1: transient = false, lm = 3, start = 0, end = 21
-        let mut dec1 = Decoder::new(&packet).expect("valid range decoder");
-        let tf1 = tf_decode(0, 21, false, 3, &mut dec1).expect("tf_decode case 1 failed");
+        let mut dec1 = Decoder::new(&packet);
+        let tf1 =
+            tf_decode(0, 21, false, BlockSize::new(3), &mut dec1).expect("tf_decode case 1 failed");
         assert_eq!(dec1.tell(), 3);
         assert_eq!(dec1.tell_frac(), 17);
         assert_eq!(tf1, [0; 21]);
 
         // Case 2: transient = true, lm = 2, start = 0, end = 21
-        let mut dec2 = Decoder::new(&packet).expect("valid range decoder");
-        let tf2 = tf_decode(0, 21, true, 2, &mut dec2).expect("tf_decode case 2 failed");
+        let mut dec2 = Decoder::new(&packet);
+        let tf2 =
+            tf_decode(0, 21, true, BlockSize::new(2), &mut dec2).expect("tf_decode case 2 failed");
         assert_eq!(dec2.tell(), 5);
         assert_eq!(dec2.tell_frac(), 35);
         assert_eq!(tf2, [2; 21]);
 
         // Case 3: hybrid start = 17, end = 21, transient = false, lm = 2
-        let mut dec3 = Decoder::new(&packet).expect("valid range decoder");
-        let tf3 = tf_decode(17, 21, false, 2, &mut dec3).expect("tf_decode case 3 failed");
+        let mut dec3 = Decoder::new(&packet);
+        let tf3 = tf_decode(17, 21, false, BlockSize::new(2), &mut dec3)
+            .expect("tf_decode case 3 failed");
         assert_eq!(dec3.tell(), 2);
         assert_eq!(dec3.tell_frac(), 10);
         assert_eq!(tf3, [0; 21]);
@@ -847,20 +1099,20 @@ mod tests {
         return;
     }
 
-    /// Verifies `init_caps` and `clt_compute_allocation` for Mono (`C = 1`), `LM = 3` (20 ms),
-    /// `start = 0, end = 21`, 40-byte frame against the `libopus 1.6.1` C oracle.
+    /// Verifies `init_caps` and `BandAllocation::compute` for Mono (`C = 1`), `LM = 3` (20 ms),
+    /// `start = 0, end = 21`, 40-byte frame against the recorded values.
     #[test]
-    fn test_clt_compute_allocation_mono_lm3_oracle() {
+    fn band_allocation_mono_lm3_matches_recorded_values() {
         let mut packet = [0u8; 40];
         for (i, byte) in packet.iter_mut().enumerate() {
             *byte = ((i * 41 + 7) & 0xFF) as u8;
         }
-        let mut dec = Decoder::new(&packet).expect("valid range decoder");
+        let mut dec = Decoder::new(&packet);
 
-        let cap = init_caps(3, 1);
+        let cap = init_caps(BlockSize::new(3), 1);
         const EXPECTED_CAP: [i32; 21] = [
-            514, 514, 514, 514, 514, 514, 514, 514, 1028, 1028, 1028, 1028, 2064, 2064, 2064,
-            2976, 2976, 3792, 4872, 4644, 4532,
+            514, 514, 514, 514, 514, 514, 514, 514, 1028, 1028, 1028, 1028, 2064, 2064, 2064, 2976,
+            2976, 3792, 4872, 4644, 4532,
         ];
         assert_eq!(cap, EXPECTED_CAP);
 
@@ -871,8 +1123,12 @@ mod tests {
             }
         }
         let total = ((40 * 8) << BITRES) - (dec.tell_frac() as i32) - 1;
-        let alloc = clt_compute_allocation(&mut dec, 0, 21, &offsets, &cap, 5, total, 1, 3)
-            .expect("mono allocation failed");
+        let alloc = BandAllocation::compute(
+            &mut dec,
+            AllocationLayout { start: 0, end: 21, channels: 1, lm: BlockSize::new(3) },
+            AllocationBudget { offsets: &offsets, cap: &cap, alloc_trim: 5, total },
+        )
+        .expect("mono allocation failed");
 
         assert_eq!(alloc.coded_bands, 21);
         assert_eq!(alloc.balance, 0);
@@ -881,38 +1137,36 @@ mod tests {
         assert_eq!(dec.tell_frac(), 8);
 
         const EXPECTED_PULSES: [i32; 21] = [
-            164, 154, 143, 127, 115, 112, 106, 99, 183, 165, 153, 128, 227, 170, 120, 121, 0, 0,
-            0, 0, 0,
+            164, 154, 143, 127, 115, 112, 106, 99, 183, 165, 153, 128, 227, 170, 120, 121, 0, 0, 0,
+            0, 0,
         ];
-        const EXPECTED_FINE_QUANT: [i32; 21] = [
-            3, 2, 2, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0, 0,
-        ];
-        const EXPECTED_FINE_PRIO: [i32; 21] = [
-            1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0,
-        ];
+        const EXPECTED_FINE_QUANT: [i32; 21] =
+            [3, 2, 2, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0, 0];
+        const EXPECTED_FINE_PRIO: [i32; 21] =
+            [1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0];
 
         assert_eq!(alloc.pulses, EXPECTED_PULSES);
         assert_eq!(alloc.fine_quant, EXPECTED_FINE_QUANT);
-        assert_eq!(alloc.fine_priority, EXPECTED_FINE_PRIO);
+        assert_eq!(alloc.fine_priority.map(i32::from), EXPECTED_FINE_PRIO);
 
         return;
     }
 
-    /// Verifies `init_caps` and `clt_compute_allocation` for Stereo (`C = 2`), `LM = 2` (10 ms),
+    /// Verifies `init_caps` and `BandAllocation::compute` for Stereo (`C = 2`), `LM = 2` (10 ms),
     /// `start = 0, end = 21`, 60-byte frame, `alloc_trim = 4` (including skipped band 20,
-    /// `intensity = 3`, `dual_stereo = true`) against the `libopus 1.6.1` C oracle.
+    /// `intensity = 3`, `dual_stereo = true`) against the recorded values.
     #[test]
-    fn test_clt_compute_allocation_stereo_lm2_oracle() {
+    fn band_allocation_stereo_lm2_matches_recorded_values() {
         let mut packet = [0u8; 60];
         for (i, byte) in packet.iter_mut().enumerate() {
             *byte = ((i * 83 + 150) & 0xFF) as u8;
         }
-        let mut dec = Decoder::new(&packet).expect("valid range decoder");
+        let mut dec = Decoder::new(&packet);
 
-        let cap = init_caps(2, 2);
+        let cap = init_caps(BlockSize::new(2), 2);
         const EXPECTED_CAP: [i32; 21] = [
-            542, 542, 542, 542, 542, 542, 542, 542, 1072, 1072, 1072, 1072, 2120, 2120, 2120,
-            3024, 3024, 3840, 4920, 4680, 4576,
+            542, 542, 542, 542, 542, 542, 542, 542, 1072, 1072, 1072, 1072, 2120, 2120, 2120, 3024,
+            3024, 3840, 4920, 4680, 4576,
         ];
         assert_eq!(cap, EXPECTED_CAP);
 
@@ -920,8 +1174,12 @@ mod tests {
         offsets[2] = 12;
         offsets[8] = 6;
         let total = ((60 * 8) << BITRES) - (dec.tell_frac() as i32) - 1;
-        let alloc = clt_compute_allocation(&mut dec, 0, 21, &offsets, &cap, 4, total, 2, 2)
-            .expect("stereo allocation failed");
+        let alloc = BandAllocation::compute(
+            &mut dec,
+            AllocationLayout { start: 0, end: 21, channels: 2, lm: BlockSize::new(2) },
+            AllocationBudget { offsets: &offsets, cap: &cap, alloc_trim: 4, total },
+        )
+        .expect("stereo allocation failed");
 
         assert_eq!(alloc.coded_bands, 20);
         assert_eq!(alloc.balance, 0);
@@ -933,38 +1191,40 @@ mod tests {
             167, 156, 157, 150, 133, 124, 114, 106, 216, 192, 174, 156, 271, 239, 198, 228, 176,
             162, 99, 97, 0,
         ];
-        const EXPECTED_FINE_QUANT: [i32; 21] = [
-            2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 2, 1, 2, 2, 2, 1,
-        ];
-        const EXPECTED_FINE_PRIO: [i32; 21] = [
-            1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0,
-        ];
+        const EXPECTED_FINE_QUANT: [i32; 21] =
+            [2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 2, 1, 2, 2, 2, 1];
+        const EXPECTED_FINE_PRIO: [i32; 21] =
+            [1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 0];
 
         assert_eq!(alloc.pulses, EXPECTED_PULSES);
         assert_eq!(alloc.fine_quant, EXPECTED_FINE_QUANT);
-        assert_eq!(alloc.fine_priority, EXPECTED_FINE_PRIO);
+        assert_eq!(alloc.fine_priority.map(i32::from), EXPECTED_FINE_PRIO);
 
         return;
     }
 
     /// Verifies Hybrid mode (`start = 17, end = 21`), Stereo (`C = 2`), `LM = 3` (20 ms)
-    /// `clt_compute_allocation` against the `libopus 1.6.1` C oracle.
+    /// `BandAllocation::compute` against the recorded values.
     #[test]
-    fn test_clt_compute_allocation_hybrid_stereo_lm3_oracle() {
+    fn band_allocation_hybrid_stereo_lm3_matches_recorded_values() {
         let mut packet = [0u8; 32];
         for (i, byte) in packet.iter_mut().enumerate() {
             *byte = ((i * 29 + 99) & 0xFF) as u8;
         }
-        let mut dec = Decoder::new(&packet).expect("valid range decoder");
+        let mut dec = Decoder::new(&packet);
         for _ in 0..15 {
             dec.decode_raw_bits(8).expect("advance bits");
         }
 
-        let cap = init_caps(3, 2);
+        let cap = init_caps(BlockSize::new(3), 2);
         let offsets = [0i32; MAX_BANDS];
         let total = ((32 * 8) << BITRES) - (dec.tell_frac() as i32) - 1;
-        let alloc = clt_compute_allocation(&mut dec, 17, 21, &offsets, &cap, 6, total, 2, 3)
-            .expect("hybrid allocation failed");
+        let alloc = BandAllocation::compute(
+            &mut dec,
+            AllocationLayout { start: 17, end: 21, channels: 2, lm: BlockSize::new(3) },
+            AllocationBudget { offsets: &offsets, cap: &cap, alloc_trim: 6, total },
+        )
+        .expect("hybrid allocation failed");
 
         assert_eq!(alloc.coded_bands, 19);
         assert_eq!(alloc.balance, 0);
@@ -972,42 +1232,43 @@ mod tests {
         assert!(alloc.dual_stereo);
         assert_eq!(dec.tell_frac(), 1005);
 
-        const EXPECTED_PULSES: [i32; 21] = [
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 522, 408, 0, 0,
-        ];
-        const EXPECTED_FINE_QUANT: [i32; 21] = [
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 1, 1,
-        ];
-        const EXPECTED_FINE_PRIO: [i32; 21] = [
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
-        ];
+        const EXPECTED_PULSES: [i32; 21] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 522, 408, 0, 0];
+        const EXPECTED_FINE_QUANT: [i32; 21] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 1, 1];
+        const EXPECTED_FINE_PRIO: [i32; 21] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0];
 
         assert_eq!(alloc.pulses, EXPECTED_PULSES);
         assert_eq!(alloc.fine_quant, EXPECTED_FINE_QUANT);
-        assert_eq!(alloc.fine_priority, EXPECTED_FINE_PRIO);
+        assert_eq!(alloc.fine_priority.map(i32::from), EXPECTED_FINE_PRIO);
 
         return;
     }
 
     /// Verifies high-bitrate Stereo (`C = 2`), `LM = 3` (20 ms), 160-byte frame allocation
-    /// against the `libopus 1.6.1` C oracle.
+    /// against the recorded values.
     #[test]
-    fn test_clt_compute_allocation_high_bitrate_oracle() {
+    fn band_allocation_high_bitrate_matches_recorded_values() {
         let mut packet = [0u8; 160];
         for (i, byte) in packet.iter_mut().enumerate() {
             *byte = ((i * 67 + 13) & 0xFF) as u8;
         }
-        let mut dec = Decoder::new(&packet).expect("valid range decoder");
+        let mut dec = Decoder::new(&packet);
 
-        let cap = init_caps(3, 2);
+        let cap = init_caps(BlockSize::new(3), 2);
         let mut offsets = [0i32; MAX_BANDS];
         for slot in offsets.iter_mut().take(4) {
             *slot = 24;
         }
 
         let total = ((160 * 8) << BITRES) - (dec.tell_frac() as i32) - 1;
-        let alloc = clt_compute_allocation(&mut dec, 0, 21, &offsets, &cap, 5, total, 2, 3)
-            .expect("high-bitrate allocation failed");
+        let alloc = BandAllocation::compute(
+            &mut dec,
+            AllocationLayout { start: 0, end: 21, channels: 2, lm: BlockSize::new(3) },
+            AllocationBudget { offsets: &offsets, cap: &cap, alloc_trim: 5, total },
+        )
+        .expect("high-bitrate allocation failed");
 
         assert_eq!(alloc.coded_bands, 16);
         assert_eq!(alloc.balance, 0);
@@ -1019,36 +1280,38 @@ mod tests {
             485, 463, 441, 423, 361, 343, 341, 323, 618, 581, 545, 509, 994, 906, 834, 1167, 0, 0,
             0, 0, 0,
         ];
-        const EXPECTED_FINE_QUANT: [i32; 21] = [
-            3, 3, 3, 3, 3, 3, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1,
-        ];
-        const EXPECTED_FINE_PRIO: [i32; 21] = [
-            0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0,
-        ];
+        const EXPECTED_FINE_QUANT: [i32; 21] =
+            [3, 3, 3, 3, 3, 3, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 1, 1];
+        const EXPECTED_FINE_PRIO: [i32; 21] =
+            [0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0];
 
         assert_eq!(alloc.pulses, EXPECTED_PULSES);
         assert_eq!(alloc.fine_quant, EXPECTED_FINE_QUANT);
-        assert_eq!(alloc.fine_priority, EXPECTED_FINE_PRIO);
+        assert_eq!(alloc.fine_priority.map(i32::from), EXPECTED_FINE_PRIO);
 
         return;
     }
 
-    /// Verifies `decode_frame_allocation` (`decode_band_boosts_and_trim` + `anti_collapse_rsv` +
-    /// `clt_compute_allocation`) on a transient (`is_transient = true, lm = 2`) frame with
+    /// Verifies `decode_bit_allocation` (`decode_band_boosts_and_trim` + `anti_collapse_rsv` +
+    /// `BandAllocation::compute`) on a transient (`is_transient = true, lm = 2`) frame with
     /// active dynamic boosts (`offsets[0] = 32, offsets[3] = 64`) and `alloc_trim = 7`
-    /// against the `libopus 1.6.1` C oracle.
+    /// against the recorded values.
     #[test]
-    fn test_decode_frame_allocation_transient_dynalloc_oracle() {
+    fn frame_allocation_with_transient_and_band_boosts_matches_recorded_values() {
         const PACKET5: [u8; 48] = [
             0xfd, 0xda, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x0a, 0xaa, 0xaa,
         ];
-        let mut dec = Decoder::new(&PACKET5).expect("valid range decoder");
-        let (alloc, anti_collapse_rsv) =
-            decode_frame_allocation(&mut dec, 0, 21, 2, 1, true, 48 * 8)
-                .expect("transient dynalloc frame allocation failed");
+        let mut dec = Decoder::new(&PACKET5);
+        let (alloc, anti_collapse_rsv) = decode_bit_allocation(
+            &mut dec,
+            AllocationLayout { start: 0, end: 21, channels: 1, lm: BlockSize::new(2) },
+            true,
+            48 * 8,
+        )
+        .expect("transient dynalloc frame allocation failed");
 
         assert_eq!(anti_collapse_rsv, 8);
         assert_eq!(alloc.coded_bands, 16);
@@ -1059,16 +1322,14 @@ mod tests {
             150, 119, 111, 161, 102, 96, 90, 84, 163, 159, 147, 135, 255, 234, 209, 285, 0, 0, 0,
             0, 0,
         ];
-        const EXPECTED_FINE_QUANT: [i32; 21] = [
-            4, 3, 3, 4, 2, 2, 2, 2, 3, 2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1,
-        ];
-        const EXPECTED_FINE_PRIO: [i32; 21] = [
-            0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
+        const EXPECTED_FINE_QUANT: [i32; 21] =
+            [4, 3, 3, 4, 2, 2, 2, 2, 3, 2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1];
+        const EXPECTED_FINE_PRIO: [i32; 21] =
+            [0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0];
 
         assert_eq!(alloc.pulses, EXPECTED_PULSES);
         assert_eq!(alloc.fine_quant, EXPECTED_FINE_QUANT);
-        assert_eq!(alloc.fine_priority, EXPECTED_FINE_PRIO);
+        assert_eq!(alloc.fine_priority.map(i32::from), EXPECTED_FINE_PRIO);
 
         return;
     }

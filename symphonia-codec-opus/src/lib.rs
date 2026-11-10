@@ -1,11 +1,12 @@
-//! Opus Interactive Audio Codec (`symphonia-codec-opus`).
+//! Opus Interactive Audio Codec decoder (`symphonia-codec-opus`)
+//! ([RFC 6716](<https://datatracker.ietf.org/doc/html/rfc6716>)).
 //!
 //! This crate implements a 100% safe Rust decoder for the Opus audio codec as specified in
 //! [RFC 6716](<https://datatracker.ietf.org/doc/html/rfc6716>),
 //! [RFC 7845](<https://datatracker.ietf.org/doc/html/rfc7845>) (Ogg Opus Encapsulation), and
 //! [RFC 8251](<https://datatracker.ietf.org/doc/html/rfc8251>) (Opus Errata and Updates).
 //!
-//! # Architecture ([RFC 6716 Section 4, Figure 12](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>))
+//! # Architecture ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>) block diagram)
 //!
 //! ```text
 //!                             +---------+    +------------+
@@ -36,20 +37,24 @@
 //! - `decoder`: Top-level [`OpusDecoder`], Hybrid mode synthesis, 5 ms redundant CELT mode
 //!   transitions ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)),
 //!   and multi-stream surround routing ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
+//! - `fixed`: Bit-exact fixed-point primitives of the SILK layer
+//!   ([RFC 6716 Section 4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2>)).
+//! - `sample_rate`: The five output sample rates and per-frame sample counts
+//!   ([RFC 6716 Section 2](<https://datatracker.ietf.org/doc/html/rfc6716#section-2>)).
+//! - `planes`: The planar `f32` channel pair every decode stage writes into
+//!   ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 
 #![forbid(unsafe_code)]
 #![allow(clippy::needless_return)]
-#![allow(clippy::enum_variant_names)]
-#![allow(clippy::upper_case_acronyms)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unreachable_patterns)]
 
 mod celt;
 mod decoder;
 mod entropy;
+mod fixed;
 mod header;
 mod packet;
+mod planes;
+mod sample_rate;
 mod silk;
 #[cfg(test)]
 mod test_vectors;

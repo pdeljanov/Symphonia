@@ -1,11 +1,14 @@
-//! Opus Top-Level & Multi-Stream Decoder Orchestration (RFC 6716 Section 4, RFC 7845 Section 5).
+//! Opus top-level and multi-stream decoder orchestration
+//! ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>),
+//! [RFC 7845 Section 5](<https://datatracker.ietf.org/doc/html/rfc7845#section-5>)).
 //!
-//! The Opus decoder consists of two main synthesis blocks per elementary stream: the SILK
-//! linear-predictive decoder (for low/medium frequencies in SILK-only and Hybrid modes) and
-//! the CELT transform decoder (for high frequencies in Hybrid mode or the full spectrum in
-//! CELT-only mode). At any given time, one or both of the SILK and CELT decoders may be active.
-//! The output of each elementary stream is the sum of the time-aligned outputs from the SILK
-//! and CELT decoders:
+//! The Opus decoder consists of two synthesis blocks per elementary stream: the SILK
+//! linear-predictive decoder (the low frequencies of SILK-only and Hybrid frames) and the CELT
+//! transform decoder (the high frequencies of Hybrid frames or the full spectrum of CELT-only
+//! frames). The output of each elementary stream is the sum of the time-aligned outputs of the
+//! two decoders
+//! ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>) block diagram):
+//!
 //! ```text
 //!
 //!                          +---------+    +------------+
@@ -21,22 +24,30 @@
 //!                          +---------+    +------------+
 //! ```
 //!
-//! Multi-stream packets (Channel Mapping Family 0 and Family 1 per RFC 7845 Section 5.1.1)
-//! consist of `N - 1` self-delimited elementary stream packets followed by `1` undelimited
-//! elementary stream packet. Each elementary stream is decoded by its own [`StreamDecoder`]
-//! instance (`M` coupled stereo streams followed by `N - M` uncoupled mono streams), and the
-//! decoded stream channels are routed to output audio planes via the `OpusHead` channel mapping
-//! table with optional Q7.8 dB `output_gain` scaling.
+//! [`StreamDecoder`] sequences the layers of one frame, conceals lost frames
+//! ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)) and
+//! applies the configuration-switching rules of
+//! [RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>): the
+//! 5 ms redundant CELT frame (`Redundancy`), the recommended cross-fade with concealed audio
+//! when a mode switch carries no redundancy (`Transition`), the Hybrid to SILK-only overlap
+//! flush, and the state resets of
+//! [Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>).
 //!
-//! <https://datatracker.ietf.org/doc/html/rfc6716#section-4>
-
-#![allow(clippy::too_many_arguments)]
+//! A multi-stream packet
+//! ([RFC 7845 Section 3](<https://datatracker.ietf.org/doc/html/rfc7845#section-3>)) carries
+//! `N - 1` self-delimited elementary stream packets
+//! ([RFC 6716 Appendix B](<https://datatracker.ietf.org/doc/html/rfc6716#appendix-B>)) followed
+//! by one undelimited packet. [`OpusDecoder`] decodes the `M` coupled stereo streams and the
+//! `N - M` uncoupled mono streams with one [`StreamDecoder`] each and routes their channels to
+//! the output planes through the `OpusHead` channel mapping table
+//! ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)),
+//! scaled by the Q7.8 dB `output_gain`
+//! ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
 
 use std::sync::LazyLock;
 
 use symphonia_core::audio::{
-    AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, Channels,
-    GenericAudioBufferRef, Position,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
@@ -49,57 +60,82 @@ use symphonia_core::io::BufReader;
 use symphonia_core::packet::PacketRef;
 
 use crate::celt;
+use crate::celt::BlockSize;
 use crate::celt::constant::CELT_WINDOW;
+use crate::celt::decoder::{FrameInput, FrameLayout, Mix};
 use crate::entropy;
 use crate::header::{self, ChannelMappingFamily};
 use crate::packet::FramePacket;
+use crate::planes::Planes;
+use crate::sample_rate::SampleRate;
 use crate::silk;
-use crate::silk::error::Error as SilkError;
 use crate::toc::{AudioMode, Bandwidth, FrameDuration};
 
-/// Maximum samples per channel in a single 120 ms Opus packet at 48 kHz (`5760`).
+/// Maximum samples per channel in one Opus packet: 120 ms at 48 kHz (`5760`,
+/// [RFC 6716 Section 3.2.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-3.2.5>)).
 const MAX_PACKET_SAMPLES_48K: usize = 5760;
 
-/// Maximum samples per channel in a single 20 ms frame at 48 kHz (`960`).
+/// Samples per channel in the longest single SILK or CELT frame: 20 ms at 48 kHz (`960`).
 const MAX_20MS_SAMPLES_48K: usize = 960;
 
-/// Maximum samples per channel in a 5 ms transition/redundancy window at 48 kHz (`240`).
+/// Samples per channel in the 5 ms redundant CELT frame and transition window at 48 kHz
+/// (`240`, [RFC 6716 Section 4.5.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1>)).
 const MAX_5MS_SAMPLES_48K: usize = 240;
 
-/// Starting CELT band index at 8 kHz for Hybrid and SILK modes (`17`, RFC 6716 Section 4.3).
+/// First CELT band coded in Hybrid mode: band 17, starting at 8 kHz
+/// ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)).
 const HYBRID_START_BAND: usize = celt::HYBRID_START_BAND;
 
-/// Sample count at 48 kHz for the 2.5 ms MDCT overlap flush (`120`, RFC 6716 Section 4.4).
-const FLUSH_SILENT_FRAME_SAMPLES_48K: usize = celt::SHORT_MDCT_SIZE;
+/// Samples at 48 kHz of the 2.5 ms silence frame that flushes the CELT overlap buffer into a
+/// SILK-only frame following a Hybrid frame (`120`,
+/// [RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>)).
+const OVERLAP_FLUSH_SAMPLES_48K: usize = celt::SHORT_MDCT_SIZE;
 
-/// Two-byte all-ones payload used to synthesize a silent 2.5 ms CELT frame when flushing
-/// the Hybrid MDCT overlap tail into a subsequent SILK frame (`opus_decoder.c:588`).
-const SILENT_CELT_FRAME: [u8; 2] = [0xFF, 0xFF];
-
-/// Minimum remaining range-coder bit budget in SILK mode to signal a 5 ms redundant CELT frame.
+/// Bits that must remain after the SILK layer of a SILK-only frame for it to carry redundancy
+/// ([RFC 6716 Section 4.5.1.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.1>)).
 const SILK_REDUNDANCY_MIN_BITS: i32 = 17;
 
-/// Minimum remaining range-coder bit budget in Hybrid mode (`17 + 20 = 37` bits) to signal
-/// a 5 ms redundant CELT frame (RFC 6716 Section 4.4).
+/// Bits that must remain after the SILK layer of a Hybrid frame for the redundancy flag to be
+/// coded
+/// ([RFC 6716 Section 4.5.1.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.1>)).
 const HYBRID_REDUNDANCY_MIN_BITS: i32 = 37;
 
-/// Log-probability (`logp = 12`, $P = 2^{-12}$) for the Hybrid redundancy presence flag.
+/// Log-probability of the Hybrid redundancy flag, PDF `{4095, 1}/4096`
+/// ([RFC 6716 Table 64](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.1>)).
 const HYBRID_REDUNDANCY_FLAG_LOGP: u32 = 12;
 
-/// Log-probability (`logp = 1`, $P = 2^{-1}$) for the `celt_to_silk` transition direction flag.
-const REDUNDANCY_DIRECTION_LOGP: u32 = 1;
+/// Log-probability of the redundancy position flag, PDF `{1, 1}/2`
+/// ([RFC 6716 Table 65](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.2>)).
+const REDUNDANCY_POSITION_LOGP: u32 = 1;
 
-/// Alphabet size (`256`) for the uniform uint encoding `redundancy_bytes - 2` in Hybrid mode.
+/// Alphabet size of the Hybrid redundancy size integer (`256`,
+/// [RFC 6716 Section 4.5.1.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.3>)).
 const HYBRID_REDUNDANCY_LEN_RADIX: u32 = 256;
 
-/// Minimum byte length (`2`) of a coded Hybrid redundant CELT frame.
+/// Bytes added to the decoded Hybrid redundancy size integer (`2`,
+/// [RFC 6716 Section 4.5.1.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.3>)).
 const HYBRID_REDUNDANCY_MIN_BYTES: usize = 2;
 
-/// Vorbis channel mapping value (`255`) indicating a silent output channel (RFC 7845 Section 5.1.1).
+/// Bits per byte, in the `i32` domain of [`entropy::Decoder::tell`].
+const BITS_PER_BYTE: i32 = u8::BITS as i32;
+
+/// Right shift that divides a bit count by [`BITS_PER_BYTE`].
+const BYTE_SHIFT: u32 = 3;
+
+/// Channel mapping entry that marks a silent output channel (`255`,
+/// [RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
 const UNMAPPED_CHANNEL_INDEX: u8 = 255;
 
-/// Scale factor converting Q7.8 dB `output_gain` to a base-2 exponent (`1 / (256 * 20 * log10(2))`).
-const OUTPUT_GAIN_DB_Q8_TO_EXP2: f64 = 6.48814081e-4_f64;
+/// Largest output channel count an `OpusHead` can describe: the channel count is one byte
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+const MAX_OUTPUT_CHANNELS: usize = u8::MAX as usize;
+
+/// Units of the Q7.8 `output_gain` field per decibel
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+const OUTPUT_GAIN_UNITS_PER_DB: f64 = 256.0;
+
+/// Decibels per decade of amplitude: a gain of `g` dB scales samples by `10^(g / 20)`.
+const DB_PER_AMPLITUDE_DECADE: f64 = 20.0;
 
 /// Static Opus codec info.
 static CODEC_INFO: LazyLock<CodecInfo> = LazyLock::new(|| CodecInfo {
@@ -109,224 +145,300 @@ static CODEC_INFO: LazyLock<CodecInfo> = LazyLock::new(|| CodecInfo {
 });
 
 /// Static supported codecs array.
-static SUPPORTED_CODECS: LazyLock<[SupportedAudioCodec; 1]> = LazyLock::new(|| {
-    [SupportedAudioCodec {
-        id: CODEC_ID_OPUS,
-        info: *CODEC_INFO,
-    }]
-});
+static SUPPORTED_CODECS: LazyLock<[SupportedAudioCodec; 1]> =
+    LazyLock::new(|| [SupportedAudioCodec { id: CODEC_ID_OPUS, info: *CODEC_INFO }]);
 
-/// Converts an Opus [`FrameDuration`] and output `sample_rate` into a per-channel sample count.
+/// Linear scale of the Q7.8 dB `output_gain` field, `10^(output_gain / (20 * 256))`, the formula
+/// RFC 7845 gives for applying the gain
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
 #[inline]
-fn duration_samples(frame_size: FrameDuration, sample_rate: u32) -> usize {
-    let fs = sample_rate as usize;
-    return match frame_size {
-        FrameDuration::Ms2_5 => fs / 400,
-        FrameDuration::Ms5 => fs / 200,
-        FrameDuration::Ms10 => fs / 100,
-        FrameDuration::Ms20 => fs / 50,
-        FrameDuration::Ms40 => fs / 25,
-        FrameDuration::Ms60 => (fs * 3) / 50,
+fn output_gain_scale(output_gain: i16) -> f32 {
+    let gain_db = f64::from(output_gain) / OUTPUT_GAIN_UNITS_PER_DB;
+    return 10.0_f64.powf(gain_db / DB_PER_AMPLITUDE_DECADE) as f32;
+}
+
+/// Which operand of a 5 ms cross-lap the rising CELT window favours
+/// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FadeDirection {
+    /// The buffer fades in while the other signal fades out (start of a frame).
+    In,
+    /// The buffer fades out while the other signal fades in (end of a frame).
+    Out,
+}
+
+/// Cross-laps `out` with `other` over their common length using the squared CELT window
+/// `w[i] = CELT_WINDOW[i * downsample]^2`, whose power-complementary halves sum to one
+/// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)):
+///
+/// ```text
+///   FadeDirection::In   out[i] = w[i] * out[i]   + (1 - w[i]) * other[i]
+///   FadeDirection::Out  out[i] = w[i] * other[i] + (1 - w[i]) * out[i]
+/// ```
+fn crossfade(out: &mut [f32], other: &[f32], direction: FadeDirection, downsample: usize) {
+    let weights = CELT_WINDOW.iter().step_by(downsample).map(|w| w * w);
+    out.iter_mut().zip(other).zip(weights).for_each(|((sample, &other_sample), w)| {
+        let (fading_out, fading_in) = match direction {
+            FadeDirection::In => (other_sample, *sample),
+            FadeDirection::Out => (*sample, other_sample),
+        };
+        *sample = w * fading_in + (1.0_f32 - w) * fading_out;
+    });
+    return;
+}
+
+/// Applies [`crossfade`] to every present plane of `out` against the matching row of `other`.
+fn crossfade_planes(
+    mut out: Planes<'_>,
+    other: [&[f32]; 2],
+    direction: FadeDirection,
+    downsample: usize,
+) {
+    out.each_mut().zip(other).for_each(|(plane, other_plane)| {
+        crossfade(plane, other_plane, direction, downsample);
+    });
+    return;
+}
+
+/// Whether `mode` carries a SILK layer: SILK-only and Hybrid
+/// ([RFC 6716 Section 2](<https://datatracker.ietf.org/doc/html/rfc6716#section-2>)).
+const fn has_silk_layer(mode: AudioMode) -> bool {
+    return matches!(mode, AudioMode::Silk | AudioMode::Hybrid);
+}
+
+/// Whether `mode` carries a CELT layer: CELT-only and Hybrid
+/// ([RFC 6716 Section 2](<https://datatracker.ietf.org/doc/html/rfc6716#section-2>)).
+const fn has_celt_layer(mode: AudioMode) -> bool {
+    return matches!(mode, AudioMode::Celt | AudioMode::Hybrid);
+}
+
+/// First CELT band decoded or concealed for `mode`: band 0 in CELT-only mode and
+/// [`HYBRID_START_BAND`] otherwise
+/// ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)). A
+/// SILK-only frame keeps the Hybrid start band for its overlap flush and concealment.
+const fn celt_start_band(mode: AudioMode) -> usize {
+    return match mode {
+        AudioMode::Celt => 0,
+        AudioMode::Silk | AudioMode::Hybrid => HYBRID_START_BAND,
     };
 }
 
-/// Computes the linear amplitude scale factor $10^{\text{output\_gain} / (20 \times 256)}$
-/// from an `OpusHead` Q7.8 dB gain field (`opus_multistream_decoder.c:302`).
-#[inline]
-fn compute_output_gain_scale(output_gain: i16) -> f32 {
-    if output_gain == 0 {
-        return 1.0_f32;
-    }
-    return (std::f64::consts::LN_2 * (OUTPUT_GAIN_DB_Q8_TO_EXP2 * (output_gain as f64))).exp()
-        as f32;
+/// How the CELT output is mixed into the planes: added onto the SILK output of a Hybrid frame,
+/// written directly otherwise
+/// ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>) block diagram).
+const fn celt_mix(mode: AudioMode) -> Mix {
+    return match mode {
+        AudioMode::Hybrid => Mix::Accumulate,
+        AudioMode::Silk | AudioMode::Celt => Mix::Overwrite,
+    };
 }
 
-/// Zeroes the first `len` samples of `out_ch0` and `out_ch1` (when present).
-#[inline]
-fn clear_planar(out_ch0: &mut [f32], out_ch1: Option<&mut [f32]>, len: usize) {
-    out_ch0[..len].fill(0.0);
-    if let Some(ch1) = out_ch1 {
-        ch1[..len].fill(0.0);
-    }
-    return;
+/// Channel count a frame codes, from its TOC stereo flag
+/// ([RFC 6716 Section 3.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>)).
+const fn coded_channels(stereo: bool) -> usize {
+    return if stereo { 2 } else { 1 };
 }
 
-/// Applies the squared-window cross-fade `out[i] = w * out[i] + (1 - w) * in1[i]`
-/// where `w = CELT_WINDOW[i * downsample]^2` (`smooth_fade` in `opus_decoder.c:262`).
-#[inline]
-fn smooth_fade_into_second(
-    in1: &[f32],
-    in2_and_out: &mut [f32],
-    overlap: usize,
-    downsample: usize,
-) {
-    for (i, (out_sample, &in1_sample)) in in2_and_out[..overlap]
-        .iter_mut()
-        .zip(&in1[..overlap])
-        .enumerate()
-    {
-        let w0 = CELT_WINDOW[i * downsample];
-        let w = w0 * w0;
-        *out_sample = w * *out_sample + (1.0_f32 - w) * in1_sample;
-    }
-    return;
+/// Bit count of `bytes` whole bytes, in the `i32` domain of [`entropy::Decoder::tell`].
+const fn bits_in(bytes: usize) -> i32 {
+    return (bytes as i32) * BITS_PER_BYTE;
 }
 
-/// Applies the squared-window cross-fade `out[i] = w * in2[i] + (1 - w) * out[i]`
-/// where `w = CELT_WINDOW[i * downsample]^2` (`smooth_fade` in `opus_decoder.c:262`).
-#[inline]
-fn smooth_fade_from_first(
-    in1_and_out: &mut [f32],
-    in2: &[f32],
-    overlap: usize,
-    downsample: usize,
-) {
-    for (i, (out_sample, &in2_sample)) in in1_and_out[..overlap]
-        .iter_mut()
-        .zip(&in2[..overlap])
-        .enumerate()
-    {
-        let w0 = CELT_WINDOW[i * downsample];
-        let w = w0 * w0;
-        *out_sample = w * in2_sample + (1.0_f32 - w) * *out_sample;
-    }
-    return;
+/// Whole bytes that hold `bits` bits, rounded up to the next byte boundary.
+const fn whole_bytes(bits: i32) -> usize {
+    return ((bits + (BITS_PER_BYTE - 1)) >> BYTE_SHIFT) as usize;
 }
 
-/// Applies [`smooth_fade_into_second`] across one or two planar channels over `overlap` samples.
-#[inline]
-fn fade_planar_into_second(
-    in1_ch0: &[f32],
-    in1_ch1: &[f32],
-    out_ch0: &mut [f32],
-    out_ch1: Option<&mut [f32]>,
-    overlap: usize,
-    downsample: usize,
-) {
-    smooth_fade_into_second(in1_ch0, out_ch0, overlap, downsample);
-    if let Some(ch1) = out_ch1 {
-        smooth_fade_into_second(in1_ch1, ch1, overlap, downsample);
-    }
-    return;
+/// TOC configuration shared by every frame of a packet
+/// ([RFC 6716 Section 3.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameConfig {
+    mode: AudioMode,
+    bandwidth: Bandwidth,
+    duration: FrameDuration,
+    stereo: bool,
 }
 
-/// Applies [`smooth_fade_from_first`] across one or two planar channels at the `f2_5` frame tail.
-#[inline]
-fn fade_planar_tail_from_first(
-    out_ch0: &mut [f32],
-    out_ch1: Option<&mut [f32]>,
-    red_ch0: &[f32],
-    red_ch1: &[f32],
-    audiosize: usize,
-    f2_5: usize,
-    f5: usize,
-    downsample: usize,
-) {
-    let tail_start = audiosize - f2_5;
-    smooth_fade_from_first(
-        &mut out_ch0[tail_start..audiosize],
-        &red_ch0[f2_5..f5],
-        f2_5,
-        downsample,
-    );
-    if let Some(ch1) = out_ch1 {
-        smooth_fade_from_first(
-            &mut ch1[tail_start..audiosize],
-            &red_ch1[f2_5..f5],
-            f2_5,
-            downsample,
-        );
-    }
-    return;
-}
-
-/// Copies the leading `2.5 ms` (`f2_5`) prefix from `src_ch0`/`src_ch1` (when `audiosize >= f5`)
-/// and cross-fades the subsequent `2.5 ms` (`f2_5`) overlap into `out_ch0`/`out_ch1`
-/// (RFC 6716 Section 4.4 / `opus_decoder.c:616-662`).
-#[inline]
-fn apply_5ms_prefix_crossfade(
-    src_ch0: &[f32; MAX_5MS_SAMPLES_48K],
-    src_ch1: &[f32; MAX_5MS_SAMPLES_48K],
-    out_ch0: &mut [f32],
-    out_ch1: Option<&mut [f32]>,
-    audiosize: usize,
-    f2_5: usize,
-    f5: usize,
-    downsample: usize,
-) {
-    match audiosize >= f5 {
-        true => {
-            out_ch0[..f2_5].copy_from_slice(&src_ch0[..f2_5]);
-            let ch1_window = out_ch1.map(|ch1| {
-                ch1[..f2_5].copy_from_slice(&src_ch1[..f2_5]);
-                return &mut ch1[f2_5..f5];
-            });
-            fade_planar_into_second(
-                &src_ch0[f2_5..f5],
-                &src_ch1[f2_5..f5],
-                &mut out_ch0[f2_5..f5],
-                ch1_window,
-                f2_5,
-                downsample,
-            );
-        }
-        false => {
-            fade_planar_into_second(
-                &src_ch0[..f2_5],
-                &src_ch1[..f2_5],
-                &mut out_ch0[..f2_5],
-                out_ch1.map(|ch1| &mut ch1[..f2_5]),
-                f2_5,
-                downsample,
-            );
-        }
-    }
-    return;
-}
-
-/// Parsed 5 ms CELT redundancy metadata from a SILK or Hybrid frame (RFC 6716 Section 4.4).
-#[derive(Debug, Clone, Copy)]
-struct RedundancyHeader {
-    active_len: usize,
-    redundancy: bool,
-    celt_to_silk: bool,
-    redundancy_bytes: usize,
-}
-
-impl RedundancyHeader {
-    /// Returns a default header when no redundant 5 ms CELT frame is present.
-    #[inline]
-    const fn none(active_len: usize) -> Self {
+impl From<&FramePacket<'_>> for FrameConfig {
+    fn from(packet: &FramePacket<'_>) -> Self {
         return Self {
-            active_len,
-            redundancy: false,
-            celt_to_silk: false,
-            redundancy_bytes: 0,
+            mode: packet.audio_mode,
+            bandwidth: packet.bandwidth,
+            duration: packet.frame_duration,
+            stereo: packet.stereo,
         };
     }
 }
 
-/// Elementary Opus stream decoder pairing a SILK decoder and a CELT decoder for either a
-/// mono (`output_channels == 1`) or coupled stereo (`output_channels == 2`) stream.
-pub struct StreamDecoder {
+/// The last decoded frame, remembered to select the concealment decoders
+/// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)) and to
+/// apply the configuration-switching rules
+/// ([RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>)) to the
+/// next frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LastFrame {
+    config: FrameConfig,
+    /// The frame carried a [`Redundancy::SilkToCelt`] frame, so the CELT state is already
+    /// primed for a following CELT-only frame
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
+    silk_to_celt_redundancy: bool,
+}
+
+/// The 5 ms redundant CELT frame a SILK-only or Hybrid frame may carry
+/// ([RFC 6716 Section 4.5.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1>)),
+/// placed by the position flag of
+/// [Section 4.5.1.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.2>).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Redundancy<'a> {
+    /// No redundant frame.
+    None,
+    /// Position flag `1`: this is the second frame of a CELT-only to SILK-only or Hybrid
+    /// transition; the redundant frame replaces and cross-laps the start of this frame.
+    CeltToSilk(&'a [u8]),
+    /// Position flag `0`: this is the first frame of a SILK-only or Hybrid to CELT-only
+    /// transition; the redundant frame cross-laps the end of this frame.
+    SilkToCelt(&'a [u8]),
+}
+
+impl Redundancy<'_> {
+    /// Whether a redundant frame is present.
+    const fn is_present(&self) -> bool {
+        return !matches!(self, Self::None);
+    }
+}
+
+/// An Opus frame split into the bytes its SILK and CELT layers decode and the redundant CELT
+/// frame at its end
+/// ([RFC 6716 Section 4.5.1.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.3>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FramePayload<'a> {
+    /// Bytes available to the SILK and CELT layers; the range decoder storage is shrunk to them.
+    active: &'a [u8],
+    redundancy: Redundancy<'a>,
+}
+
+impl<'a> FramePayload<'a> {
+    /// The whole frame is active.
+    const fn without_redundancy(bytes: &'a [u8]) -> Self {
+        return Self { active: bytes, redundancy: Redundancy::None };
+    }
+
+    /// Reads the redundancy flag, position flag and size once the SILK layer has been decoded
+    /// from `range_decoder`
+    /// ([RFC 6716 Section 4.5.1.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.1>)
+    /// to [4.5.1.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.3>)) and shrinks
+    /// the range decoder storage by the redundant frame. A CELT-only frame never carries
+    /// redundancy. A size that leaves fewer active bytes than the range decoder has already
+    /// consumed invalidates the frame: nothing stays active and the CELT layer is concealed.
+    fn split(
+        mode: AudioMode,
+        range_decoder: &mut entropy::Decoder<'_>,
+        bytes: &'a [u8],
+    ) -> Result<Self> {
+        let min_bits = match mode {
+            AudioMode::Celt => return Ok(Self::without_redundancy(bytes)),
+            AudioMode::Silk => SILK_REDUNDANCY_MIN_BITS,
+            AudioMode::Hybrid => HYBRID_REDUNDANCY_MIN_BITS,
+        };
+        if range_decoder.tell() + min_bits > bits_in(bytes.len()) {
+            return Ok(Self::without_redundancy(bytes));
+        }
+
+        // A Hybrid frame codes the flag and the size; a SILK-only frame implies both.
+        let explicit = mode == AudioMode::Hybrid;
+        if explicit && range_decoder.decode_symbol_logp(HYBRID_REDUNDANCY_FLAG_LOGP)? == 0 {
+            return Ok(Self::without_redundancy(bytes));
+        }
+        let at_start = range_decoder.decode_symbol_logp(REDUNDANCY_POSITION_LOGP)? != 0;
+        let redundant_len = if explicit {
+            (range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX)? as usize)
+                + HYBRID_REDUNDANCY_MIN_BYTES
+        } else {
+            bytes.len().saturating_sub(whole_bytes(range_decoder.tell()))
+        };
+
+        let active_len = bytes.len().saturating_sub(redundant_len);
+        if bits_in(active_len) < range_decoder.tell() {
+            return Ok(Self::without_redundancy(&bytes[..0]));
+        }
+        range_decoder.shrink_storage(redundant_len);
+
+        let active = &bytes[..active_len];
+        let redundant = &bytes[active_len..(active_len + redundant_len)];
+        let redundancy = if at_start {
+            Redundancy::CeltToSilk(redundant)
+        } else {
+            Redundancy::SilkToCelt(redundant)
+        };
+        return Ok(Self { active, redundancy });
+    }
+}
+
+/// Decoder-side handling of a mode switch that carries no redundancy
+/// ([RFC 6716 Section 4.5.3, Figure 19](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.3>)):
+/// 5 ms of audio concealed from the outgoing decoder is cross-lapped with the start of the new
+/// frame. Switches between SILK-only and Hybrid, and within one mode, need no cross-fade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transition {
+    /// No cross-fade.
+    None,
+    /// SILK-only or Hybrid to CELT-only: conceal from the outgoing state before the frame is
+    /// decoded.
+    IntoCelt,
+    /// CELT-only to SILK-only or Hybrid: conceal from the CELT state once the SILK layer has
+    /// been decoded.
+    OutOfCelt,
+}
+
+impl Transition {
+    /// Classifies the switch from `last` to a frame in `mode`. A switch into CELT-only that the
+    /// previous frame announced with a [`Redundancy::SilkToCelt`] frame needs no concealment
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
+    fn between(last: Option<LastFrame>, mode: AudioMode) -> Self {
+        let Some(last) = last else {
+            return Self::None;
+        };
+        return match (last.config.mode, mode) {
+            (AudioMode::Silk | AudioMode::Hybrid, AudioMode::Celt) => {
+                if last.silk_to_celt_redundancy { Self::None } else { Self::IntoCelt }
+            }
+            (AudioMode::Celt, AudioMode::Silk | AudioMode::Hybrid) => Self::OutOfCelt,
+            (AudioMode::Celt, AudioMode::Celt)
+            | (AudioMode::Silk | AudioMode::Hybrid, AudioMode::Silk | AudioMode::Hybrid) => {
+                Self::None
+            }
+        };
+    }
+
+    /// A redundant frame makes the transition normative and forbids concealment
+    /// ([RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>):
+    /// "PLC MUST NOT be applied during any normative transition").
+    const fn unless_redundant(self, redundancy: &Redundancy<'_>) -> Self {
+        if redundancy.is_present() {
+            return Self::None;
+        }
+        return self;
+    }
+}
+
+/// Elementary Opus stream decoder pairing a SILK decoder and a CELT decoder for a mono
+/// (`output_channels == 1`) or coupled stereo (`output_channels == 2`) stream
+/// ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>)).
+pub(crate) struct StreamDecoder {
     output_channels: usize,
-    sample_rate: u32,
+    sample_rate: SampleRate,
     silk_decoder: silk::Decoder,
     celt_decoder: celt::Decoder,
-    prev_mode: Option<AudioMode>,
-    prev_redundancy: bool,
-    last_bandwidth: Bandwidth,
-    last_frame_size: FrameDuration,
-    last_stereo: bool,
+    /// `None` until the first frame has been decoded; a loss before that produces silence.
+    last: Option<LastFrame>,
     range_final: u32,
 }
 
 impl StreamDecoder {
-    /// Creates a new [`StreamDecoder`] for `sample_rate` (`8_000, 12_000, 16_000, 24_000, 48_000` Hz)
-    /// and `output_channels` (`1` or `2`).
-    pub fn new(sample_rate: u32, output_channels: usize) -> Result<Self> {
+    /// Creates a new [`StreamDecoder`] for `sample_rate` and `output_channels` (`1` or `2`).
+    pub(crate) fn new(sample_rate: SampleRate, output_channels: usize) -> Result<Self> {
         let mut silk_decoder = silk::Decoder::new();
-        silk_decoder.set_output_sample_rate(sample_rate);
+        silk_decoder.set_output_sample_rate(sample_rate.hz());
         let celt_decoder = celt::Decoder::new(sample_rate, output_channels)?;
 
         return Ok(Self {
@@ -334,594 +446,571 @@ impl StreamDecoder {
             sample_rate,
             silk_decoder,
             celt_decoder,
-            prev_mode: None,
-            prev_redundancy: false,
-            last_bandwidth: Bandwidth::FullBand,
-            last_frame_size: FrameDuration::Ms20,
-            last_stereo: output_channels == 2,
+            last: None,
             range_final: 0,
         });
     }
 
     /// Resets the elementary stream decoder state across stream discontinuities.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.silk_decoder.reset();
         self.celt_decoder.reset();
-        self.prev_mode = None;
-        self.prev_redundancy = false;
-        self.last_bandwidth = Bandwidth::FullBand;
-        self.last_frame_size = FrameDuration::Ms20;
-        self.last_stereo = self.output_channels == 2;
+        self.last = None;
         self.range_final = 0;
         return;
     }
 
-    /// Returns the `Channels` descriptor matching `self.output_channels` for SILK configuration.
+    /// Whether the stream decodes into two output planes.
     #[inline]
-    fn silk_api_channels(&self) -> Channels {
-        return match self.output_channels {
-            2 => Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT),
-            _ => Channels::Positioned(Position::FRONT_LEFT),
-        };
+    fn is_stereo(&self) -> bool {
+        return self.output_channels == 2;
     }
 
-    /// Decodes all frames of an elementary stream [`FramePacket`] into `pcm_ch0` and `pcm_ch1`.
+    /// Decodes every frame of `packet` back to back into the `scratch` rows and returns the
+    /// samples written per channel.
     fn decode_packet(
         &mut self,
-        pkt: &FramePacket<'_>,
-        pcm_ch0: &mut [f32; MAX_PACKET_SAMPLES_48K],
-        pcm_ch1: &mut [f32; MAX_PACKET_SAMPLES_48K],
+        packet: &FramePacket<'_>,
+        scratch: &mut [[f32; MAX_PACKET_SAMPLES_48K]; 2],
     ) -> Result<usize> {
-        let samples_per_frame = duration_samples(pkt.frame_size, self.sample_rate);
-        let mut offset = 0usize;
+        let config = FrameConfig::from(packet);
+        let samples_per_frame = self.sample_rate.samples_per(config.duration);
+        let mut pcm = Planes::from_rows(scratch, self.is_stereo());
 
-        for &frame_bytes in &pkt.frames {
-            let ch0_slice = &mut pcm_ch0[offset..(offset + samples_per_frame)];
-            let ch1_opt = (self.output_channels == 2)
-                .then(|| &mut pcm_ch1[offset..(offset + samples_per_frame)]);
-            let written = self.decode_opus_frame(
-                Some(frame_bytes),
-                pkt.audio_mode,
-                pkt.bandwidth,
-                pkt.frame_size,
-                pkt.stereo,
-                ch0_slice,
-                ch1_opt,
+        return packet.frames.iter().try_fold(0usize, |offset, &frame| {
+            let written = self.decode_frame(
+                Some(frame),
+                config,
+                pcm.range(offset..(offset + samples_per_frame)),
             )?;
-            offset += written;
-        }
-
-        return Ok(offset);
-    }
-
-    /// Conceals a lost packet of duration `loss_dur` into `pcm_ch0` and `pcm_ch1`.
-    fn conceal_lost_packet(
-        &mut self,
-        loss_dur: FrameDuration,
-        pcm_ch0: &mut [f32; MAX_PACKET_SAMPLES_48K],
-        pcm_ch1: &mut [f32; MAX_PACKET_SAMPLES_48K],
-    ) -> Result<usize> {
-        let total_samples = duration_samples(loss_dur, self.sample_rate);
-        let mode = self.prev_mode.unwrap_or(AudioMode::SILK);
-        let bw = self.last_bandwidth;
-        let st = self.last_stereo;
-        let ch0_slice = &mut pcm_ch0[..total_samples];
-        let ch1_opt = (self.output_channels == 2).then(|| &mut pcm_ch1[..total_samples]);
-
-        return self.decode_opus_frame(None, mode, bw, loss_dur, st, ch0_slice, ch1_opt);
-    }
-
-    /// Conceals a single lost/DTX frame of duration `frame_size` ($\le 20\text{ ms}$) into
-    /// `out_ch0` and `out_ch1` (`opus_decode_frame` with `data == NULL` in `opus_decoder.c:302-360`).
-    fn conceal_up_to_20ms(
-        &mut self,
-        frame_size: FrameDuration,
-        out_ch0: &mut [f32],
-        mut out_ch1: Option<&mut [f32]>,
-    ) -> Result<usize> {
-        let fs = self.sample_rate as usize;
-        let f10 = fs / 100;
-        let audiosize = duration_samples(frame_size, self.sample_rate);
-        let frame_size_48k = duration_samples(frame_size, 48_000);
-
-        clear_planar(out_ch0, out_ch1.as_deref_mut(), audiosize);
-
-        let Some(prev_mode) = self.prev_mode else {
-            self.range_final = 0;
-            return Ok(audiosize);
-        };
-
-        let bandwidth = self.last_bandwidth;
-        let packet_stereo = self.last_stereo;
-        let silk_channels = self.silk_api_channels();
-
-        match (prev_mode, audiosize < f10) {
-            (AudioMode::SILK | AudioMode::Hybrid, true) => {
-                let mut tmp0 = [0.0_f32; MAX_20MS_SAMPLES_48K];
-                let mut tmp1 = [0.0_f32; MAX_20MS_SAMPLES_48K];
-                self.silk_decoder
-                    .configure(silk_channels, FrameDuration::Ms10, bandwidth)?;
-                let tmp1_slice = (self.output_channels == 2).then(|| &mut tmp1[..f10]);
-                self.silk_decoder
-                    .conceal_frame_planar(packet_stereo, &mut tmp0[..f10], tmp1_slice)?;
-                out_ch0[..audiosize].copy_from_slice(&tmp0[..audiosize]);
-                if let Some(ch1) = out_ch1.as_deref_mut() {
-                    ch1[..audiosize].copy_from_slice(&tmp1[..audiosize]);
-                }
-            }
-            (AudioMode::SILK | AudioMode::Hybrid, false) => {
-                self.silk_decoder
-                    .configure(silk_channels, frame_size, bandwidth)?;
-                self.silk_decoder.conceal_frame_planar(
-                    packet_stereo,
-                    &mut out_ch0[..audiosize],
-                    out_ch1.as_deref_mut().map(|s| &mut s[..audiosize]),
-                )?;
-            }
-            (AudioMode::CELT, _) => {}
-        }
-
-        let stream_channels = if packet_stereo { 2 } else { 1 };
-        let start_band = match prev_mode {
-            AudioMode::CELT => 0,
-            AudioMode::SILK | AudioMode::Hybrid => HYBRID_START_BAND,
-        };
-        self.celt_decoder.set_bandwidth(bandwidth);
-        self.celt_decoder.set_stream_channels(stream_channels)?;
-        self.celt_decoder.set_start_band(start_band)?;
-
-        match prev_mode {
-            AudioMode::CELT | AudioMode::Hybrid => {
-                self.celt_decoder.conceal_frame_planar(
-                    frame_size_48k.min(MAX_20MS_SAMPLES_48K),
-                    &mut out_ch0[..audiosize],
-                    out_ch1.map(|s| &mut s[..audiosize]),
-                    prev_mode == AudioMode::Hybrid,
-                )?;
-            }
-            AudioMode::SILK => {}
-        }
-
-        self.range_final = 0;
-        self.prev_redundancy = false;
-        return Ok(audiosize);
-    }
-
-    /// Conceals a lost or zero-length DTX frame of arbitrary duration (`2.5 ms`..`60 ms`)
-    /// by splitting durations $> 20\text{ ms}$ into 20 ms concealment steps.
-    fn decode_lost_or_dtx_frame(
-        &mut self,
-        frame_size: FrameDuration,
-        audiosize: usize,
-        f20: usize,
-        out_ch0: &mut [f32],
-        mut out_ch1: Option<&mut [f32]>,
-    ) -> Result<usize> {
-        match (self.prev_mode.is_some(), audiosize > f20) {
-            (false, _) => {
-                clear_planar(out_ch0, out_ch1, audiosize);
-                self.range_final = 0;
-                return Ok(audiosize);
-            }
-            (true, true) => {
-                let mut offset = 0usize;
-                while offset < audiosize {
-                    let step = f20.min(audiosize - offset);
-                    let ch1_step = out_ch1
-                        .as_deref_mut()
-                        .map(|s| &mut s[offset..(offset + step)]);
-                    self.conceal_up_to_20ms(
-                        FrameDuration::Ms20,
-                        &mut out_ch0[offset..(offset + step)],
-                        ch1_step,
-                    )?;
-                    offset += step;
-                }
-                return Ok(audiosize);
-            }
-            (true, false) => {
-                return self.conceal_up_to_20ms(frame_size, out_ch0, out_ch1);
-            }
-        }
-    }
-
-    /// Conceals a `2.5 ms` or `5 ms` transition tail from the outgoing decoder into
-    /// `pcm_transition_ch0` and `pcm_transition_ch1` when switching modes without redundancy.
-    fn conceal_transition_tail(
-        &mut self,
-        audiosize: usize,
-        f2_5: usize,
-        f5: usize,
-        pcm_transition_ch0: &mut [f32; MAX_5MS_SAMPLES_48K],
-        pcm_transition_ch1: &mut [f32; MAX_5MS_SAMPLES_48K],
-    ) -> Result<()> {
-        let trans_dur = if audiosize == f2_5 {
-            FrameDuration::Ms2_5
-        } else {
-            FrameDuration::Ms5
-        };
-        let trans_samples = f5.min(audiosize);
-        let trans_ch1 =
-            (self.output_channels == 2).then(|| &mut pcm_transition_ch1[..trans_samples]);
-        self.conceal_up_to_20ms(
-            trans_dur,
-            &mut pcm_transition_ch0[..trans_samples],
-            trans_ch1,
-        )?;
-        return Ok(());
-    }
-
-    /// Parses the optional 5 ms CELT redundancy header from a SILK or Hybrid frame
-    /// (RFC 6716 Section 4.4 / `opus_decoder.c:500-528`).
-    fn parse_redundancy_header(
-        mode: AudioMode,
-        range_decoder: &mut entropy::Decoder<'_>,
-        raw_len: usize,
-    ) -> Result<RedundancyHeader> {
-        let min_bits = match mode {
-            AudioMode::CELT => return Ok(RedundancyHeader::none(raw_len)),
-            AudioMode::SILK => SILK_REDUNDANCY_MIN_BITS,
-            AudioMode::Hybrid => HYBRID_REDUNDANCY_MIN_BITS,
-        };
-
-        if range_decoder.tell() + min_bits > (raw_len as i32) * 8 {
-            return Ok(RedundancyHeader::none(raw_len));
-        }
-
-        let redundancy = match mode {
-            AudioMode::Hybrid => range_decoder.decode_symbol_logp(HYBRID_REDUNDANCY_FLAG_LOGP)? != 0,
-            AudioMode::SILK | AudioMode::CELT => true,
-        };
-        if !redundancy {
-            return Ok(RedundancyHeader::none(raw_len));
-        }
-
-        let celt_to_silk = range_decoder.decode_symbol_logp(REDUNDANCY_DIRECTION_LOGP)? != 0;
-        let redundancy_bytes = match mode {
-            AudioMode::Hybrid => {
-                (range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX)? as usize)
-                    + HYBRID_REDUNDANCY_MIN_BYTES
-            }
-            AudioMode::SILK | AudioMode::CELT => {
-                raw_len.saturating_sub(((range_decoder.tell() + 7) >> 3) as usize)
-            }
-        };
-
-        let active_len = raw_len.saturating_sub(redundancy_bytes);
-        if (active_len as i32) * 8 < range_decoder.tell() {
-            return Ok(RedundancyHeader::none(0));
-        }
-
-        range_decoder.shrink_storage(redundancy_bytes);
-        return Ok(RedundancyHeader {
-            active_len,
-            redundancy: true,
-            celt_to_silk,
-            redundancy_bytes,
+            return Ok(offset + written);
         });
     }
 
-    /// Decodes a 5 ms (`MAX_5MS_SAMPLES_48K`) redundant CELT frame into `redundant_ch0` and `redundant_ch1`.
-    fn decode_redundant_celt_frame(
+    /// Conceals a lost packet of `duration` into the `scratch` rows
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+    fn conceal_lost_packet(
         &mut self,
-        red_slice: &[u8],
-        f5: usize,
-        redundant_ch0: &mut [f32; MAX_5MS_SAMPLES_48K],
-        redundant_ch1: &mut [f32; MAX_5MS_SAMPLES_48K],
-    ) -> Result<u32> {
-        self.celt_decoder.set_start_band(0)?;
-        let red_ch1 = (self.output_channels == 2).then(|| &mut redundant_ch1[..f5]);
-        self.celt_decoder.decode_frame_planar(
-            Some(red_slice),
-            None,
-            MAX_5MS_SAMPLES_48K,
-            &mut redundant_ch0[..f5],
-            red_ch1,
-            false,
-        )?;
-        return Ok(self.celt_decoder.final_range());
+        duration: FrameDuration,
+        scratch: &mut [[f32; MAX_PACKET_SAMPLES_48K]; 2],
+    ) -> Result<usize> {
+        let samples = self.sample_rate.samples_per(duration);
+        let mut pcm = Planes::from_rows(scratch, self.is_stereo());
+        return self.conceal_frame(duration, pcm.range(..samples));
     }
 
-    /// Decodes the SILK low-frequency layer for `AudioMode::SILK` and `AudioMode::Hybrid`.
-    fn decode_silk_layer(
-        &mut self,
-        range_decoder: &mut entropy::Decoder<'_>,
-        frame_size: FrameDuration,
-        bandwidth: Bandwidth,
-        packet_stereo: bool,
-        audiosize: usize,
-        out_ch0: &mut [f32],
-        out_ch1: Option<&mut [f32]>,
-    ) -> Result<()> {
-        if self.prev_mode == Some(AudioMode::CELT) {
-            self.silk_decoder.reset();
+    /// Conceals a lost or DTX frame of `duration`
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+    /// Durations above 20 ms, the longest frame the SILK and CELT concealment produce, are
+    /// concealed in 20 ms steps.
+    fn conceal_frame(&mut self, duration: FrameDuration, mut out: Planes<'_>) -> Result<usize> {
+        let samples = self.sample_rate.samples_per(duration);
+        let f20 = self.sample_rate.samples_per(FrameDuration::Ms20);
+        if samples <= f20 {
+            return self.conceal_up_to_20ms(duration, out);
         }
-        let silk_channels = self.silk_api_channels();
-        self.silk_decoder
-            .configure(silk_channels, frame_size, bandwidth)?;
-        self.silk_decoder.decode_frame_planar(
-            range_decoder,
-            packet_stereo,
-            &mut out_ch0[..audiosize],
-            out_ch1.map(|s| &mut s[..audiosize]),
+        for offset in (0..samples).step_by(f20) {
+            let step = f20.min(samples - offset);
+            self.conceal_up_to_20ms(FrameDuration::Ms20, out.range(offset..(offset + step)))?;
+        }
+        return Ok(samples);
+    }
+
+    /// Conceals one lost frame of at most 20 ms with the decoders of the last frame
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)):
+    /// LPC extrapolation in the SILK layer, pitch repetition or noise in the CELT layer, both
+    /// for a Hybrid frame. Before the first decoded frame the output is silence.
+    fn conceal_up_to_20ms(
+        &mut self,
+        duration: FrameDuration,
+        mut out: Planes<'_>,
+    ) -> Result<usize> {
+        let samples = self.sample_rate.samples_per(duration);
+        let mut out = out.range(..samples);
+        out.fill(0.0);
+        self.range_final = 0;
+
+        let Some(last) = self.last.as_mut() else {
+            return Ok(samples);
+        };
+        // A redundant frame bridges two consecutive decoded frames (RFC 6716 Section 4.5.1):
+        // a loss in between ends the SILK-to-CELT hand-over it announced.
+        last.silk_to_celt_redundancy = false;
+        let config = last.config;
+
+        if has_silk_layer(config.mode) {
+            self.conceal_silk(config, duration, out.reborrow())?;
+        }
+        if has_celt_layer(config.mode) {
+            self.conceal_celt(config, duration, out)?;
+        }
+        return Ok(samples);
+    }
+
+    /// Conceals `duration` of SILK output with the last frame's SILK configuration. SILK's
+    /// shortest frame is 10 ms
+    /// ([RFC 6716 Section 4.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.2>)),
+    /// so a shorter loss is concealed as a 10 ms frame and truncated.
+    fn conceal_silk(
+        &mut self,
+        config: FrameConfig,
+        duration: FrameDuration,
+        mut out: Planes<'_>,
+    ) -> Result<()> {
+        let samples = self.sample_rate.samples_per(duration);
+        let f10 = self.sample_rate.samples_per(FrameDuration::Ms10);
+
+        if samples >= f10 {
+            self.silk_decoder.configure(
+                coded_channels(config.stereo),
+                duration,
+                config.bandwidth,
+            )?;
+            self.silk_decoder.conceal_frame_planar(config.stereo, out)?;
+            return Ok(());
+        }
+
+        let mut full = [[0.0_f32; MAX_20MS_SAMPLES_48K]; 2];
+        let mut full_planes = Planes::from_rows(&mut full, self.is_stereo());
+        self.silk_decoder.configure(
+            coded_channels(config.stereo),
+            FrameDuration::Ms10,
+            config.bandwidth,
         )?;
+        self.silk_decoder.conceal_frame_planar(config.stereo, full_planes.range(..f10))?;
+        out.each_mut().zip(&full).for_each(|(plane, full_plane)| {
+            plane.copy_from_slice(&full_plane[..samples]);
+        });
         return Ok(());
     }
 
-    /// Decodes the active CELT layer for `AudioMode::CELT` (`start_band = 0`) or
-    /// `AudioMode::Hybrid` (`start_band = 17`, accumulated onto the SILK output).
-    fn decode_active_celt_layer(
+    /// Conceals `duration` of CELT output
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)),
+    /// summed onto the SILK concealment when the last frame was Hybrid.
+    fn conceal_celt(
         &mut self,
-        mode: AudioMode,
-        raw_bytes: &[u8],
-        active_len: usize,
+        config: FrameConfig,
+        duration: FrameDuration,
+        out: Planes<'_>,
+    ) -> Result<()> {
+        let layout = self.celt_layout(config, duration)?;
+        self.celt_decoder.decode_frame(FrameInput::Lost, layout, out, celt_mix(config.mode))?;
+        return Ok(());
+    }
+
+    /// Layout of the CELT layer of a frame of `config` and `duration`: the frame's block size
+    /// (at most 20 ms), its start band and the TOC bandwidth and channel count
+    /// ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)).
+    fn celt_layout(&self, config: FrameConfig, duration: FrameDuration) -> Result<FrameLayout> {
+        let frame_size_48k = SampleRate::Hz48000.samples_per(duration).min(MAX_20MS_SAMPLES_48K);
+        return Ok(FrameLayout {
+            block: BlockSize::from_frame_size_48k(frame_size_48k)?,
+            start_band: celt_start_band(config.mode),
+            bandwidth: config.bandwidth,
+            stream_channels: coded_channels(config.stereo),
+        });
+    }
+
+    /// Conceals the first 5 ms of the frame (or all of a 2.5 ms frame) from the outgoing
+    /// decoders into `concealed`: the `P` of
+    /// [RFC 6716 Section 4.5.3, Figure 19](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.3>).
+    fn conceal_transition_tail(
+        &mut self,
+        samples: usize,
+        concealed: &mut [[f32; MAX_5MS_SAMPLES_48K]; 2],
+    ) -> Result<()> {
+        let f2_5 = self.sample_rate.samples_per(FrameDuration::Ms2_5);
+        let f5 = self.sample_rate.samples_per(FrameDuration::Ms5);
+        let duration = if samples == f2_5 { FrameDuration::Ms2_5 } else { FrameDuration::Ms5 };
+        let mut out = Planes::from_rows(concealed, self.is_stereo());
+        self.conceal_up_to_20ms(duration, out.range(..f5.min(samples)))?;
+        return Ok(());
+    }
+
+    /// Decodes one Opus frame of `config`, or conceals it when `frame` is absent, into `out`
+    /// and returns the samples written per channel
+    /// ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>)). The
+    /// SILK layer, the redundancy side information, the CELT layer and the redundant frame are
+    /// decoded in bitstream order, then the cross-laps of
+    /// [Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>) are applied.
+    fn decode_frame(
+        &mut self,
+        frame: Option<&[u8]>,
+        config: FrameConfig,
+        mut out: Planes<'_>,
+    ) -> Result<usize> {
+        let samples = self.sample_rate.samples_per(config.duration);
+        let Some(bytes) = frame.filter(|b| !b.is_empty()) else {
+            return self.conceal_frame(config.duration, out);
+        };
+        let mut out = out.range(..samples);
+        out.fill(0.0);
+
+        let transition = Transition::between(self.last, config.mode);
+        let mut concealed = [[0.0_f32; MAX_5MS_SAMPLES_48K]; 2];
+        if transition == Transition::IntoCelt {
+            self.conceal_transition_tail(samples, &mut concealed)?;
+        }
+
+        let mut range_decoder = entropy::Decoder::new(bytes);
+        self.decode_silk_layer(&mut range_decoder, config, out.reborrow())?;
+        let payload = FramePayload::split(config.mode, &mut range_decoder, bytes)?;
+        let transition = transition.unless_redundant(&payload.redundancy);
+        if transition == Transition::OutOfCelt {
+            self.conceal_transition_tail(samples, &mut concealed)?;
+        }
+
+        let mut redundant = [[0.0_f32; MAX_5MS_SAMPLES_48K]; 2];
+        let (layer_range, redundant_range) = self.decode_celt_layers(
+            &mut range_decoder,
+            &payload,
+            config,
+            &mut redundant,
+            out.reborrow(),
+        )?;
+        self.crossfade_leading_redundancy(&payload.redundancy, &redundant, out.reborrow(), samples);
+        if transition != Transition::None {
+            self.crossfade_prefix(&concealed, out, samples);
+        }
+
+        // RFC 6716 Section 6: the final range state is part of conformance. A frame left
+        // without a decodable payload reports zero, like a lost frame.
+        self.range_final =
+            if payload.active.len() <= 1 { 0 } else { layer_range ^ redundant_range };
+        self.last = Some(LastFrame {
+            config,
+            silk_to_celt_redundancy: matches!(payload.redundancy, Redundancy::SilkToCelt(_)),
+        });
+        return Ok(samples);
+    }
+
+    /// Decodes the SILK layer of a SILK-only or Hybrid frame
+    /// ([RFC 6716 Section 4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2>))
+    /// into `out`; a CELT-only frame has none. The SILK state is reset first when the previous
+    /// frame was CELT-only
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
+    fn decode_silk_layer(
+        &mut self,
         range_decoder: &mut entropy::Decoder<'_>,
-        frame_size_48k: usize,
-        audiosize: usize,
-        out_ch0: &mut [f32],
-        out_ch1: Option<&mut [f32]>,
+        config: FrameConfig,
+        out: Planes<'_>,
+    ) -> Result<()> {
+        if !has_silk_layer(config.mode) {
+            return Ok(());
+        }
+        if self.last.is_some_and(|last| last.config.mode == AudioMode::Celt) {
+            self.silk_decoder.reset();
+        }
+        self.silk_decoder.configure(
+            coded_channels(config.stereo),
+            config.duration,
+            config.bandwidth,
+        )?;
+        self.silk_decoder.decode_frame_planar(range_decoder, config.stereo, out)?;
+        return Ok(());
+    }
+
+    /// Decodes the CELT side of the frame in bitstream order: a leading redundant frame
+    /// ([`Redundancy::CeltToSilk`]), the frame's own CELT layer or overlap flush, then a
+    /// trailing redundant frame ([`Redundancy::SilkToCelt`]) cross-lapped with the frame's end
+    /// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+    /// Returns the range coder states of the layer and of the redundant frame (`0` without one).
+    fn decode_celt_layers(
+        &mut self,
+        range_decoder: &mut entropy::Decoder<'_>,
+        payload: &FramePayload<'_>,
+        config: FrameConfig,
+        redundant: &mut [[f32; MAX_5MS_SAMPLES_48K]; 2],
+        mut out: Planes<'_>,
+    ) -> Result<(u32, u32)> {
+        let leading_range = match payload.redundancy {
+            Redundancy::CeltToSilk(frame) => {
+                self.decode_redundant_frame(frame, config, redundant)?
+            }
+            Redundancy::None | Redundancy::SilkToCelt(_) => 0,
+        };
+
+        let layer_range = match config.mode {
+            AudioMode::Celt | AudioMode::Hybrid => self.decode_active_celt_layer(
+                range_decoder,
+                payload.active,
+                config,
+                out.reborrow(),
+            )?,
+            AudioMode::Silk => self.flush_hybrid_celt_overlap(
+                range_decoder,
+                &payload.redundancy,
+                config,
+                out.reborrow(),
+            )?,
+        };
+
+        let redundant_range = match payload.redundancy {
+            Redundancy::SilkToCelt(frame) => {
+                self.decode_trailing_redundancy(frame, config, redundant, out)?
+            }
+            Redundancy::None | Redundancy::CeltToSilk(_) => leading_range,
+        };
+        return Ok((layer_range, redundant_range));
+    }
+
+    /// Decodes the 5 ms redundant CELT frame `frame` into the `redundant` rows as a CELT-only
+    /// frame without a TOC byte, with the channel count and bandwidth of the current frame
+    /// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+    /// Returns its range coder state.
+    fn decode_redundant_frame(
+        &mut self,
+        frame: &[u8],
+        config: FrameConfig,
+        redundant: &mut [[f32; MAX_5MS_SAMPLES_48K]; 2],
     ) -> Result<u32> {
-        let celt_frame_size_48k = frame_size_48k.min(MAX_20MS_SAMPLES_48K);
-        let accumulate = mode == AudioMode::Hybrid;
-
-        if self.prev_mode.is_some_and(|prev| prev != mode) && !self.prev_redundancy {
-            self.celt_decoder.reset();
-        }
-
-        match active_len {
-            0 => {
-                self.celt_decoder.conceal_frame_planar(
-                    celt_frame_size_48k,
-                    &mut out_ch0[..audiosize],
-                    out_ch1.map(|s| &mut s[..audiosize]),
-                    accumulate,
-                )?;
-            }
-            _ => {
-                self.celt_decoder.decode_frame_planar(
-                    Some(&raw_bytes[..active_len]),
-                    Some(range_decoder),
-                    celt_frame_size_48k,
-                    &mut out_ch0[..audiosize],
-                    out_ch1.map(|s| &mut s[..audiosize]),
-                    accumulate,
-                )?;
-            }
-        }
-
+        let f5 = self.sample_rate.samples_per(FrameDuration::Ms5);
+        let layout = FrameLayout {
+            block: BlockSize::from_frame_size_48k(MAX_5MS_SAMPLES_48K)?,
+            start_band: 0,
+            bandwidth: config.bandwidth,
+            stream_channels: coded_channels(config.stereo),
+        };
+        let mut out = Planes::from_rows(redundant, self.is_stereo());
+        self.celt_decoder.decode_frame(
+            FrameInput::new(Some(frame), None),
+            layout,
+            out.range(..f5),
+            Mix::Overwrite,
+        )?;
         return Ok(self.celt_decoder.final_range());
     }
 
-    /// Flushes the 2.5 ms (`120` samples at 48 kHz) CELT MDCT overlap tail into the start of a
-    /// `AudioMode::SILK` frame when transitioning from `AudioMode::Hybrid` (`opus_decoder.c:581-594`).
-    fn flush_hybrid_celt_overlap_tail(
+    /// Decodes the CELT layer of a CELT-only frame, or of a Hybrid frame summed onto the SILK
+    /// output ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>)),
+    /// from the shared range decoder. The CELT state is reset on a mode change unless the
+    /// previous frame's trailing redundancy already primed it
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
+    /// A frame left without active bytes by an invalid redundancy size is concealed. Returns
+    /// the range coder state after the layer.
+    fn decode_active_celt_layer(
         &mut self,
-        range_decoder: &entropy::Decoder<'_>,
-        redundancy: bool,
-        celt_to_silk: bool,
-        f2_5: usize,
-        out_ch0: &mut [f32],
-        out_ch1: Option<&mut [f32]>,
+        range_decoder: &mut entropy::Decoder<'_>,
+        active: &[u8],
+        config: FrameConfig,
+        out: Planes<'_>,
     ) -> Result<u32> {
-        let should_flush = self.prev_mode == Some(AudioMode::Hybrid)
-            && !(redundancy && celt_to_silk && self.prev_redundancy);
-
-        if should_flush {
-            self.celt_decoder.set_start_band(0)?;
-            self.celt_decoder.decode_frame_planar(
-                Some(&SILENT_CELT_FRAME),
-                None,
-                FLUSH_SILENT_FRAME_SAMPLES_48K,
-                &mut out_ch0[..f2_5],
-                out_ch1.map(|s| &mut s[..f2_5]),
-                true,
-            )?;
+        if self
+            .last
+            .is_some_and(|last| last.config.mode != config.mode && !last.silk_to_celt_redundancy)
+        {
+            self.celt_decoder.reset();
         }
 
+        let layout = self.celt_layout(config, config.duration)?;
+        let input = FrameInput::new(Some(active), Some(range_decoder));
+        self.celt_decoder.decode_frame(input, layout, out, celt_mix(config.mode))?;
+        return Ok(self.celt_decoder.final_range());
+    }
+
+    /// Adds the CELT overlap buffer left by a preceding Hybrid frame to the first 2.5 ms of a
+    /// SILK-only frame by decoding a 2.5 ms silence frame
+    /// ([RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>),
+    /// "Hybrid to WB SILK"). Skipped when the frame's leading redundancy continues the previous
+    /// frame's trailing redundancy
+    /// ([Figure 18](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.3>), "Hybrid to
+    /// NB or MB SILK with Redundancy"): the redundant frames carry the hand-over. Returns the
+    /// range coder state of the frame, which the flush leaves untouched.
+    fn flush_hybrid_celt_overlap(
+        &mut self,
+        range_decoder: &entropy::Decoder<'_>,
+        redundancy: &Redundancy<'_>,
+        config: FrameConfig,
+        mut out: Planes<'_>,
+    ) -> Result<u32> {
+        let f2_5 = self.sample_rate.samples_per(FrameDuration::Ms2_5);
+        let after_hybrid = self.last.is_some_and(|last| last.config.mode == AudioMode::Hybrid);
+        let redundant_handover = matches!(redundancy, Redundancy::CeltToSilk(_))
+            && self.last.is_some_and(|last| last.silk_to_celt_redundancy);
+
+        if after_hybrid && !redundant_handover {
+            let layout = FrameLayout {
+                block: BlockSize::from_frame_size_48k(OVERLAP_FLUSH_SAMPLES_48K)?,
+                start_band: 0,
+                bandwidth: config.bandwidth,
+                stream_channels: coded_channels(config.stereo),
+            };
+            self.celt_decoder.decode_frame(
+                FrameInput::Silence,
+                layout,
+                out.range(..f2_5),
+                Mix::Accumulate,
+            )?;
+        }
         return Ok(range_decoder.final_range());
     }
 
-    /// Decodes a single Opus frame (active or lost/DTX) of `frame_size` into planar slices
-    /// `out_ch0` and `out_ch1`, returning the number of output samples written per channel
-    /// (`opus_decode_frame` in `opus_decoder.c:285-693`).
-    pub fn decode_opus_frame(
+    /// Decodes the redundant frame at the end of a SILK-only or Hybrid frame after resetting the
+    /// CELT state
+    /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>))
+    /// and cross-laps its second half with the last 2.5 ms of the frame
+    /// ([Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+    /// Returns the redundant frame's range coder state.
+    fn decode_trailing_redundancy(
         &mut self,
-        frame_data: Option<&[u8]>,
-        mode: AudioMode,
-        bandwidth: Bandwidth,
-        frame_size: FrameDuration,
-        packet_stereo: bool,
-        out_ch0: &mut [f32],
-        mut out_ch1: Option<&mut [f32]>,
-    ) -> Result<usize> {
-        let fs = self.sample_rate as usize;
-        let downsample = 48_000 / fs;
-        let f2_5 = fs / 400;
-        let f5 = fs / 200;
-        let f20 = fs / 50;
-        let audiosize = duration_samples(frame_size, self.sample_rate);
-        let frame_size_48k = duration_samples(frame_size, 48_000);
+        frame: &[u8],
+        config: FrameConfig,
+        redundant: &mut [[f32; MAX_5MS_SAMPLES_48K]; 2],
+        mut out: Planes<'_>,
+    ) -> Result<u32> {
+        self.celt_decoder.reset();
+        let range = self.decode_redundant_frame(frame, config, redundant)?;
 
-        let Some(raw_bytes) = frame_data.filter(|b| !b.is_empty()) else {
-            return self.decode_lost_or_dtx_frame(frame_size, audiosize, f20, out_ch0, out_ch1);
+        let f2_5 = self.sample_rate.samples_per(FrameDuration::Ms2_5);
+        let f5 = self.sample_rate.samples_per(FrameDuration::Ms5);
+        let samples = out.left.len();
+        crossfade_planes(
+            out.range((samples - f2_5)..samples),
+            [&redundant[0][f2_5..f5], &redundant[1][f2_5..f5]],
+            FadeDirection::Out,
+            self.sample_rate.downsample_from_48k(),
+        );
+        return Ok(range);
+    }
+
+    /// Mixes a leading redundant frame into the start of the frame
+    /// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+    /// After a plain SILK-only frame the redundant frame is decoded but left out:
+    /// [Figure 18](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.3>) only mixes it
+    /// when it follows a CELT-only frame or the trailing redundancy of the previous frame.
+    fn crossfade_leading_redundancy(
+        &self,
+        redundancy: &Redundancy<'_>,
+        redundant: &[[f32; MAX_5MS_SAMPLES_48K]; 2],
+        out: Planes<'_>,
+        samples: usize,
+    ) {
+        let Redundancy::CeltToSilk(_) = redundancy else {
+            return;
         };
-
-        clear_planar(out_ch0, out_ch1.as_deref_mut(), audiosize);
-
-        let mut transition = match (self.prev_mode, mode) {
-            (Some(prev), AudioMode::CELT) => prev != AudioMode::CELT && !self.prev_redundancy,
-            (Some(AudioMode::CELT), AudioMode::SILK | AudioMode::Hybrid) => true,
-            _ => false,
-        };
-
-        let mut pcm_transition_ch0 = [0.0_f32; MAX_5MS_SAMPLES_48K];
-        let mut pcm_transition_ch1 = [0.0_f32; MAX_5MS_SAMPLES_48K];
-
-        if transition && mode == AudioMode::CELT {
-            self.conceal_transition_tail(
-                audiosize,
-                f2_5,
-                f5,
-                &mut pcm_transition_ch0,
-                &mut pcm_transition_ch1,
-            )?;
+        let bridges_celt = self
+            .last
+            .is_none_or(|last| last.config.mode != AudioMode::Silk || last.silk_to_celt_redundancy);
+        if bridges_celt {
+            self.crossfade_prefix(redundant, out, samples);
         }
+        return;
+    }
 
-        let mut range_decoder = entropy::Decoder::new(raw_bytes)?;
+    /// Replaces the first 2.5 ms of `out` with `src` and cross-laps the next 2.5 ms, or
+    /// cross-laps the whole of a 2.5 ms frame
+    /// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+    /// The same window blends concealed audio into a transition without redundancy
+    /// ([Section 4.5.3, Figure 19](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.3>)).
+    fn crossfade_prefix(
+        &self,
+        src: &[[f32; MAX_5MS_SAMPLES_48K]; 2],
+        mut out: Planes<'_>,
+        samples: usize,
+    ) {
+        let f2_5 = self.sample_rate.samples_per(FrameDuration::Ms2_5);
+        let f5 = self.sample_rate.samples_per(FrameDuration::Ms5);
+        let downsample = self.sample_rate.downsample_from_48k();
 
-        // 1. SILK Layer Decode (SILK-only and Hybrid modes).
-        match mode {
-            AudioMode::SILK | AudioMode::Hybrid => {
-                self.decode_silk_layer(
-                    &mut range_decoder,
-                    frame_size,
-                    bandwidth,
-                    packet_stereo,
-                    audiosize,
-                    out_ch0,
-                    out_ch1.as_deref_mut(),
-                )?;
+        if samples < f5 {
+            crossfade_planes(
+                out.range(..f2_5),
+                [&src[0][..f2_5], &src[1][..f2_5]],
+                FadeDirection::In,
+                downsample,
+            );
+            return;
+        }
+        out.each_mut().zip(src).for_each(|(plane, src_plane)| {
+            plane[..f2_5].copy_from_slice(&src_plane[..f2_5]);
+        });
+        crossfade_planes(
+            out.range(f2_5..f5),
+            [&src[0][f2_5..f5], &src[1][f2_5..f5]],
+            FadeDirection::In,
+            downsample,
+        );
+        return;
+    }
+}
+
+/// The elementary stream packets of a multi-stream Opus packet, in stream order: `count - 1`
+/// self-delimited packets
+/// ([RFC 6716 Appendix B](<https://datatracker.ietf.org/doc/html/rfc6716#appendix-B>)) followed
+/// by one undelimited packet that runs to the end of the data
+/// ([RFC 7845 Section 3](<https://datatracker.ietf.org/doc/html/rfc7845#section-3>)).
+struct StreamPackets<'a> {
+    data: &'a [u8],
+    remaining: usize,
+}
+
+impl<'a> StreamPackets<'a> {
+    /// Splits `data` into `count` elementary stream packets.
+    const fn new(data: &'a [u8], count: usize) -> Self {
+        return Self { data, remaining: count };
+    }
+}
+
+impl<'a> Iterator for StreamPackets<'a> {
+    type Item = Result<FramePacket<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        if self.remaining == 0 {
+            return Some(FramePacket::new(self.data).map_err(SymphoniaError::from));
+        }
+        let parsed = FramePacket::parse_self_delimited(self.data).map_err(SymphoniaError::from);
+        return Some(parsed.map(|(packet, consumed)| {
+            self.data = &self.data[consumed..];
+            return packet;
+        }));
+    }
+}
+
+/// Where each decoded stream channel goes
+/// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)):
+/// coupled stream `i` feeds the output channels whose mapping entry is `2i` (left) or `2i + 1`
+/// (right); uncoupled stream `i` feeds the entries equal to `coupled_count + i`. Samples are
+/// scaled by the output gain on the way
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+#[derive(Clone, Copy)]
+struct OutputRouting<'a> {
+    channel_mapping: &'a [u8],
+    coupled_count: usize,
+    /// Linear output gain, `None` when the `output_gain` field is zero.
+    gain: Option<f32>,
+}
+
+impl OutputRouting<'_> {
+    /// Copies `total_samples` of stream `stream_i` from the `scratch` rows into its output planes.
+    fn route(
+        &self,
+        stream_i: usize,
+        total_samples: usize,
+        scratch: &[[f32; MAX_PACKET_SAMPLES_48K]; 2],
+        buffer: &mut AudioBuffer<f32>,
+    ) -> Result<()> {
+        let (first, count) = if stream_i < self.coupled_count {
+            (2 * stream_i, 2)
+        } else {
+            (self.coupled_count + stream_i, 1)
+        };
+
+        for (ch, &map) in self.channel_mapping.iter().enumerate() {
+            let Some(k) = usize::from(map).checked_sub(first).filter(|k| *k < count) else {
+                continue;
+            };
+            let src = &scratch[k][..total_samples];
+            let dst = buffer
+                .plane_mut(ch)
+                .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
+            let dst = &mut dst[..total_samples];
+            match self.gain {
+                Some(scale) => dst.iter_mut().zip(src).for_each(|(d, &s)| *d = s * scale),
+                None => dst.copy_from_slice(src),
             }
-            AudioMode::CELT => {}
         }
-
-        // 2. Redundancy Frame Header Check (RFC 6716 Section 4.4 / opus_decoder.c:500-528).
-        let RedundancyHeader {
-            active_len,
-            redundancy,
-            celt_to_silk,
-            redundancy_bytes,
-        } = Self::parse_redundancy_header(mode, &mut range_decoder, raw_bytes.len())?;
-
-        if redundancy {
-            transition = false;
-        }
-
-        // 3. Conceal 5 ms CELT transition tail when switching from CELT to SILK/Hybrid without redundancy.
-        if transition && mode != AudioMode::CELT {
-            self.conceal_transition_tail(
-                audiosize,
-                f2_5,
-                f5,
-                &mut pcm_transition_ch0,
-                &mut pcm_transition_ch1,
-            )?;
-        }
-
-        // 4. Configure CELT bandwidth and coded channel count.
-        let stream_channels = if packet_stereo { 2 } else { 1 };
-        self.celt_decoder.set_bandwidth(bandwidth);
-        self.celt_decoder.set_stream_channels(stream_channels)?;
-
-        let mut redundant_ch0 = [0.0_f32; MAX_5MS_SAMPLES_48K];
-        let mut redundant_ch1 = [0.0_f32; MAX_5MS_SAMPLES_48K];
-        let mut redundant_rng = 0u32;
-
-        // 5. Decode 5 ms redundant CELT frame for CELT -> SILK/Hybrid transition.
-        if redundancy && celt_to_silk {
-            let red_slice = &raw_bytes[active_len..(active_len + redundancy_bytes)];
-            redundant_rng = self.decode_redundant_celt_frame(
-                red_slice,
-                f5,
-                &mut redundant_ch0,
-                &mut redundant_ch1,
-            )?;
-        }
-
-        // 6. Set active CELT start band (17 for Hybrid/SILK, 0 for CELT-only).
-        let start_band = match mode {
-            AudioMode::CELT => 0,
-            AudioMode::SILK | AudioMode::Hybrid => HYBRID_START_BAND,
-        };
-        self.celt_decoder.set_start_band(start_band)?;
-
-        // 7. Decode main CELT frame (Hybrid or CELT-only) or flush CELT overlap tail on Hybrid -> SILK.
-        self.range_final = match mode {
-            AudioMode::CELT | AudioMode::Hybrid => self.decode_active_celt_layer(
-                mode,
-                raw_bytes,
-                active_len,
-                &mut range_decoder,
-                frame_size_48k,
-                audiosize,
-                out_ch0,
-                out_ch1.as_deref_mut(),
-            )?,
-            AudioMode::SILK => self.flush_hybrid_celt_overlap_tail(
-                &range_decoder,
-                redundancy,
-                celt_to_silk,
-                f2_5,
-                out_ch0,
-                out_ch1.as_deref_mut(),
-            )?,
-        };
-
-        // 8. Decode 5 ms redundant CELT frame for SILK/Hybrid -> CELT transition and cross-fade tail.
-        if redundancy && !celt_to_silk {
-            self.celt_decoder.reset();
-            let red_slice = &raw_bytes[active_len..(active_len + redundancy_bytes)];
-            redundant_rng = self.decode_redundant_celt_frame(
-                red_slice,
-                f5,
-                &mut redundant_ch0,
-                &mut redundant_ch1,
-            )?;
-            fade_planar_tail_from_first(
-                out_ch0,
-                out_ch1.as_deref_mut(),
-                &redundant_ch0,
-                &redundant_ch1,
-                audiosize,
-                f2_5,
-                f5,
-                downsample,
-            );
-        }
-
-        // 9. Apply CELT -> SILK/Hybrid redundancy cross-fade at start of frame.
-        if redundancy
-            && celt_to_silk
-            && (self.prev_mode != Some(AudioMode::SILK) || self.prev_redundancy)
-        {
-            apply_5ms_prefix_crossfade(
-                &redundant_ch0,
-                &redundant_ch1,
-                out_ch0,
-                out_ch1.as_deref_mut(),
-                audiosize,
-                f2_5,
-                f5,
-                downsample,
-            );
-        }
-
-        // 10. Apply un-redundant mode transition cross-fade at start of frame.
-        if transition {
-            apply_5ms_prefix_crossfade(
-                &pcm_transition_ch0,
-                &pcm_transition_ch1,
-                out_ch0,
-                out_ch1,
-                audiosize,
-                f2_5,
-                f5,
-                downsample,
-            );
-        }
-
-        self.range_final = match active_len <= 1 {
-            true => 0,
-            false => self.range_final ^ redundant_rng,
-        };
-
-        self.prev_mode = Some(mode);
-        self.prev_redundancy = redundancy && !celt_to_silk;
-        self.last_bandwidth = bandwidth;
-        self.last_frame_size = frame_size;
-        self.last_stereo = packet_stereo;
-
-        return Ok(audiosize);
+        return Ok(());
     }
 }
 
@@ -936,28 +1025,28 @@ struct StreamLayout {
 
 /// The `OpusDecoder` struct implements the Symphonia [`AudioDecoder`] trait.
 ///
-/// It owns the top-level codec parameters, multi-stream `StreamDecoder` instances,
+/// It owns the top-level codec parameters, the multi-stream `StreamDecoder` instances, the
 /// `OpusHead` channel mapping and gain state, and the output [`AudioBuffer<f32>`].
 pub struct OpusDecoder {
     params: AudioCodecParameters,
-    channels: Channels,
-    sample_rate: u32,
+    sample_rate: SampleRate,
     buffer: AudioBuffer<f32>,
     streams: Vec<StreamDecoder>,
-    scratch_ch0: [f32; MAX_PACKET_SAMPLES_48K],
-    scratch_ch1: [f32; MAX_PACKET_SAMPLES_48K],
+    scratch: [[f32; MAX_PACKET_SAMPLES_48K]; 2],
     coupled_count: usize,
     channel_mapping: Vec<u8>,
     pre_skip: u16,
     output_gain: i16,
-    gain_scale: f32,
+    /// Linear output gain, `None` when `output_gain` is zero.
+    gain: Option<f32>,
     range_final: u32,
 }
 
 impl OpusDecoder {
-    /// Builds a single-stream RTP (Family 0) [`StreamLayout`] for `1` or `2` output channels.
+    /// Builds a single-stream RTP (Family 0) [`StreamLayout`] for `1` or `2` output channels
+    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
     fn build_rtp_stream_layout(
-        sample_rate: u32,
+        sample_rate: SampleRate,
         num_output_channels: usize,
         pre_skip: u16,
         output_gain: i16,
@@ -981,20 +1070,22 @@ impl OpusDecoder {
         });
     }
 
-    /// Parses the [`StreamLayout`] from `params.extra_data` (`OpusHead`) or defaults to Family 0.
+    /// Parses the [`StreamLayout`] from `params.extra_data` (`OpusHead`,
+    /// [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) or
+    /// defaults to Family 0.
     fn parse_stream_layout(
         params: &AudioCodecParameters,
-        sample_rate: u32,
+        sample_rate: SampleRate,
         num_output_channels: usize,
     ) -> Result<StreamLayout> {
         let Some(extra) = params.extra_data.as_deref().filter(|b| !b.is_empty()) else {
             if num_output_channels > 2 {
-                return Err(SilkError::UnsupportedConfig.into());
+                return unsupported_error("opus: more than 2 channels need an OpusHead mapping");
             }
             return Self::build_rtp_stream_layout(sample_rate, num_output_channels, 0, 0);
         };
 
-        let id = header::ID::parse(BufReader::new(extra))
+        let id = header::IdentificationHeader::parse(BufReader::new(extra))
             .map_err(|_| SymphoniaError::DecodeError("opus: invalid OpusHead extra_data"))?;
 
         if id.channel_count as usize != num_output_channels {
@@ -1019,10 +1110,7 @@ impl OpusDecoder {
                 let stream_count = table.stream_count as usize;
                 let coupled_count = table.coupled_count as usize;
                 let streams = (0..stream_count)
-                    .map(|i| {
-                        let stream_out_channels = if i < coupled_count { 2 } else { 1 };
-                        return StreamDecoder::new(sample_rate, stream_out_channels);
-                    })
+                    .map(|i| StreamDecoder::new(sample_rate, coded_channels(i < coupled_count)))
                     .collect::<Result<Vec<_>>>()?;
 
                 return Ok(StreamLayout {
@@ -1045,38 +1133,37 @@ impl OpusDecoder {
             return unsupported_error("opus: invalid codec");
         }
 
-        let sample_rate = params.sample_rate.ok_or(SilkError::UnsupportedConfig)?;
-        let channels = params.channels.clone().ok_or(SilkError::UnsupportedConfig)?;
+        let sample_rate = SampleRate::try_from(
+            params.sample_rate.ok_or(SymphoniaError::Unsupported("opus: missing sample rate"))?,
+        )?;
+        let channels = params
+            .channels
+            .clone()
+            .ok_or(SymphoniaError::Unsupported("opus: missing channel layout"))?;
         let num_output_channels = channels.count();
-        if num_output_channels == 0 || num_output_channels > 255 {
-            return Err(SilkError::UnsupportedConfig.into());
+        if num_output_channels == 0 || num_output_channels > MAX_OUTPUT_CHANNELS {
+            return unsupported_error("opus: unsupported output channel count");
         }
 
-        let StreamLayout {
-            streams,
-            coupled_count,
-            channel_mapping,
-            pre_skip,
-            output_gain,
-        } = Self::parse_stream_layout(params, sample_rate, num_output_channels)?;
+        let StreamLayout { streams, coupled_count, channel_mapping, pre_skip, output_gain } =
+            Self::parse_stream_layout(params, sample_rate, num_output_channels)?;
 
-        let gain_scale = compute_output_gain_scale(output_gain);
-        let spec = AudioSpec::new(sample_rate, channels.clone());
-        let buffer = AudioBuffer::new(spec, MAX_PACKET_SAMPLES_48K.max(sample_rate as usize));
+        // One packet carries at most 120 ms (RFC 6716 Section 3.2.5).
+        let spec = AudioSpec::new(sample_rate.hz(), channels);
+        let buffer =
+            AudioBuffer::new(spec, MAX_PACKET_SAMPLES_48K / sample_rate.downsample_from_48k());
 
         return Ok(Self {
             params: params.to_owned(),
-            channels,
             sample_rate,
             buffer,
             streams,
-            scratch_ch0: [0.0; MAX_PACKET_SAMPLES_48K],
-            scratch_ch1: [0.0; MAX_PACKET_SAMPLES_48K],
+            scratch: [[0.0; MAX_PACKET_SAMPLES_48K]; 2],
             coupled_count,
             channel_mapping,
             pre_skip,
             output_gain,
-            gain_scale,
+            gain: (output_gain != 0).then(|| output_gain_scale(output_gain)),
             range_final: 0,
         });
     }
@@ -1093,108 +1180,69 @@ impl OpusDecoder {
         return self.output_gain;
     }
 
-    /// Returns the combined final range coder state (`OPUS_GET_FINAL_RANGE`) from the last decoded packet.
+    /// Returns the final range decoder state of the last decoded packet, XOR-combined across
+    /// elementary streams
+    /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)); zero
+    /// after a lost or concealed packet.
     #[inline]
     pub fn final_range(&self) -> u32 {
         return self.range_final;
     }
 
-    /// Conceals a lost packet across all elementary streams using each stream's last frame duration
-    /// and writes the resulting audio into the internal [`AudioBuffer<f32>`].
+    /// Conceals a lost packet across all elementary streams with the duration of the last
+    /// decoded frame
+    /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)) and
+    /// renders the result into the output buffer.
     pub fn decode_lost_packet(&mut self) -> Result<GenericAudioBufferRef<'_>> {
-        let loss_dur = self
+        let duration = self
             .streams
             .first()
-            .map(|s| s.last_frame_size)
-            .unwrap_or(FrameDuration::Ms20);
-        let total_samples = duration_samples(loss_dur, self.sample_rate);
+            .and_then(|stream| stream.last)
+            .map_or(FrameDuration::Ms20, |last| last.config.duration);
+        let total_samples = self.sample_rate.samples_per(duration);
         self.prepare_output_buffer(total_samples)?;
 
-        for i in 0..self.streams.len() {
-            self.streams[i].conceal_lost_packet(
-                loss_dur,
-                &mut self.scratch_ch0,
-                &mut self.scratch_ch1,
-            )?;
-            self.route_stream_to_buffer(i, total_samples)?;
+        let routing = OutputRouting {
+            channel_mapping: &self.channel_mapping,
+            coupled_count: self.coupled_count,
+            gain: self.gain,
+        };
+        for (i, stream) in self.streams.iter_mut().enumerate() {
+            stream.conceal_lost_packet(duration, &mut self.scratch)?;
+            routing.route(i, total_samples, &self.scratch, &mut self.buffer)?;
         }
 
         self.range_final = 0;
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
-    /// Clears `self.buffer`, renders `total_samples` frames, and zeroes any unmapped (`255`) output planes.
+    /// Clears the output buffer, renders `total_samples` frames and silences the output
+    /// channels whose mapping entry is [`UNMAPPED_CHANNEL_INDEX`]
+    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
     fn prepare_output_buffer(&mut self, total_samples: usize) -> Result<()> {
         self.buffer.clear();
         self.buffer.render_uninit(Some(total_samples));
-        let num_output_channels = self.channels.count();
-        for ch in 0..num_output_channels {
-            let map_val = self
-                .channel_mapping
-                .get(ch)
-                .copied()
-                .unwrap_or(UNMAPPED_CHANNEL_INDEX);
-            if map_val == UNMAPPED_CHANNEL_INDEX {
-                let dst = self
-                    .buffer
-                    .plane_mut(ch)
-                    .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
-                dst[..total_samples].fill(0.0);
-            }
+        let unmapped = self
+            .channel_mapping
+            .iter()
+            .enumerate()
+            .filter(|&(_, &map)| map == UNMAPPED_CHANNEL_INDEX)
+            .map(|(ch, _)| ch);
+        for ch in unmapped {
+            let plane = self
+                .buffer
+                .plane_mut(ch)
+                .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
+            plane[..total_samples].fill(0.0);
         }
-        return Ok(());
-    }
-
-    /// Routes the decoded planar samples of `stream_i` from `self.scratch_ch0` and `self.scratch_ch1`
-    /// into `self.buffer` according to `self.channel_mapping` and applies `self.gain_scale`.
-    fn route_stream_to_buffer(&mut self, stream_i: usize, total_samples: usize) -> Result<()> {
-        let num_output_channels = self.channels.count();
-        let coupled = self.coupled_count;
-        let apply_gain = self.output_gain != 0;
-        let scale = self.gain_scale;
-
-        for ch in 0..num_output_channels {
-            let map_val = self
-                .channel_mapping
-                .get(ch)
-                .copied()
-                .unwrap_or(UNMAPPED_CHANNEL_INDEX) as usize;
-            let src_opt = match stream_i < coupled {
-                true if map_val == 2 * stream_i => Some(&self.scratch_ch0[..total_samples]),
-                true if map_val == 2 * stream_i + 1 => Some(&self.scratch_ch1[..total_samples]),
-                false if map_val == stream_i + coupled => Some(&self.scratch_ch0[..total_samples]),
-                _ => None,
-            };
-
-            if let Some(src_slice) = src_opt {
-                let dst = self
-                    .buffer
-                    .plane_mut(ch)
-                    .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
-                let dst_slice = &mut dst[..total_samples];
-                match apply_gain {
-                    true => {
-                        dst_slice
-                            .iter_mut()
-                            .zip(src_slice.iter())
-                            .for_each(|(d, &s)| *d = s * scale);
-                    }
-                    false => dst_slice.copy_from_slice(src_slice),
-                }
-            }
-        }
-
         return Ok(());
     }
 }
 
 impl AudioDecoder for OpusDecoder {
     fn reset(&mut self) {
-        for stream in self.streams.iter_mut() {
-            stream.reset();
-        }
-        self.scratch_ch0.fill(0.0);
-        self.scratch_ch1.fill(0.0);
+        self.streams.iter_mut().for_each(StreamDecoder::reset);
+        self.scratch.iter_mut().for_each(|row| row.fill(0.0));
         self.range_final = 0;
         self.buffer.clear();
         return;
@@ -1212,50 +1260,39 @@ impl AudioDecoder for OpusDecoder {
         if packet.data.is_empty() {
             return self.decode_lost_packet();
         }
-
         self.buffer.clear();
-        let num_streams = self.streams.len();
-        let mut cursor = packet.data;
-        let mut expected_frame_count = 0usize;
-        let mut expected_frame_size = FrameDuration::Ms20;
-        let mut total_samples = 0usize;
-        let mut combined_rng = 0u32;
 
-        for i in 0..num_streams {
-            let pkt = match i + 1 < num_streams {
-                true => {
-                    let (parsed, consumed) = FramePacket::parse_self_delimited(cursor)?;
-                    cursor = &cursor[consumed..];
-                    parsed
-                }
-                false => FramePacket::new(cursor)?,
-            };
+        let mut packets = StreamPackets::new(packet.data, self.streams.len());
+        let first = packets
+            .next()
+            .ok_or(SymphoniaError::DecodeError("opus: decoder has no elementary streams"))??;
+        // RFC 7845 Section 3: every stream packet of a multi-stream packet has the duration of
+        // the first one; any other is treated as a malformed TOC sequence.
+        let shape = (first.frames.len(), first.frame_duration);
+        let total_samples = shape.0 * self.sample_rate.samples_per(shape.1);
+        self.prepare_output_buffer(total_samples)?;
 
-            match i {
-                0 => {
-                    expected_frame_count = pkt.frames.len();
-                    expected_frame_size = pkt.frame_size;
-                    total_samples = expected_frame_count
-                        * duration_samples(expected_frame_size, self.sample_rate);
-                    self.prepare_output_buffer(total_samples)?;
-                }
-                _ if pkt.frames.len() != expected_frame_count
-                    || pkt.frame_size != expected_frame_size =>
-                {
-                    self.buffer.clear();
-                    return Err(SymphoniaError::DecodeError(
-                        "opus: inconsistent frame count or frame duration across elementary streams",
-                    ));
-                }
-                _ => {}
+        let routing = OutputRouting {
+            channel_mapping: &self.channel_mapping,
+            coupled_count: self.coupled_count,
+            gain: self.gain,
+        };
+        let packets = std::iter::once(Ok(first)).chain(packets);
+        let mut combined_range = 0u32;
+        for (i, (stream, stream_packet)) in self.streams.iter_mut().zip(packets).enumerate() {
+            let stream_packet = stream_packet?;
+            if (stream_packet.frames.len(), stream_packet.frame_duration) != shape {
+                self.buffer.clear();
+                return Err(SymphoniaError::DecodeError(
+                    "opus: inconsistent frame count or frame duration across elementary streams",
+                ));
             }
-
-            self.streams[i].decode_packet(&pkt, &mut self.scratch_ch0, &mut self.scratch_ch1)?;
-            combined_rng ^= self.streams[i].range_final;
-            self.route_stream_to_buffer(i, total_samples)?;
+            stream.decode_packet(&stream_packet, &mut self.scratch)?;
+            combined_range ^= stream.range_final;
+            routing.route(i, total_samples, &self.scratch, &mut self.buffer)?;
         }
 
-        self.range_final = combined_rng;
+        self.range_final = combined_range;
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
@@ -1283,37 +1320,66 @@ impl RegisterableAudioDecoder for OpusDecoder {
 
 #[cfg(test)]
 mod tests {
+    // Fixtures: packets and expected values recorded from libopus 1.6.1. Decoding of received
+    // frames is normative (RFC 6716 Section 4) and is verified against the RFC 8251 test
+    // vectors by `tests/rfc6716_conformance.rs`; the concealment steps are regression pins for
+    // behaviour that RFC 6716 Section 4.4 leaves to the implementation.
     use super::*;
     use crate::test_vectors::*;
-    use symphonia_core::audio::{Audio, Position};
+    use symphonia_core::audio::{Audio, Channels, Position};
     use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
     use symphonia_core::units::{Duration, Timestamp};
+
+    /// The 48 kHz codec parameters of an output with the channels `positions`.
+    fn params(positions: Position) -> AudioCodecParameters {
+        let mut params = AudioCodecParameters::new();
+        params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(48000)
+            .with_channels(Channels::Positioned(positions));
+        return params;
+    }
+
+    fn mono_params() -> AudioCodecParameters {
+        return params(Position::FRONT_CENTER);
+    }
+
+    fn stereo_params() -> AudioCodecParameters {
+        return params(Position::FRONT_LEFT | Position::FRONT_RIGHT);
+    }
+
+    fn decoder(params: &AudioCodecParameters) -> OpusDecoder {
+        return OpusDecoder::try_new(params, &AudioDecoderOptions::default()).unwrap();
+    }
+
+    /// Decodes `packet` as one packet of `samples` samples per channel.
+    fn decode(dec: &mut OpusDecoder, packet: &[u8], samples: usize) {
+        let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(samples as u64), packet);
+        dec.decode_ref(&pkt).unwrap();
+        return;
+    }
 
     fn quantize_i16_24(slice: &[f32]) -> [i16; 24] {
         return std::array::from_fn(|i| (slice[i] * 32768.0).round() as i16);
     }
 
-    fn assert_plane_matches_f32_oracle(
+    /// Checks an output plane of `samples` samples against its recorded head, tail and RMS.
+    fn assert_plane_matches_recorded(
         plane: &[f32],
-        expected_len: usize,
-        expected_head: &[f32; 24],
-        expected_tail: &[f32; 24],
-        expected_rms: f32,
+        samples: usize,
+        recorded: &RecordedPlane,
         tol: f32,
     ) {
-        assert_eq!(plane.len(), expected_len);
-        for (i, (&actual, &exp)) in plane[..24].iter().zip(expected_head.iter()).enumerate() {
+        assert_eq!(plane.len(), samples);
+        for (i, (&actual, &exp)) in plane[..24].iter().zip(recorded.head.iter()).enumerate() {
             let diff = (actual - exp).abs();
             assert!(
                 diff <= tol,
                 "head sample {i} mismatch: actual={actual}, expected={exp}, diff={diff}, tol={tol}"
             );
         }
-        let tail_start = expected_len - 24;
-        for (i, (&actual, &exp)) in plane[tail_start..]
-            .iter()
-            .zip(expected_tail.iter())
-            .enumerate()
+        for (i, (&actual, &exp)) in
+            plane[samples - 24..].iter().zip(recorded.tail.iter()).enumerate()
         {
             let diff = (actual - exp).abs();
             assert!(
@@ -1321,9 +1387,9 @@ mod tests {
                 "tail sample {i} mismatch: actual={actual}, expected={exp}, diff={diff}, tol={tol}"
             );
         }
-        let rms = (plane.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>()
-            / (expected_len as f64))
+        let rms = (plane.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / (samples as f64))
             .sqrt() as f32;
+        let expected_rms = recorded.rms;
         let rms_diff = (rms - expected_rms).abs();
         assert!(
             rms_diff <= tol,
@@ -1332,32 +1398,41 @@ mod tests {
         return;
     }
 
-    macro_rules! assert_mono_f32_packets {
-        ($params:expr, $samples:expr, [ $( ($pkt:expr, $head:expr, $tail:expr, $rms:expr $(,)?) ),+ $(,)? ]) => {{
-            let mut dec = OpusDecoder::try_new($params, &AudioDecoderOptions::default()).unwrap();
-            for (pkt_bytes, head, tail, rms) in [ $( (&$pkt[..], &$head, &$tail, $rms) ),+ ] {
-                let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from($samples as u64), pkt_bytes);
-                dec.decode_ref(&pkt).unwrap();
-                let ch0 = dec.buffer.plane(0).unwrap();
-                assert_plane_matches_f32_oracle(ch0, $samples, head, tail, rms, 1e-4);
+    /// Decodes every packet of `stream` with `dec` and checks every output plane against its
+    /// recorded head, tail and RMS.
+    fn assert_stream_decodes<const C: usize, const P: usize>(
+        dec: &mut OpusDecoder,
+        stream: &RecordedStream<RecordedPacket<C>, P>,
+    ) {
+        for recorded in &stream.packets {
+            decode(dec, recorded.packet, stream.samples);
+            for (c, plane) in recorded.planes.iter().enumerate() {
+                let output = dec.buffer.plane(c).unwrap();
+                assert_plane_matches_recorded(output, stream.samples, plane, 1e-4);
             }
-        }};
+        }
+        return;
     }
 
-    macro_rules! assert_stereo_f32_packets {
-        ($params:expr, $samples:expr, [ $( ($pkt:expr, $l_head:expr, $l_tail:expr, $l_rms:expr, $r_head:expr, $r_tail:expr, $r_rms:expr $(,)?) ),+ $(,)? ]) => {{
-            let mut dec = OpusDecoder::try_new($params, &AudioDecoderOptions::default()).unwrap();
-            for (pkt_bytes, l_head, l_tail, l_rms, r_head, r_tail, r_rms) in [
-                $( (&$pkt[..], &$l_head, &$l_tail, $l_rms, &$r_head, &$r_tail, $r_rms) ),+
-            ] {
-                let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from($samples as u64), pkt_bytes);
-                dec.decode_ref(&pkt).unwrap();
-                let ch0 = dec.buffer.plane(0).unwrap();
-                let ch1 = dec.buffer.plane(1).unwrap();
-                assert_plane_matches_f32_oracle(ch0, $samples, l_head, l_tail, l_rms, 1e-4);
-                assert_plane_matches_f32_oracle(ch1, $samples, r_head, r_tail, r_rms, 1e-4);
+    /// Decodes every packet of `stream` with `dec` and checks the 16-bit tail, and the head when
+    /// recorded, of every output plane.
+    fn assert_pcm_stream_decodes<const C: usize, const P: usize>(
+        dec: &mut OpusDecoder,
+        stream: &RecordedStream<RecordedPcmPacket<C>, P>,
+    ) {
+        let samples = stream.samples;
+        for recorded in &stream.packets {
+            decode(dec, recorded.packet, samples);
+            assert_eq!(dec.buffer.frames(), samples);
+            for (c, &tail) in recorded.tails.iter().enumerate() {
+                let plane = dec.buffer.plane(c).unwrap();
+                assert_eq!(&quantize_i16_24(&plane[samples - 24..]), tail);
+                if let Some(heads) = recorded.heads {
+                    assert_eq!(&quantize_i16_24(&plane[..24]), heads[c]);
+                }
             }
-        }};
+        }
+        return;
     }
 
     #[test]
@@ -1366,9 +1441,7 @@ mod tests {
         params
             .for_codec(CODEC_ID_OPUS)
             .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(
-                Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            ));
+            .with_channels(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT));
 
         let mut decoder = OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap();
 
@@ -1395,396 +1468,41 @@ mod tests {
     }
 
     #[test]
-    fn opus_decoder_end_to_end_mono_and_stereo_silk_packets_match_libopus() {
-        let mut mono_params = AudioCodecParameters::new();
-        mono_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
-        let mut mono_decoder =
-            OpusDecoder::try_new(&mono_params, &AudioDecoderOptions::default()).unwrap();
+    fn silk_mono_and_stereo_packets_decode_to_recorded_values() {
+        assert_pcm_stream_decodes(&mut decoder(&mono_params()), &MONO_WB);
+        assert_pcm_stream_decodes(&mut decoder(&stereo_params()), &STEREO_MB);
+        return;
+    }
 
-        for (pkt_bytes, expected_head, expected_tail) in [
-            (&MONO_WB_PKT_0[..], &MONO_WB_OUT_0_HEAD, &MONO_WB_OUT_0_TAIL),
-            (&MONO_WB_PKT_1[..], &MONO_WB_OUT_1_HEAD, &MONO_WB_OUT_1_TAIL),
-            (&MONO_WB_PKT_2[..], &MONO_WB_OUT_2_HEAD, &MONO_WB_OUT_2_TAIL),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            mono_decoder.decode_ref(&pkt).unwrap();
-            assert_eq!(mono_decoder.buffer.frames(), 960);
-            let ch0 = mono_decoder.buffer.plane(0).unwrap();
-            assert_eq!(&quantize_i16_24(&ch0[..24]), expected_head);
-            assert_eq!(&quantize_i16_24(&ch0[960 - 24..]), expected_tail);
+    #[test]
+    fn hybrid_mono_and_stereo_packets_decode_to_recorded_values() {
+        assert_stream_decodes(&mut decoder(&mono_params()), &HYBRID_MONO_SWB_10MS);
+        assert_stream_decodes(&mut decoder(&mono_params()), &HYBRID_MONO_FB_20MS);
+        assert_stream_decodes(&mut decoder(&stereo_params()), &HYBRID_STEREO_SWB_20MS);
+        assert_stream_decodes(&mut decoder(&stereo_params()), &HYBRID_STEREO_FB_20MS);
+        return;
+    }
+
+    #[test]
+    fn celt_only_packets_of_every_frame_size_decode_to_recorded_values() {
+        let mono = [&CELT_MONO_FB_2_5MS, &CELT_MONO_FB_5MS, &CELT_MONO_FB_10MS, &CELT_MONO_FB_20MS];
+        for stream in mono {
+            assert_stream_decodes(&mut decoder(&mono_params()), stream);
         }
-
-        let mut stereo_params = AudioCodecParameters::new();
-        stereo_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(
-                Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            ));
-        let mut stereo_decoder =
-            OpusDecoder::try_new(&stereo_params, &AudioDecoderOptions::default()).unwrap();
-
-        for (pkt_bytes, expected_l_tail, expected_r_tail) in [
-            (
-                &STEREO_MB_PKT_0[..],
-                &STEREO_MB_OUT_L_0_TAIL,
-                &STEREO_MB_OUT_R_0_TAIL,
-            ),
-            (
-                &STEREO_MB_PKT_1[..],
-                &STEREO_MB_OUT_L_1_TAIL,
-                &STEREO_MB_OUT_R_1_TAIL,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            stereo_decoder.decode_ref(&pkt).unwrap();
-            assert_eq!(stereo_decoder.buffer.frames(), 960);
-            let ch0 = stereo_decoder.buffer.plane(0).unwrap();
-            let ch1 = stereo_decoder.buffer.plane(1).unwrap();
-            assert_eq!(&quantize_i16_24(&ch0[960 - 24..]), expected_l_tail);
-            assert_eq!(&quantize_i16_24(&ch1[960 - 24..]), expected_r_tail);
+        for stream in [&CELT_STEREO_FB_10MS, &CELT_STEREO_FB_20MS] {
+            assert_stream_decodes(&mut decoder(&stereo_params()), stream);
         }
         return;
     }
 
     #[test]
-    fn opus_decoder_hybrid_mono_and_stereo_match_libopus() {
-        let mut mono_params = AudioCodecParameters::new();
-        mono_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
-
-        assert_mono_f32_packets!(
-            &mono_params,
-            480,
-            [
-                (
-                    HYBRID_MONO_SWB_10MS_PKT_0,
-                    HYBRID_MONO_SWB_10MS_OUT_0_HEAD_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_0_TAIL_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_0_RMS,
-                ),
-                (
-                    HYBRID_MONO_SWB_10MS_PKT_1,
-                    HYBRID_MONO_SWB_10MS_OUT_1_HEAD_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_1_TAIL_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_1_RMS,
-                ),
-                (
-                    HYBRID_MONO_SWB_10MS_PKT_2,
-                    HYBRID_MONO_SWB_10MS_OUT_2_HEAD_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_2_TAIL_F32,
-                    HYBRID_MONO_SWB_10MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        assert_mono_f32_packets!(
-            &mono_params,
-            960,
-            [
-                (
-                    HYBRID_MONO_FB_20MS_PKT_0,
-                    HYBRID_MONO_FB_20MS_OUT_0_HEAD_F32,
-                    HYBRID_MONO_FB_20MS_OUT_0_TAIL_F32,
-                    HYBRID_MONO_FB_20MS_OUT_0_RMS,
-                ),
-                (
-                    HYBRID_MONO_FB_20MS_PKT_1,
-                    HYBRID_MONO_FB_20MS_OUT_1_HEAD_F32,
-                    HYBRID_MONO_FB_20MS_OUT_1_TAIL_F32,
-                    HYBRID_MONO_FB_20MS_OUT_1_RMS,
-                ),
-                (
-                    HYBRID_MONO_FB_20MS_PKT_2,
-                    HYBRID_MONO_FB_20MS_OUT_2_HEAD_F32,
-                    HYBRID_MONO_FB_20MS_OUT_2_TAIL_F32,
-                    HYBRID_MONO_FB_20MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        let mut stereo_params = AudioCodecParameters::new();
-        stereo_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(
-                Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            ));
-
-        assert_stereo_f32_packets!(
-            &stereo_params,
-            960,
-            [
-                (
-                    HYBRID_STEREO_SWB_20MS_PKT_0,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_0_HEAD_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_0_TAIL_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_0_RMS,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_0_HEAD_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_0_TAIL_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_0_RMS,
-                ),
-                (
-                    HYBRID_STEREO_SWB_20MS_PKT_1,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_1_HEAD_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_1_TAIL_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_L_1_RMS,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_1_HEAD_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_1_TAIL_F32,
-                    HYBRID_STEREO_SWB_20MS_OUT_R_1_RMS,
-                ),
-            ]
-        );
-
-        assert_stereo_f32_packets!(
-            &stereo_params,
-            960,
-            [
-                (
-                    HYBRID_STEREO_FB_20MS_PKT_0,
-                    HYBRID_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_L_0_RMS,
-                    HYBRID_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_R_0_RMS,
-                ),
-                (
-                    HYBRID_STEREO_FB_20MS_PKT_1,
-                    HYBRID_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_L_1_RMS,
-                    HYBRID_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
-                    HYBRID_STEREO_FB_20MS_OUT_R_1_RMS,
-                ),
-            ]
-        );
+    fn mode_transitions_and_redundancy_decode_to_recorded_values() {
+        assert_stream_decodes(&mut decoder(&mono_params()), &MODE_TRANSITIONS);
         return;
     }
 
     #[test]
-    fn opus_decoder_celt_only_all_frame_sizes_match_libopus() {
-        let mut mono_params = AudioCodecParameters::new();
-        mono_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
-
-        // 2.5 ms (120 samples)
-        assert_mono_f32_packets!(
-            &mono_params,
-            120,
-            [
-                (
-                    CELT_MONO_FB_2_5MS_PKT_0,
-                    CELT_MONO_FB_2_5MS_OUT_0_HEAD_F32,
-                    CELT_MONO_FB_2_5MS_OUT_0_TAIL_F32,
-                    CELT_MONO_FB_2_5MS_OUT_0_RMS,
-                ),
-                (
-                    CELT_MONO_FB_2_5MS_PKT_1,
-                    CELT_MONO_FB_2_5MS_OUT_1_HEAD_F32,
-                    CELT_MONO_FB_2_5MS_OUT_1_TAIL_F32,
-                    CELT_MONO_FB_2_5MS_OUT_1_RMS,
-                ),
-                (
-                    CELT_MONO_FB_2_5MS_PKT_2,
-                    CELT_MONO_FB_2_5MS_OUT_2_HEAD_F32,
-                    CELT_MONO_FB_2_5MS_OUT_2_TAIL_F32,
-                    CELT_MONO_FB_2_5MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        // 5 ms (240 samples)
-        assert_mono_f32_packets!(
-            &mono_params,
-            240,
-            [
-                (
-                    CELT_MONO_FB_5MS_PKT_0,
-                    CELT_MONO_FB_5MS_OUT_0_HEAD_F32,
-                    CELT_MONO_FB_5MS_OUT_0_TAIL_F32,
-                    CELT_MONO_FB_5MS_OUT_0_RMS,
-                ),
-                (
-                    CELT_MONO_FB_5MS_PKT_1,
-                    CELT_MONO_FB_5MS_OUT_1_HEAD_F32,
-                    CELT_MONO_FB_5MS_OUT_1_TAIL_F32,
-                    CELT_MONO_FB_5MS_OUT_1_RMS,
-                ),
-                (
-                    CELT_MONO_FB_5MS_PKT_2,
-                    CELT_MONO_FB_5MS_OUT_2_HEAD_F32,
-                    CELT_MONO_FB_5MS_OUT_2_TAIL_F32,
-                    CELT_MONO_FB_5MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        // 10 ms (480 samples)
-        assert_mono_f32_packets!(
-            &mono_params,
-            480,
-            [
-                (
-                    CELT_MONO_FB_10MS_PKT_0,
-                    CELT_MONO_FB_10MS_OUT_0_HEAD_F32,
-                    CELT_MONO_FB_10MS_OUT_0_TAIL_F32,
-                    CELT_MONO_FB_10MS_OUT_0_RMS,
-                ),
-                (
-                    CELT_MONO_FB_10MS_PKT_1,
-                    CELT_MONO_FB_10MS_OUT_1_HEAD_F32,
-                    CELT_MONO_FB_10MS_OUT_1_TAIL_F32,
-                    CELT_MONO_FB_10MS_OUT_1_RMS,
-                ),
-                (
-                    CELT_MONO_FB_10MS_PKT_2,
-                    CELT_MONO_FB_10MS_OUT_2_HEAD_F32,
-                    CELT_MONO_FB_10MS_OUT_2_TAIL_F32,
-                    CELT_MONO_FB_10MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        // 20 ms (960 samples)
-        assert_mono_f32_packets!(
-            &mono_params,
-            960,
-            [
-                (
-                    CELT_MONO_FB_20MS_PKT_0,
-                    CELT_MONO_FB_20MS_OUT_0_HEAD_F32,
-                    CELT_MONO_FB_20MS_OUT_0_TAIL_F32,
-                    CELT_MONO_FB_20MS_OUT_0_RMS,
-                ),
-                (
-                    CELT_MONO_FB_20MS_PKT_1,
-                    CELT_MONO_FB_20MS_OUT_1_HEAD_F32,
-                    CELT_MONO_FB_20MS_OUT_1_TAIL_F32,
-                    CELT_MONO_FB_20MS_OUT_1_RMS,
-                ),
-                (
-                    CELT_MONO_FB_20MS_PKT_2,
-                    CELT_MONO_FB_20MS_OUT_2_HEAD_F32,
-                    CELT_MONO_FB_20MS_OUT_2_TAIL_F32,
-                    CELT_MONO_FB_20MS_OUT_2_RMS,
-                ),
-            ]
-        );
-
-        let mut stereo_params = AudioCodecParameters::new();
-        stereo_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(
-                Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            ));
-
-        // Stereo 10 ms
-        assert_stereo_f32_packets!(
-            &stereo_params,
-            480,
-            [
-                (
-                    CELT_STEREO_FB_10MS_PKT_0,
-                    CELT_STEREO_FB_10MS_OUT_L_0_HEAD_F32,
-                    CELT_STEREO_FB_10MS_OUT_L_0_TAIL_F32,
-                    CELT_STEREO_FB_10MS_OUT_L_0_RMS,
-                    CELT_STEREO_FB_10MS_OUT_R_0_HEAD_F32,
-                    CELT_STEREO_FB_10MS_OUT_R_0_TAIL_F32,
-                    CELT_STEREO_FB_10MS_OUT_R_0_RMS,
-                ),
-                (
-                    CELT_STEREO_FB_10MS_PKT_1,
-                    CELT_STEREO_FB_10MS_OUT_L_1_HEAD_F32,
-                    CELT_STEREO_FB_10MS_OUT_L_1_TAIL_F32,
-                    CELT_STEREO_FB_10MS_OUT_L_1_RMS,
-                    CELT_STEREO_FB_10MS_OUT_R_1_HEAD_F32,
-                    CELT_STEREO_FB_10MS_OUT_R_1_TAIL_F32,
-                    CELT_STEREO_FB_10MS_OUT_R_1_RMS,
-                ),
-            ]
-        );
-
-        // Stereo 20 ms
-        assert_stereo_f32_packets!(
-            &stereo_params,
-            960,
-            [
-                (
-                    CELT_STEREO_FB_20MS_PKT_0,
-                    CELT_STEREO_FB_20MS_OUT_L_0_HEAD_F32,
-                    CELT_STEREO_FB_20MS_OUT_L_0_TAIL_F32,
-                    CELT_STEREO_FB_20MS_OUT_L_0_RMS,
-                    CELT_STEREO_FB_20MS_OUT_R_0_HEAD_F32,
-                    CELT_STEREO_FB_20MS_OUT_R_0_TAIL_F32,
-                    CELT_STEREO_FB_20MS_OUT_R_0_RMS,
-                ),
-                (
-                    CELT_STEREO_FB_20MS_PKT_1,
-                    CELT_STEREO_FB_20MS_OUT_L_1_HEAD_F32,
-                    CELT_STEREO_FB_20MS_OUT_L_1_TAIL_F32,
-                    CELT_STEREO_FB_20MS_OUT_L_1_RMS,
-                    CELT_STEREO_FB_20MS_OUT_R_1_HEAD_F32,
-                    CELT_STEREO_FB_20MS_OUT_R_1_TAIL_F32,
-                    CELT_STEREO_FB_20MS_OUT_R_1_RMS,
-                ),
-            ]
-        );
-        return;
-    }
-
-    #[test]
-    fn opus_decoder_mode_transitions_and_redundancy_match_libopus() {
-        let mut mono_params = AudioCodecParameters::new();
-        mono_params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(48000)
-            .with_channels(Channels::Positioned(Position::FRONT_CENTER));
-
-        assert_mono_f32_packets!(
-            &mono_params,
-            960,
-            [
-                (
-                    TRANSITION_0_SILK_WB_PKT,
-                    TRANSITION_0_SILK_WB_OUT_HEAD_F32,
-                    TRANSITION_0_SILK_WB_OUT_TAIL_F32,
-                    TRANSITION_0_SILK_WB_OUT_RMS,
-                ),
-                (
-                    TRANSITION_1_HYBRID_FB_PKT,
-                    TRANSITION_1_HYBRID_FB_OUT_HEAD_F32,
-                    TRANSITION_1_HYBRID_FB_OUT_TAIL_F32,
-                    TRANSITION_1_HYBRID_FB_OUT_RMS,
-                ),
-                (
-                    TRANSITION_2_CELT_FB_PKT,
-                    TRANSITION_2_CELT_FB_OUT_HEAD_F32,
-                    TRANSITION_2_CELT_FB_OUT_TAIL_F32,
-                    TRANSITION_2_CELT_FB_OUT_RMS,
-                ),
-                (
-                    TRANSITION_3_SILK_WB_RETURN_PKT,
-                    TRANSITION_3_SILK_WB_RETURN_OUT_HEAD_F32,
-                    TRANSITION_3_SILK_WB_RETURN_OUT_TAIL_F32,
-                    TRANSITION_3_SILK_WB_RETURN_OUT_RMS,
-                ),
-            ]
-        );
-        return;
-    }
-
-    #[test]
-    fn opus_decoder_multistream_vorbis_family1_and_opus_head_match_libopus() {
+    fn multistream_family_1_decodes_to_recorded_values() {
         // 3-channel Vorbis Family 1 OpusHead:
         // "OpusHead" (8B) | version=1 (1B) | channels=3 (1B) | pre_skip=312 (2B LE)
         // | input_sample_rate=48000 (4B LE) | output_gain=0 (2B LE) | mapping_family=1 (1B)
@@ -1807,42 +1525,7 @@ mod tests {
         assert_eq!(dec.pre_skip(), 312);
         assert_eq!(dec.output_gain(), 0);
 
-        for (pkt_bytes, ch0_head, ch0_tail, ch0_rms, ch1_head, ch1_tail, ch1_rms, ch2_head, ch2_tail, ch2_rms) in [
-            (
-                &MS_3CH_PKT_0[..],
-                &MS_3CH_OUT_CH0_0_HEAD_F32,
-                &MS_3CH_OUT_CH0_0_TAIL_F32,
-                MS_3CH_OUT_CH0_0_RMS,
-                &MS_3CH_OUT_CH1_0_HEAD_F32,
-                &MS_3CH_OUT_CH1_0_TAIL_F32,
-                MS_3CH_OUT_CH1_0_RMS,
-                &MS_3CH_OUT_CH2_0_HEAD_F32,
-                &MS_3CH_OUT_CH2_0_TAIL_F32,
-                MS_3CH_OUT_CH2_0_RMS,
-            ),
-            (
-                &MS_3CH_PKT_1[..],
-                &MS_3CH_OUT_CH0_1_HEAD_F32,
-                &MS_3CH_OUT_CH0_1_TAIL_F32,
-                MS_3CH_OUT_CH0_1_RMS,
-                &MS_3CH_OUT_CH1_1_HEAD_F32,
-                &MS_3CH_OUT_CH1_1_TAIL_F32,
-                MS_3CH_OUT_CH1_1_RMS,
-                &MS_3CH_OUT_CH2_1_HEAD_F32,
-                &MS_3CH_OUT_CH2_1_TAIL_F32,
-                MS_3CH_OUT_CH2_1_RMS,
-            ),
-        ] {
-            let pkt = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), pkt_bytes);
-            dec.decode_ref(&pkt).unwrap();
-            assert_eq!(dec.buffer.frames(), 960);
-            let p0 = dec.buffer.plane(0).unwrap();
-            let p1 = dec.buffer.plane(1).unwrap();
-            let p2 = dec.buffer.plane(2).unwrap();
-            assert_plane_matches_f32_oracle(p0, 960, ch0_head, ch0_tail, ch0_rms, 1e-4);
-            assert_plane_matches_f32_oracle(p1, 960, ch1_head, ch1_tail, ch1_rms, 1e-4);
-            assert_plane_matches_f32_oracle(p2, 960, ch2_head, ch2_tail, ch2_rms, 1e-4);
-        }
+        assert_stream_decodes(&mut dec, &MULTISTREAM_FAMILY_1);
 
         // Also verify non-zero output_gain (+256 Q7.8 = +1.0 dB) and muted channel mapping (255)
         let opus_head_gain_mute: [u8; 24] = [
@@ -1864,14 +1547,19 @@ mod tests {
             0,
             Timestamp::from(0u32),
             Duration::from(960u64),
-            &MS_3CH_PKT_0[..],
+            MULTISTREAM_FAMILY_1.packets[0].packet,
         );
         gain_dec.decode_ref(&pkt0).unwrap();
         let muted_plane = gain_dec.buffer.plane(1).unwrap();
         assert!(muted_plane.iter().all(|&s| s == 0.0));
         let expected_scale = 10.0_f32.powf(256.0 / (20.0 * 256.0));
         let p0_scaled = gain_dec.buffer.plane(0).unwrap();
-        assert!((p0_scaled[960 - 1] - MS_3CH_OUT_CH0_0_TAIL_F32[23] * expected_scale).abs() < 1e-4);
+        assert!(
+            (p0_scaled[960 - 1]
+                - MULTISTREAM_FAMILY_1.packets[0].planes[0].tail[23] * expected_scale)
+                .abs()
+                < 1e-4
+        );
         return;
     }
 
@@ -1890,7 +1578,7 @@ mod tests {
             0,
             Timestamp::from(0u32),
             Duration::from(960u64),
-            &HYBRID_MONO_FB_20MS_PKT_0[..],
+            HYBRID_MONO_FB_20MS.packets[0].packet,
         );
         dec.decode_ref(&active_hybrid).unwrap();
         assert_eq!(dec.buffer.frames(), 960);
@@ -1901,12 +1589,8 @@ mod tests {
         assert!(dec.buffer.plane(0).unwrap().iter().all(|s| s.is_finite()));
 
         // 1-byte Code 0 DTX packet (Hybrid FB 20 ms TOC = 0x78)
-        let dtx_code0 = PacketRef::new(
-            0,
-            Timestamp::from(1920u32),
-            Duration::from(960u64),
-            &[0x78],
-        );
+        let dtx_code0 =
+            PacketRef::new(0, Timestamp::from(1920u32), Duration::from(960u64), &[0x78]);
         dec.decode_ref(&dtx_code0).unwrap();
         assert_eq!(dec.buffer.frames(), 960);
         assert!(dec.buffer.plane(0).unwrap().iter().all(|s| s.is_finite()));
@@ -1916,7 +1600,7 @@ mod tests {
             0,
             Timestamp::from(2880u32),
             Duration::from(480u64),
-            &CELT_MONO_FB_10MS_PKT_0[..],
+            CELT_MONO_FB_10MS.packets[0].packet,
         );
         dec.decode_ref(&active_celt).unwrap();
         assert_eq!(dec.buffer.frames(), 480);
@@ -1926,12 +1610,8 @@ mod tests {
         assert!(dec.buffer.plane(0).unwrap().iter().all(|s| s.is_finite()));
 
         // 1-byte Code 1 DTX packet (CELT FB 10 ms Code 1 TOC = 0xf1)
-        let dtx_code1 = PacketRef::new(
-            0,
-            Timestamp::from(3840u32),
-            Duration::from(960u64),
-            &[0xf1],
-        );
+        let dtx_code1 =
+            PacketRef::new(0, Timestamp::from(3840u32), Duration::from(960u64), &[0xf1]);
         dec.decode_ref(&dtx_code1).unwrap();
         assert_eq!(dec.buffer.frames(), 960);
         assert!(dec.buffer.plane(0).unwrap().iter().all(|s| s.is_finite()));
