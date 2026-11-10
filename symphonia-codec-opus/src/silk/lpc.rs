@@ -442,4 +442,12 @@ mod tests {
     fn nlsf_to_lpc_rejects_an_unsupported_order() {
         assert!(Error::InvalidLSFCoefficients.matches(&nlsf_to_lpc_q12(&[0; 12])));
     }
+
+    /// A Q12 filter whose backward Levinson step overflows 32 bits is rejected as unstable
+    /// ([RFC 8251 Section 6](<https://datatracker.ietf.org/doc/html/rfc8251#section-6>)).
+    #[test]
+    fn inverse_prediction_gain_rejects_32_bit_step_overflow() {
+        const OVERFLOWING_A_Q12: [i16; 10] = [-275, 2794, -4094, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(inverse_prediction_gain_q30(&OVERFLOWING_A_Q12), 0);
+    }
 }
