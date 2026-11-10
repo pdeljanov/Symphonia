@@ -29,7 +29,8 @@
 //! passes when its output passes against either set.
 //!
 //! The vectors are not part of the repository. The tests are ignored by default and read the
-//! vector directory from `OPUS_TESTVECTORS_DIR`:
+//! vector directory from `OPUS_TESTVECTORS_DIR` (and optional `opus_demo -d` reference outputs
+//! `ref_<vector>_<rate>_<layout>.pcm` from `OPUS_REFERENCE_OUTPUT_DIR`):
 //!
 //! ```text
 //! OPUS_TESTVECTORS_DIR=/path/to/opus_newvectors cargo test --release \
@@ -53,8 +54,25 @@ use opus_compare::Quality;
 /// Environment variable naming the directory with the RFC 8251 test vectors.
 const VECTORS_DIR_ENV: &str = "OPUS_TESTVECTORS_DIR";
 
+/// Environment variable naming the directory with `ref_<vector>_<rate>_<layout>.pcm` outputs
+/// produced by `opus_demo -d` of the patched RFC 6716 Appendix A reference decoder.
+const REFERENCE_OUTPUT_DIR_ENV: &str = "OPUS_REFERENCE_OUTPUT_DIR";
+
 /// Number of test vectors (`testvector01` .. `testvector12`).
 const TEST_VECTOR_COUNT: usize = 12;
+
+/// Output sampling rates exercised by RFC 6716 Section 6.1.
+const SAMPLE_RATES: [u32; 5] = [8_000, 12_000, 16_000, 24_000, 48_000];
+
+/// Output channel layouts exercised by RFC 6716 Section 6.1.
+const LAYOUTS: [Layout; 2] = [Layout::Mono, Layout::Stereo];
+
+/// Test vectors whose packets use only the fixed-point SILK layer (`testvector02`..`04`).
+const SILK_ONLY_VECTORS: [usize; 3] = [2, 3, 4];
+
+/// Maximum 16-bit PCM rounding difference (in LSBs) between `symphonia-codec-opus` and the
+/// reference float build when both use the same intensity stereo phase inversion setting.
+const MAX_FLOAT_ROUNDING_DIFF: u16 = 1;
 
 /// Largest payload `opus_demo -d` accepts (`MAX_PACKET`).
 const MAX_PACKET: usize = 1500;
@@ -385,6 +403,165 @@ conformance_tests! {
     rfc6716_test_vectors_24k_stereo => (24_000, Layout::Stereo),
     rfc6716_test_vectors_48k_mono => (48_000, Layout::Mono),
     rfc6716_test_vectors_48k_stereo => (48_000, Layout::Stereo),
+}
+
+/// Sample-by-sample comparison of one decoded `(vector, rate, layout)` run against the output of
+/// the patched RFC 6716 Appendix A reference decoder (`opus_demo -d`).
+struct SampleComparison {
+    vector: usize,
+    rate: u32,
+    layout: Layout,
+    samples: usize,
+    identical: usize,
+    max_abs_diff: u16,
+    range_ok: bool,
+    length_matches: bool,
+}
+
+impl SampleComparison {
+    fn identical_percent(&self) -> f64 {
+        if self.samples == 0 {
+            return 100.0;
+        }
+        return 100.0 * self.identical as f64 / self.samples as f64;
+    }
+
+    fn is_silk_only(&self) -> bool {
+        return SILK_ONLY_VECTORS.contains(&self.vector);
+    }
+
+    fn passes(&self) -> bool {
+        if !self.range_ok || !self.length_matches {
+            return false;
+        }
+        if self.is_silk_only() {
+            return self.max_abs_diff == 0 && self.identical == self.samples;
+        }
+        if matches!(self.layout, Layout::Stereo) {
+            return self.max_abs_diff <= MAX_FLOAT_ROUNDING_DIFF;
+        }
+        return true;
+    }
+}
+
+impl fmt::Display for SampleComparison {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        return write!(
+            f,
+            "testvector{:02} {:>5} Hz {:<6} | {:>7} samples | identical {:>7} ({:6.2}%) | max |diff| {:>5}",
+            self.vector,
+            self.rate,
+            self.layout.name(),
+            self.samples,
+            self.identical,
+            self.identical_percent(),
+            self.max_abs_diff,
+        );
+    }
+}
+
+/// Decodes `testvectorNN.bit` at `rate` and `layout` and compares the 16-bit PCM output sample by
+/// sample with `ref_NN_<rate>_<layout>.pcm` produced by the patched RFC 6716 Appendix A reference
+/// decoder.
+fn compare_with_reference_output(
+    vectors_dir: &Path,
+    ref_dir: &Path,
+    vector: usize,
+    rate: u32,
+    layout: Layout,
+) -> SampleComparison {
+    let bit_path = vectors_dir.join(format!("testvector{vector:02}.bit"));
+    let bit = read_file(&bit_path);
+    let records = parse_bit_records(&bit)
+        .unwrap_or_else(|err| panic!("malformed {}: {err}", bit_path.display()));
+    let decoded = decode_records(&records, rate, layout);
+
+    let ref_path = ref_dir.join(format!("ref_{vector:02}_{rate}_{}.pcm", layout.name()));
+    let reference = read_pcm16(&read_file(&ref_path));
+    let length_matches = decoded.pcm.len() == reference.len();
+    let (identical, max_abs_diff) = decoded.pcm.iter().zip(&reference).fold(
+        (0usize, 0u16),
+        |(identical, max_diff), (&actual, &expected)| {
+            let diff = actual.abs_diff(expected);
+            return (identical + usize::from(diff == 0), max_diff.max(diff));
+        },
+    );
+    return SampleComparison {
+        vector,
+        rate,
+        layout,
+        samples: decoded.pcm.len(),
+        identical,
+        max_abs_diff,
+        range_ok: decoded.first_range_mismatch.is_none() && decoded.first_decode_error.is_none(),
+        length_matches,
+    };
+}
+
+/// Compares all 120 `(vector, rate, layout)` runs sample by sample against `ref_*.pcm` files from
+/// `OPUS_REFERENCE_OUTPUT_DIR`.
+#[test]
+#[ignore = "needs OPUS_TESTVECTORS_DIR and OPUS_REFERENCE_OUTPUT_DIR"]
+fn rfc8251_reference_decoder_sample_comparison() {
+    let Some(ref_dir_os) = std::env::var_os(REFERENCE_OUTPUT_DIR_ENV) else {
+        println!(
+            "{REFERENCE_OUTPUT_DIR_ENV} is not set; skipping sample-by-sample reference comparison"
+        );
+        return;
+    };
+    let ref_dir = PathBuf::from(ref_dir_os);
+    let vec_dir = vectors_dir();
+
+    let mut runs = Vec::with_capacity(TEST_VECTOR_COUNT * SAMPLE_RATES.len() * LAYOUTS.len());
+    for &rate in &SAMPLE_RATES {
+        for &layout in &LAYOUTS {
+            for vector in 1..=TEST_VECTOR_COUNT {
+                runs.push((vector, rate, layout));
+            }
+        }
+    }
+
+    let workers = std::thread::available_parallelism().map_or(1, usize::from).min(MAX_WORKERS);
+    let mut comparisons: Vec<SampleComparison> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|i| {
+                let vec_dir = vec_dir.as_path();
+                let ref_dir = ref_dir.as_path();
+                let runs = runs.as_slice();
+                return scope.spawn(move || {
+                    return runs
+                        .iter()
+                        .skip(i)
+                        .step_by(workers)
+                        .map(|&(vector, rate, layout)| {
+                            return compare_with_reference_output(
+                                vec_dir, ref_dir, vector, rate, layout,
+                            );
+                        })
+                        .collect::<Vec<_>>();
+                });
+            })
+            .collect();
+        return handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("reference comparison worker panicked"))
+            .collect();
+    });
+    comparisons.sort_by_key(|c| (c.rate, c.layout.channels(), c.vector));
+
+    comparisons.iter().for_each(|comparison| println!("{comparison}"));
+    let failures: Vec<String> = comparisons
+        .iter()
+        .filter(|comparison| !comparison.passes())
+        .map(ToString::to_string)
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {} reference comparisons failed:\n{}",
+        failures.len(),
+        comparisons.len(),
+        failures.join("\n")
+    );
 }
 
 /// Port of `opus_compare.c` from the RFC 6716 Appendix A reference code
