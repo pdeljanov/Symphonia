@@ -144,20 +144,32 @@ symphonia-codec-opus
 ### Dual-Ended Range Decoder & Raw-Bit Reader ([RFC 6716 Section 4.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1))
 
 Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]` slice:
-- **Forward Range Decoder ([Section 4.1.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1) - [Section 4.1.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.5))**: Reads from byte `0` forward, maintaining 32-bit interval size `rng` and offset `val` normalized to `2^23 < rng <= 2^24`. Decodes symbols from compile-time validated cumulative distribution tables (`decode_symbol` over `Cdf`), log-probability flags (`decode_symbol_logp`), uniform unsigned integers (`decode_uint`), and Laplace-distributed coarse energy deltas (`decode_laplace`).
-- **Backward Raw-Bit Reader ([Section 4.1.3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2))**: Reads raw bits (`decode_raw_bits`) from byte `N - 1` backward toward the front for CELT fine energy and PVQ pulse signs/LSBs.
-- **Bit Accounting ([Section 4.1.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.6))**: `tell()` and `tell_frac()` compute the exact total bits (in whole bits and `1/8`th-bit units) consumed by both ends of the frame buffer.
 
 ```text
-  Frame Byte Slice:
-  +--------+--------+--------+-----+--------+--------+
-  | byte 0 | byte 1 | byte 2 | ... |byte N-2|byte N-1|
-  +--------+--------+--------+-----+--------+--------+
-    |                                              |
-    +---> Forward Range Coder                      +---> Backward Raw-Bit Reader
-          (SILK all symbols; CELT flags,                 (CELT fine energy bits,
-           coarse energy, CWRS pulse indices)             PVQ signs, leftover bits)
+        +--------+--------+--------+-----+--------+--------+
+        | byte 0 | byte 1 | byte 2 | ... |byte N-2|byte N-1|
+        +--------+--------+--------+-----+--------+--------+
+            |                                          |
+          1 |  Forward --->              <--- Backward | 2
+            \/                                         \/
+      +------------+                             +------------+
+      |   Range    |                             |  Raw-Bit   |
+      |  Decoder   |                             |   Reader   |
+      +------------+                             +------------+
+            |                                          |
+          3 +--------------------+---------------------+ 4
+                                 |
+                                 \/
+                           +------------+
+                           |  tell() &  |
+                           |tell_frac() |
+                           +------------+
 ```
+
+1. **Forward Byte Stream (`byte 0` upward, [Section 4.1.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.1) - [Section 4.1.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.5))**: Maintains 32-bit interval size `rng` and offset `val` normalized to `2^23 < rng <= 2^24`.
+2. **Backward Byte Stream (`byte N - 1` downward, [Section 4.1.3.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2))**: Reads raw bits from the end of the frame buffer toward the front.
+3. **Range-Coded Symbols**: Decodes symbols from compile-time validated cumulative distribution tables (`decode_symbol` over `Cdf`), log-probability flags (`decode_symbol_logp`), uniform unsigned integers (`decode_uint`), and Laplace-distributed coarse energy deltas (`decode_laplace`).
+4. **Raw Bits & Bit Accounting (`decode_raw_bits`, [Section 4.1.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.6))**: Supplies CELT fine energy bits, PVQ pulse signs, and leftover bits; `tell()` and `tell_frac()` report the exact total bits (in whole bits and `1/8`th-bit units) consumed by both ends.
 
 ---
 
@@ -190,7 +202,7 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
 2. Coded SILK parameters (`silk/params.rs`)
 3. Shell-coded pulses, LSBs, and signs (`silk/excitation.rs`)
 4. Pitch lags and 5-tap Long-Term Prediction (LTP) coefficients in `Q14` (`silk/params.rs`)
-5. 10/16-order Linear Predictive Coding (LPC) coefficients in `Q12` and subframe gains in `Q16` (`silk/lsf.rs`)
+5. 10/16-order Linear Predictive Coding (LPC) coefficients in `Q12` and subframe gains in `Q16` (`silk/lsf.rs`, `silk/lpc.rs`)
 6. Synthesized mono or Mid-Side stereo signal (`silk/synthesis.rs`)
 7. Unmixed mono or Left-Right stereo signal (`silk/synthesis.rs`)
 8. Resampled 48 kHz output signal (`silk/resampler.rs`)
@@ -225,46 +237,51 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
   +----------------------------------+
 ```
 
-### SILK Processing Pipeline (`silk/*`)
+### SILK Submodule Pipeline (`silk/*`)
 
 ```text
-  [Range Decoder (entropy.rs)]
-               |
-               +---> 1. Header & LBRR Unpacking (silk/mod.rs, silk/params.rs)
-               |        - VAD flags (1..3 frames) & LBRR flags (Section 4.2.3 - 4.2.4)
-               |        - Stereo prediction weights w0, w1 in Q13 & mid-only flag (Section 4.2.7.1)
-               |
-               +---> 2. Frame Type & Subframe Gains (silk/params.rs)
-               |        - SignalType (Inactive, Unvoiced, Voiced) & QuantOffsetType (Section 4.2.7.2)
-               |        - Logarithmic subframe gains -> Q16 linear gains (Section 4.2.7.3)
-               |
-               +---> 3. NLSF Decoding & NLSF-to-LPC Conversion (silk/lsf.rs, silk/synthesis.rs)
-               |        - Stage-1 codebook VQ + Stage-2 residual VQ in Q15 (Section 4.2.7.5)
-               |        - NLSF minimum-spacing stabilization & 4-subframe interpolation
-               |        - Chebyshev polynomial evaluation -> Q12 LPC coefficients (Section 4.2.7.5.5)
-               |
-               +---> 4. Voiced Pitch & LTP Unpacking (silk/params.rs)
-               |        - Primary pitch lag (16..288) & subframe pitch contour (Section 4.2.7.6.1)
-               |        - Periodicity index & 5-tap Q14 LTP filter codebook (Section 4.2.7.6.2)
-               |
-               +---> 5. Shell-Coded Excitation Reconstruction (silk/excitation.rs)
-                        - Rate level, 16-sample shell pulse tree splits, LSBs, signs (Section 4.2.7.8)
-                        - Quantization offset addition & LCG sign/scale inversion -> e_Q10
-                                      |
-                                      v
-  [LTP Pitch Synthesis (silk/synthesis.rs, Section 4.2.7.9.1)]
-  (Voiced 5-tap pitch prediction across re-whitened LPC residual history)
-                                      |
-                                      v
-  [LPC Short-Term IIR Synthesis (silk/synthesis.rs, Section 4.2.7.9.2)]
-  (10th/16th-order Q12 IIR filter + Q16 subframe gain scaling -> saturating i16)
-                                      |
-                                      v
-  [Mid-Side to Left-Right Stereo Unmixing (silk/synthesis.rs, Section 4.2.8)]
-                                      |
-                                      v
-  [Polyphase IIR/FIR Resampler (silk/resampler.rs, Section 4.2.9) & PLC/CNG (silk/plc.rs)]
+        +---------+    +------------+    +------------+    +------------+
+     -->|  Range  |--->|  Header &  |--->| Frame Type |--->|   Decode   |
+      1 | Decoder | 2  | LBRR Flags | 3  |  & Gains   | 4  |    NLSF    |
+        +---------+    +------------+    +------------+    +------------+
+             |                                   |                |
+             +------------------+----------------+              5 |
+             |                  |                |                \/
+           6 |                7 |                |         +------------+
+             \/                 \/               |         |  Stabilize |
+        +---------+    +------------+            |         | & NLSF-LPC |
+        |  Pitch  |    |   Shell    |            |         +------------+
+        |  & LTP  |    | Excitation |            |                |
+        +---------+    +------------+            |                |
+             |               |                   |                |
+             | 8           9 |                   +-------+        | 10
+             |               \/                          |        |
+             |         +------------+   +------------+   |        |
+             +-------->|    LTP     |-->|    LPC     |<--+--------+
+                       | Synthesis  |   | Synthesis  |
+                       +------------+   +------------+
+                                              |
+                                              | 11
+                                              \/
+                       +------------+   +------------+
+                    <--| Polyphase  |<--|   Stereo   |
+                    13 | Resampler  |12 |  Unmixing  |
+                       +------------+   +------------+
 ```
+
+1. Shared frame range decoder (`entropy::Decoder<'a>`)
+2. VAD flags (`1..3` frames), per-frame LBRR flags, and stereo weights `w0, w1` in `Q13` (`silk/decoder.rs`, `silk/params.rs`, [Section 4.2.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.3) - [Section 4.2.7.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.1))
+3. `SignalType` (`Inactive`, `Unvoiced`, `Voiced`) and `QuantOffsetType` (`silk/params.rs`, [Section 4.2.7.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.2))
+4. Logarithmic subframe gains unpacked to linear `Q16` gains (`silk/params.rs`, [Section 4.2.7.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.3))
+5. Two-stage VQ Normalized Line Spectral Frequencies (`nlsf_q15` in `Q15`, `silk/lsf.rs`, [Section 4.2.7.5.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.1) - [Section 4.2.7.5.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2))
+6. Voiced primary pitch lag (`16..288`), subframe pitch contour, and 5-tap `Q14` LTP filter codebook (`silk/params.rs`, [Section 4.2.7.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6))
+7. Rate level, 16-sample shell pulse tree splits, LSBs, signs, and LCG seed (`silk/excitation.rs`, [Section 4.2.7.7](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.7) - [Section 4.2.7.8](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8))
+8. Subframe pitch lags, 5-tap `Q14` LTP coefficients, and LTP scale factor (`Q14`)
+9. Quantization-offset-adjusted and LCG sign-inverted excitation `e_Q10` (`silk/excitation.rs`, [Section 4.2.7.8.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.6))
+10. Stabilized, interpolated NLSFs converted via Chebyshev polynomial evaluation and bandwidth expansion to 10th/16th-order `Q12` LPC coefficients (`silk/lsf.rs`, `silk/lpc.rs`, [Section 4.2.7.5.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.3) - [Section 4.2.7.5.8](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.8), [RFC 8251 Section 8](https://datatracker.ietf.org/doc/html/rfc8251#section-8))
+11. Short-term LPC IIR synthesis and `Q16` subframe gain scaling to `i16` (`silk/synthesis.rs`, `silk/lpc.rs`, [Section 4.2.7.9](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9); or non-normative PLC/CNG in `silk/plc.rs`, [Section 4.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.4))
+12. Mid-Side to Left-Right unmixed stereo or mono signal (`silk/synthesis.rs`, [Section 4.2.8](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8))
+13. Polyphase IIR/FIR resampled output at `8, 12, 16, 24, or 48 kHz` (`silk/resampler.rs`, [Section 4.2.9](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9))
 
 ---
 
@@ -318,46 +335,45 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
 13. Overlap-added signal (`120`-sample low-overlap Vorbis-derived window)
 14. Comb-filtered and de-emphasized 48 kHz output PCM (`celt/decoder.rs`)
 
-### CELT Processing Pipeline (`celt/*`)
+### CELT Submodule Pipeline (`celt/*`)
 
 ```text
-  [Range Decoder (entropy.rs)]
-               |
-               +---> 1. Frame Header & Transient/Post-Filter Flags (celt/decoder.rs, Section 4.3.1)
-               |        - Silence flag, post-filter pitch period (15..1024), gain, and tapset (0..=2)
-               |        - Transient flag (short_blocks = 2^LM vs 1 long block) & intra-energy flag
-               |
-               +---> 2. Coarse Energy Unquantization (celt/energy.rs, Section 4.3.2.1)
-               |        - 2D separable IIR prediction across time (alpha) and band (beta)
-               |        - Laplace-coded energy residuals in 6 dB (DB6) Q10 log-energy units
-               |
-               +---> 3. TF Resolution, Spread, Trim & Dynamic Bit Allocation (celt/rate.rs, Section 4.3.3)
-               |        - Per-band time-frequency (TF) resolution selection (Section 4.3.3.1)
-               |        - Spread mode (None, Light, Normal, Aggressive) & dynamic caps
-               |        - clt_compute_allocation -> per-band PVQ pulse bits, fine_quant, fine_priority
-               |
-               +---> 4. Fine Energy Unquantization (celt/energy.rs, Section 4.3.2.2)
-               |        - Reads fine_quant[i] backward raw bits per band to refine Q10 log-energies
-               |
-               +---> 5. Algebraic PVQ Shape Decoding & Stereo Unmixing (celt/cwrs.rs, celt/vq.rs, Section 4.3.4)
-               |        - decode_pulses (CWRS index in [0, V(N, K))) -> K signed integer pulses
-               |        - Haar1 spreading rotations (exp_rotation) & intra/inter spectral folding
-               |        - Mid-Side theta unmixing, dual stereo, intensity stereo & anti-collapse noise
-               |
-               +---> 6. Leftover Energy Finalization & Denormalization (celt/energy.rs, Section 4.3.2.2)
-                        - Consumes remaining bit budget on priority fine-energy bits
-                        - Scales unit-norm band shapes by 2^energy linear amplitudes
-                                      |
-                                      v
-  [Inverse MDCT & 120-Sample Window Overlap-Add (celt/mdct.rs, Section 4.3.5)]
-  (Single long IMDCT of length N = 120 << LM or B = 2^LM short 120-sample IMDCTs)
-                                      |
-                                      v
-  [5-Tap Pitch Comb Post-Filter & De-Emphasis H(z) = 1 / (1 - 0.85 z^-1) (Section 4.3.6)]
-                                      |
-                                      v
-  [CELT Pitch-Correlation PLC History Update (celt/decoder.rs, Section 4.3.7)]
+        +---------+    +------------+    +------------+    +------------+
+     -->|  Range  |--->|  Header &  |--->|   Coarse   |--->|TF, Spread &|
+      1 | Decoder | 2  | PostFilter | 3  |   Energy   | 4  | Allocation |
+        +---------+    +------------+    +------------+    +------------+
+             |               |                 |                 |
+             +---------------+-----------------+-----------------+
+             |               |                 |
+           5 |             6 |               7 |
+             \/              \/                \/
+        +---------+    +------------+    +------------+
+        |  Fine   |--->| PVQ Shape  |--->|  Leftover  |
+        | Energy  | 8  |   & CWRS   | 9  |   Energy   |
+        +---------+    +------------+    +------------+
+                             |                 |
+                             +--------+--------+
+                                      | 10
+                                      \/
+        +---------+    +------------+    +------------+
+     <--|PostFilt |<---| Inverse    |<---|Denormalize |
+     13 |& De-Emph| 12 | MDCT & WOLA| 11 |   Bands    |
+        +---------+    +------------+    +------------+
 ```
+
+1. Dual-ended range decoder and backward raw-bit reader (`entropy::Decoder<'a>`)
+2. Silence flag, pitch post-filter period (`15..1024`), gain, tapset (`0..=2`), transient flag (`short_blocks = 2^LM`), and intra-energy flag (`celt/decoder.rs`, `celt/postfilter.rs`, [Section 4.3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.1))
+3. 2D separable IIR coarse energy prediction (`alpha`, `beta`) and Laplace-coded `6 dB` (`Q10`) energy residuals (`celt/energy.rs`, [Section 4.3.2.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.1))
+4. Per-band time-frequency resolution, spreading mode, allocation trim, and dynamic pulse/fine-energy bit allocation (`celt/rate.rs`, [Section 4.3.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3))
+5. Backward raw bits (`fine_quant[i]` per band) refining `Q10` band log-energies (`celt/energy.rs`, [Section 4.3.2.2](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2))
+6. Algebraic PVQ CWRS codeword indices (`[0, V(N, K))`), pulse signs, Haar1 spreading rotations, spectral folding, Mid-Side/dual/intensity stereo unmixing, and anti-collapse noise (`celt/cwrs.rs`, `celt/vq.rs`, [Section 4.3.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4), [RFC 8251 Section 10](https://datatracker.ietf.org/doc/html/rfc8251#section-10))
+7. Remaining bit budget consumed on priority fine-energy bits (`fine_priority[i]`, `celt/energy.rs`, [Section 4.3.2.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.3))
+8. Refined `Q10` band log-energies passed to shape folding and leftover refinement
+9. Unit-norm (`||X||_2 = 1`) unmixed band shape vectors (`celt/vq.rs`)
+10. Combined coarse, fine, and leftover linear band amplitudes (`2^energy`) paired with unit-norm shapes
+11. Denormalized MDCT frequency coefficients scaled by band amplitudes (`celt/synthesis.rs`, [Section 4.3.6](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.6))
+12. Mixed-radix FFT inverse MDCT (`1` long block of `N = 120 * 2^LM` or `2^LM` short `120`-sample blocks) and `120`-sample low-overlap window overlap-add (`celt/fft.rs`, `celt/mdct.rs`, [Section 4.3.7](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7))
+13. 5-tap pitch comb post-filter, de-emphasis `H(z) = 1 / (1 - 0.85 * z^-1)`, optional decimation, and LPC/pitch PLC history update (`celt/postfilter.rs`, `celt/synthesis.rs`, `celt/plc.rs`, [Section 4.3.7.1](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7.1) - [Section 4.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.4), [RFC 8251 Section 6](https://datatracker.ietf.org/doc/html/rfc8251#section-6))
 
 ---
 
@@ -368,20 +384,24 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
 In Hybrid mode (TOC configurations `12..=15`, Super-Wideband 24 kHz or Fullband 48 kHz, 10 ms or 20 ms frames), both decoders share the **exact same `entropy::Decoder<'a>`** instance over a single frame byte slice:
 
 ```text
-  Shared Frame Byte Slice & entropy::Decoder<'a>
-  +-----------------------------------+-----------------------------------+
-  | 1. SILK Layer (0..8 kHz WB)       | 2. CELT Layer (8..20 kHz, B17..21)|
-  | - Decodes VAD/LBRR, gains, NLSF,  | - Starts at current range coder   |
-  |   LTP, LPC, shell excitation      |   state with start_band = 17      |
-  | - Resamples 16 kHz -> Fs          | - Decodes coarse/fine energy,     |
-  | - Delayed by Fs / 250 samples     |   PVQ shape, IMDCT for bands 17+  |
-  +-----------------------------------+-----------------------------------+
-                   |                                     |
-                   +------------------+------------------+
-                                      |
-                                      v
-                    out_pcm[i] = silk_pcm[i] + celt_pcm[i]
+                             +------------+    +------------+
+                          1  |    SILK    |    |Resample 16k| 2
+                          +->|  Decoder   |--->|  & Delay   |----+
+        +------------+    |  | (0..8 kHz) |    | (Fs / 250) |    |
+     -->|   Shared   |----+  +------------+    +------------+    \/
+        |   Range    |                                          /---\
+        |  Decoder   |----+  +------------+    +------------+   | + |-->
+        +------------+    |  |    CELT    |    | Decimation |   \---/ 5
+                          +->|  Decoder   |--->| (Optional) |    ^
+                          3  |(Bands 17+) |    |            |----+
+                             +------------+    +------------+ 4
 ```
+
+1. Forward range-coded SILK wideband (`0..8 kHz`) parameters and shell excitation (`silk::Decoder::decode_silk_frame`)
+2. SILK output resampled from `16 kHz` to `Fs` and delayed by `Fs / 250` samples to align with CELT windowing ([RFC 6716 Section 4.2.9](https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9))
+3. Same `entropy::Decoder<'a>` continuing at the exact range state after SILK, plus backward raw bits from the end of the frame, with `start_band = 17` (`8..12 kHz` SWB or `8..20 kHz` FB, `celt::Decoder::decode_celt_frame`)
+4. High-band CELT synthesis (`48 kHz` decimated to `Fs` when `Fs < 48 kHz`)
+5. Summed full-bandwidth hybrid output (`out[i] = silk[i] + celt[i]`)
 
 ### Seamless Mode Transitions & 5 ms Redundant CELT Frames ([RFC 6716 Section 4.4](https://datatracker.ietf.org/doc/html/rfc6716#section-4.4), [Section 4.5](https://datatracker.ietf.org/doc/html/rfc6716#section-4.5))
 
@@ -392,24 +412,38 @@ In Hybrid mode (TOC configurations `12..=15`, Super-Wideband 24 kHz or Fullband 
 ### Ogg Opus Multi-Stream Surround Decoding ([RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1))
 
 ```text
-  Multi-Stream Opus Packet (RFC 6716 Appendix B & RFC 7845 Section 5.1.1):
-  +---------------------------+---------------------------+-----------------------+
-  | Stream 0 (Self-Delimited) | Stream 1 (Self-Delimited) | Stream N-1 (Standard) |
-  +---------------------------+---------------------------+-----------------------+
-                |                           |                         |
-                v                           v                         v
-      StreamDecoder[0]            StreamDecoder[1]          StreamDecoder[N-1]
-     (Coupled Stereo: 2ch)       (Coupled Stereo: 2ch)      (Uncoupled Mono: 1ch)
-                |                           |                         |
-                +---------------------------+-------------------------+
-                                            |
-                                            v
-                    Channel Mapping Table (Family 0 RTP / Family 1 Vorbis)
-                    + Q7.8 dB Output Gain Scaling (10^(gain / (20 * 256)))
-                                            |
-                                            v
-                              Output AudioBuffer<f32>
+        +--------------+--------------+--------------+
+        |   Stream 0   |   Stream 1   |  Stream N-1  |
+        |(Self-Delim.) |(Self-Delim.) |  (Standard)  |
+        +--------------+--------------+--------------+
+               |              |              |
+             1 |            2 |            3 |
+               \/             \/             \/
+        +--------------+--------------+--------------+
+        |StreamDecoder |StreamDecoder |StreamDecoder |
+        | (Coupled 2ch)| (Coupled 2ch)|(Uncoupled 1c)|
+        +--------------+--------------+--------------+
+               |              |              |
+               +--------------+--------------+
+                              | 4
+                              \/
+                       +--------------+
+                       |Channel Mapper|
+                       | & Q7.8 Gain  |
+                       +--------------+
+                              | 5
+                              \/
+                       +--------------+
+                       | AudioBuffer  |
+                       |    <f32>     |
+                       +--------------+
 ```
+
+1. Self-delimited packet for coupled stream `0` (`packet::parse_packet(..., true)`, [RFC 6716 Appendix B](https://datatracker.ietf.org/doc/html/rfc6716#appendix-B))
+2. Self-delimited packet for coupled stream `1..M-1` (`2` channels each)
+3. Standard undelimited packet for final stream `N-1` (`packet::parse_packet(..., false)`, `1` channel when `N > M`)
+4. Decoded planar channels (`2 * M + (N - M)` internal stream channels)
+5. Output channels routed via `channel_mapping[0..C]` (`0..254` -> decoded channel, `255` -> silence) and scaled by `10^(output_gain / (20 * 256))` ([RFC 7845 Section 5.1.1](https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1))
 
 ---
 
@@ -422,41 +456,41 @@ The normative source of truth for Opus is [RFC 6716](https://datatracker.ietf.or
 For each of the **120 test runs** (`12 vectors x 5 sample rates [8, 12, 16, 24, 48 kHz] x 2 layouts [mono, stereo]`), `tests/rfc6716_conformance.rs` executes three independent verification checks on the decoded stream:
 
 ```text
-  testvector01..12.bit (RFC 8251 Section 11)
-  +------------------------+------------------------+------------------------+
-  | Payload Length (4B BE) | enc_final_range (4B BE)| Opus Packet Payload    |
-  +------------------------+------------------------+------------------------+
-                                       |
-                                       v
-                     +-----------------------------------+
-                     | OpusDecoder::decode_ref(&packet)  |
-                     | (8, 12, 16, 24, or 48 kHz, 1/2ch) |
-                     +-----------------------------------+
-                        |                             |
-       1. Per-Packet    |                             |  f32 * 32768.0 -> i16
-          Range Check   v                             v  (round_ties_even / lrintf)
-  +-----------------------------------+   +-----------------------------------+
-  | decoder.final_range()             |   | Decoded 16-bit PCM Stream         |
-  |   == enc_final_range              |   +-----------------------------------+
-  | (Must match on 100% of checked    |          |                     |
-  |  packets; 0 bit/branch tolerance) |          | 2. Spectral Check   | 3. Sample Check
-  +-----------------------------------+          v                     v
-                                  +--------------------+   +-----------------------+
-                                  | opus_compare       |   | Sample-by-Sample Diff |
-                                  | (21 Bark bands vs  |   | vs Reference C        |
-                                  |  48 kHz .dec/m.dec)|   | opus_demo -d          |
-                                  | Pass: Q >= 0.0     |   | SILK: 0 LSB (exact)   |
-                                  | 48k:  Q = 96..100  |   | CELT: <= 1 LSB (f32)  |
-                                  +--------------------+   +-----------------------+
+        +--------------+--------------+--------------+
+        |Payload Length|enc_final_rng | Opus Packet  |
+        |   (4B BE)    |   (4B BE)    |   Payload    |
+        +--------------+--------------+--------------+
+                              |              |
+                              |            1 |
+                              |              \/
+                              |       +--------------+
+                              |       | OpusDecoder  |
+                              |       | decode_ref() |
+                              |       +--------------+
+                              |          |        |
+                            2 |        3 |      4 |
+                              \/         \/       \/
+                       +-------------------+ +--------------+
+                       |   final_range()   | |  round_ties  |
+                       | == enc_final_rng  | |  _even (i16) |
+                       +-------------------+ +--------------+
+                                                |        |
+                                              5 |      6 |
+                                                \/       \/
+                                       +--------------+ +--------------+
+                                       | opus_compare | |  opus_demo   |
+                                       | (.dec/m.dec) | | Sample Diff  |
+                                       +--------------+ +--------------+
 ```
 
-1. **Per-Packet Range Coder Verification (`final_range`)**:
-   Every `.bit` record carries the 32-bit range coder window size (`rng`) recorded by the reference encoder after encoding that packet. After decoding each packet, `decoder.final_range()` must equal `enc_final_range` bit-for-bit. Because the range decoder state depends on every symbol, raw bit, and bit-allocation decision in both SILK and CELT, even a 1-bit parsing bug or wrong branch immediately desynchronizes `final_range`.
-2. **Psychoacoustic Spectral Comparison (`opus_compare` against `.dec` and `m.dec`)**:
-   - The decoded `f32` audio is scaled by `32768.0`, clamped to `[-32768, 32767]`, and rounded to nearest-even (`round_ties_even`, matching C `lrintf` in `opus_demo`).
+1. **Packet Framing (`testvector01..12.bit`, [RFC 8251 Section 11](https://datatracker.ietf.org/doc/html/rfc8251#section-11))**: Each `.bit` record provides a 4-byte big-endian payload length, a 4-byte big-endian reference range coder window (`enc_final_rng`), and the raw Opus packet bytes passed to `OpusDecoder::decode_ref`.
+2. **Expected Range Window (`enc_final_rng`)**: The 32-bit range coder window size (`rng`) recorded by the reference encoder after encoding that packet.
+3. **Per-Packet Range Coder Check (`final_range`)**: After decoding each packet, `decoder.final_range()` must equal `enc_final_rng` bit-for-bit on `100%` of checked packets. Because the range decoder state depends on every symbol, raw bit, and bit-allocation decision in both SILK and CELT, even a 1-bit parsing bug or wrong branch immediately desynchronizes `final_range`.
+4. **16-Bit PCM Quantization (`round_ties_even`)**: The decoded `f32` audio is scaled by `32768.0`, clamped to `[-32768, 32767]`, and rounded to nearest-even (`round_ties_even`, matching C `lrintf` in `opus_demo`).
+5. **Psychoacoustic Spectral Comparison (`opus_compare` against `.dec` and `m.dec`)**:
    - `opus_compare` ([RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1)) windows both the 48 kHz reference (`.dec` or `m.dec`) and the decoded signal (using a `480 / downsample`-sample Hann window and `120 / downsample` hop so 100 Hz DFT bins align across sample rates), applies frequency, temporal, and stereo cross-talk masking across 21 Bark-derived bands (skipping transition bins near Nyquist at reduced rates and attenuating the 8 kHz SILK/CELT crossover bin), and maps the 16th-root weighted spectral error `err` to quality `Q = 100 * (1 - 0.5 * ln(1 + err) / ln(1.13))`.
    - `testvectorNN.dec` carries the CELT 180-degree intensity-stereo phase shift (matched by stereo output), while `testvectorNNm.dec` omits the 180-degree phase shift ([RFC 8251 Section 10](https://datatracker.ietf.org/doc/html/rfc8251#section-10), matched by mono output so phase-inverted bands do not cancel during downmixing).
-3. **Sample-by-Sample Calibration Against `opus_demo -d`**:
+6. **Sample-by-Sample Calibration Against `opus_demo -d`**:
    Every decoded 16-bit PCM sample is compared directly against the output of the patched RFC 6716 Appendix A C reference binary (`opus_demo -d <rate> <channels>`), verifying that the fixed-point SILK pipeline is `100.00%` bit-exact (`0` LSB difference) and the floating-point CELT/Hybrid pipeline stays within `1` LSB of `f32` rounding.
 
 ### 8.2 Calibration Figures Across All 12 RFC Test Vectors & 5 Sample Rates
