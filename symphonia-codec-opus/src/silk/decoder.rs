@@ -649,6 +649,38 @@ mod tests {
         assert!(!decoder.begin_frame(false, true));
     }
 
+    /// Resetting the decoder after a stereo frame clears the stereo unmixing memory and the
+    /// mid-only flag ([RFC 8251 Section 3](<https://datatracker.ietf.org/doc/html/rfc8251#section-3>)),
+    /// so the next packet decodes identically to a fresh decoder.
+    #[test]
+    fn reset_clears_stereo_state_for_the_next_packet() {
+        let stereo_0 = &crate::test_vectors::STEREO_MB.packets[0].packet[1..];
+        let stereo_1 = &crate::test_vectors::STEREO_MB.packets[1].packet[1..];
+        let mut out_reset = [[0.0_f32; 960]; 2];
+        let mut out_fresh = [[0.0_f32; 960]; 2];
+
+        let mut reset_decoder =
+            create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        let mut dec_0 = entropy::Decoder::new(stereo_0);
+        reset_decoder
+            .decode_frame_planar(&mut dec_0, true, Planes::from_rows(&mut out_reset, true))
+            .unwrap();
+        reset_decoder.reset();
+        let mut dec_1 = entropy::Decoder::new(stereo_1);
+        reset_decoder
+            .decode_frame_planar(&mut dec_1, true, Planes::from_rows(&mut out_reset, true))
+            .unwrap();
+
+        let mut fresh_decoder =
+            create_test_silk_decoder(true, FrameDuration::Ms20, Bandwidth::MediumBand);
+        let mut dec_fresh = entropy::Decoder::new(stereo_1);
+        fresh_decoder
+            .decode_frame_planar(&mut dec_fresh, true, Planes::from_rows(&mut out_fresh, true))
+            .unwrap();
+
+        assert_eq!(out_reset, out_fresh);
+    }
+
     #[test]
     fn wideband_voiced_packet_decodes_to_recorded_values() {
         // A 20 ms wideband mono voiced SILK frame (TOC = 0x48) encoded from a 200 Hz harmonic

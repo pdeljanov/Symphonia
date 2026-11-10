@@ -186,4 +186,28 @@ mod tests {
         assert!(freq[120..].iter().all(|&v| v == 0.0));
         return;
     }
+
+    /// A band log energy above `32` is clamped before exponentiation so the linear gain stays
+    /// finite at `2^32` ([RFC 8251 Section 8](<https://datatracker.ietf.org/doc/html/rfc8251#section-8>)).
+    #[test]
+    fn denormalise_bands_caps_log_energy_at_32() {
+        let norm_x = [1.0_f32; 120];
+        let mut freq = [0.0_f32; 120];
+        let mut band_log_e = [0.0_f32; MAX_BANDS];
+        band_log_e[0] = 200.0;
+
+        let layout = Denormalisation {
+            start: 0,
+            end: 1,
+            lm: BlockSize::new(0),
+            downsample: 1,
+            silence: false,
+        };
+        denormalise_bands(&norm_x, &mut freq, &band_log_e, &layout);
+
+        let expected_cap_gain = (std::f32::consts::LN_2 * 32.0).exp();
+        assert!(freq[0].is_finite());
+        assert_eq!(freq[0].to_bits(), expected_cap_gain.to_bits());
+        return;
+    }
 }
