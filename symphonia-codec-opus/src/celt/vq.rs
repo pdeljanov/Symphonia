@@ -1069,7 +1069,8 @@ fn decode_mid_side_stereo(
 }
 
 /// Decodes a coupled stereo Bark band (`x` and `y`) using mid/side or intensity
-/// stereo splitting ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
+/// stereo splitting ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>),
+/// [RFC 8251 Section 10](<https://datatracker.ietf.org/doc/html/rfc8251#section-10>)).
 fn quant_band_stereo(
     ctx: &mut BandDecoderCtx,
     dec: &mut Decoder<'_>,
@@ -1077,6 +1078,7 @@ fn quant_band_stereo(
     y: &mut [f32],
     lowband: Lowband<'_>,
     part: Partition,
+    phase_inversion: bool,
 ) -> Result<u32> {
     let Partition { n, blocks, lm, bits, fill, .. } = part;
     if n == 1 {
@@ -1096,14 +1098,15 @@ fn quant_band_stereo(
         }
     };
 
-    if split.invert_side {
+    if split.invert_side && phase_inversion {
         y[..n].iter_mut().for_each(|vy| *vy = -*vy);
     }
     return Ok(cm);
 }
 
 /// Frame-wide inputs of the band shape decoding shared by every band
-/// ([RFC 6716 Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>)).
+/// ([RFC 6716 Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>),
+/// [RFC 8251 Section 10](<https://datatracker.ietf.org/doc/html/rfc8251#section-10>)).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ShapeFrame {
     /// First coded Bark band.
@@ -1120,6 +1123,9 @@ pub(crate) struct ShapeFrame {
     pub(crate) tf_res: [i32; MAX_BANDS],
     /// Frame budget in eighth bits available to the shapes.
     pub(crate) total_bits: i32,
+    /// Whether the 180-degree phase shift of intensity stereo is applied to the side channel
+    /// ([RFC 8251 Section 10](<https://datatracker.ietf.org/doc/html/rfc8251#section-10>)).
+    pub(crate) phase_inversion: bool,
 }
 
 /// Normalised shapes of the bands decoded so far per channel: the folding source of the bands
@@ -1351,7 +1357,8 @@ impl<'a> BandSweep<'a> {
                 Ok((x_cm, y_cm))
             }
             (Some(y), false) => {
-                let cm = quant_band_stereo(ctx, dec, x, y, x_lowband, part)?;
+                let cm =
+                    quant_band_stereo(ctx, dec, x, y, x_lowband, part, self.frame.phase_inversion)?;
                 Ok((cm, cm))
             }
             (None, _) => {
@@ -1642,6 +1649,7 @@ mod tests {
             spread: Spread::Normal,
             tf_res,
             total_bits: 32 * 8 * 8,
+            phase_inversion: true,
         };
         let alloc = allocation(pulses, 12, 10, false);
 
@@ -1808,6 +1816,7 @@ mod tests {
             spread: Spread::Aggressive,
             tf_res,
             total_bits: 64 * 8 * 8,
+            phase_inversion: true,
         };
         let alloc = allocation(pulses, 21, 19, true);
 
@@ -1895,6 +1904,55 @@ mod tests {
                 "Hybrid B19 intensity Y mismatch at {i}: got {got}, expected {exp}"
             );
         }
+        return;
+    }
+
+    // RFC 8251 Section 10: a decoder downmixing to mono may skip the 180-degree phase shift of
+    // intensity stereo while still consuming the inversion bit from the range coder.
+    #[test]
+    fn intensity_stereo_phase_inversion_is_skipped_when_disabled() {
+        let buf = [0xFFu8; 16];
+        let mut pulses = [0i32; MAX_BANDS];
+        pulses[0] = 64;
+        let alloc = allocation(pulses, 1, 0, false);
+
+        let decode = |phase_inversion: bool| {
+            let frame = ShapeFrame {
+                start: 0,
+                end: 1,
+                lm: BlockSize::new(2),
+                blocks: 1,
+                spread: Spread::None,
+                tf_res: [0; MAX_BANDS],
+                total_bits: 16 * 8 * 8,
+                phase_inversion,
+            };
+            let mut dec = Decoder::new(&buf);
+            let mut x = [0.0_f32; 4];
+            let mut y = [0.0_f32; 4];
+            let mut cm = [0u8; 2 * MAX_BANDS];
+            let mut seed = 0u32;
+            unquantize_bands(
+                &frame,
+                &alloc,
+                &mut dec,
+                Planes::new(&mut x, Some(&mut y)),
+                &mut cm,
+                &mut seed,
+            )
+            .expect("intensity band decodes");
+            return (x, y, dec.tell_frac(), dec.final_range());
+        };
+
+        let (x_inv, y_inv, tell_inv, rng_inv) = decode(true);
+        let (x_no_inv, y_no_inv, tell_no_inv, rng_no_inv) = decode(false);
+
+        assert_eq!(tell_inv, tell_no_inv);
+        assert_eq!(rng_inv, rng_no_inv);
+        assert_eq!(x_inv, x_no_inv);
+        assert!(x_inv.iter().any(|&v| v != 0.0));
+        assert_eq!(y_inv, x_inv.map(|v| -v));
+        assert_eq!(y_no_inv, x_no_inv);
         return;
     }
 }

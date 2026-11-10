@@ -454,7 +454,8 @@ impl Decoder {
     /// energy refinement and the anti-collapse flag of a non-silent frame
     /// ([RFC 6716 Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>),
     /// [Section 4.3.2.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.2>),
-    /// [Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>)).
+    /// [Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>),
+    /// [RFC 8251 Section 10](<https://datatracker.ietf.org/doc/html/rfc8251#section-10>)).
     fn decode_shapes(
         &mut self,
         dec: &mut entropy::Decoder<'_>,
@@ -478,6 +479,7 @@ impl Decoder {
             spread: plan.spread,
             tf_res: plan.tf_res,
             total_bits: (total_bits << BITRES) - plan.anti_collapse_rsv,
+            phase_inversion: self.config.output_channels == 2,
         };
         unquantize_bands(
             &frame,
