@@ -480,7 +480,7 @@ pub(super) struct Partition {
     /// Number of short MDCT blocks the bins are interleaved over.
     pub(super) blocks: usize,
     /// Pulse-cache level (`LM`, decremented by one per split, down to `-1`).
-    pub(super) lm: CacheLevel,
+    pub(super) level: CacheLevel,
     /// Shape budget in eighth bits.
     pub(super) bits: i32,
     /// Per-block mask of the folding source blocks that carried energy.
@@ -544,11 +544,11 @@ fn decode_triangular_pdf(dec: &mut Decoder<'_>, qn: i32) -> i32 {
 fn decode_theta_symbol(
     dec: &mut Decoder<'_>,
     qn: i32,
-    n: usize,
-    b0: usize,
+    band_width: usize,
+    block_count: usize,
     kind: SplitKind,
 ) -> Result<i32> {
-    return match (kind, n > 2, b0 > 1) {
+    return match (kind, band_width > 2, block_count > 1) {
         (SplitKind::Stereo, true, _) => Ok(decode_step_pdf(dec, qn)),
         (SplitKind::Stereo, false, _) | (SplitKind::Partition, _, true) => {
             Ok(dec.decode_uint((qn + 1) as u32)? as i32)
@@ -557,31 +557,34 @@ fn decode_theta_symbol(
     };
 }
 
-/// Decodes the split angle `theta` of a vector of `n` bins with `bits` eighth bits at
-/// pulse-cache level `lm` in a band of `b0` short blocks
+/// Decodes the split angle `theta` of a vector of `band_width` bins with `bits` eighth bits at
+/// pulse-cache level `level` in a band of `block_count` short blocks
 /// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
 pub(super) fn decode_split_angle(
     ctx: &BandDecoderCtx,
     dec: &mut Decoder<'_>,
-    n: usize,
+    band_width: usize,
     bits: i32,
-    lm: CacheLevel,
-    b0: usize,
+    level: CacheLevel,
+    block_count: usize,
     kind: SplitKind,
 ) -> Result<SplitAngle> {
-    let pulse_cap = i32::from(LOGN[ctx.band]) + lm.exponent() * (1 << BITRES);
+    let pulse_cap = i32::from(LOGN[ctx.band]) + level.exponent() * (1 << BITRES);
     let offset = (pulse_cap >> 1)
-        - match (kind, n) {
+        - match (kind, band_width) {
             (SplitKind::Stereo, 2) => QTHETA_OFFSET_TWOPHASE,
             _ => QTHETA_OFFSET,
         };
     let intensity_coded = kind == SplitKind::Stereo && ctx.band >= ctx.intensity_band;
-    let qn = if intensity_coded { 1 } else { compute_qn(n, bits, offset, pulse_cap, kind) };
+    let qn =
+        if intensity_coded { 1 } else { compute_qn(band_width, bits, offset, pulse_cap, kind) };
 
     let tell = dec.tell_frac() as i32;
     let mut invert_side = false;
     let itheta = match (qn != 1, kind) {
-        (true, _) => (decode_theta_symbol(dec, qn, n, b0, kind)? * THETA_MAX_Q14) / qn,
+        (true, _) => {
+            (decode_theta_symbol(dec, qn, band_width, block_count, kind)? * THETA_MAX_Q14) / qn
+        }
         (false, SplitKind::Stereo) => {
             if bits > (2 << BITRES) && ctx.remaining_bits > (2 << BITRES) {
                 invert_side = dec.decode_symbol_logp(2)? != 0;
@@ -591,7 +594,7 @@ pub(super) fn decode_split_angle(
         (false, SplitKind::Partition) => 0,
     };
     let qalloc = (dec.tell_frac() as i32) - tell;
-    return Ok(SplitAngle::from_theta(itheta, n, invert_side, qalloc));
+    return Ok(SplitAngle::from_theta(itheta, band_width, invert_side, qalloc));
 }
 
 /// Decodes a single-bin (`n = 1`) mono or stereo band: one sign per channel
@@ -672,14 +675,19 @@ where
 /// Bit differential of a split in a short-block band (`b0 > 1`): extra bits go to the
 /// low-energy half to mitigate pre-echo and forward masking
 /// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
-fn short_block_delta(split: &SplitAngle, b0: usize, next_lm: CacheLevel, half_n: usize) -> i32 {
-    if b0 <= 1 || (split.itheta & THETA_INTERIOR_MASK_Q14) == 0 {
+fn short_block_delta(
+    split: &SplitAngle,
+    block_count: usize,
+    next_level: CacheLevel,
+    half_n: usize,
+) -> i32 {
+    if block_count <= 1 || (split.itheta & THETA_INTERIOR_MASK_Q14) == 0 {
         return split.delta;
     }
     if split.itheta > THETA_HALF_Q14 {
-        return split.delta - (split.delta >> (4 - next_lm.exponent()));
+        return split.delta - (split.delta >> (4 - next_level.exponent()));
     }
-    return 0.min(split.delta + (((half_n as i32) << BITRES) >> (5 - next_lm.exponent())));
+    return 0.min(split.delta + (((half_n as i32) << BITRES) >> (5 - next_level.exponent())));
 }
 
 /// Splits the partition `x` in two around a decoded angle and decodes both halves recursively
@@ -690,7 +698,7 @@ fn decode_split_partition(
     x: &mut [f32],
     lowband: Option<&[f32]>,
     part: Partition,
-    next_lm: CacheLevel,
+    next_level: CacheLevel,
 ) -> Result<u32> {
     let Partition { n, blocks: b0, mut bits, mut fill, gain, .. } = part;
     let half_n = n >> 1;
@@ -699,18 +707,18 @@ fn decode_split_partition(
     }
     let half_blocks = (b0 + 1) >> 1;
 
-    let split = decode_split_angle(ctx, dec, half_n, bits, next_lm, b0, SplitKind::Partition)?;
+    let split = decode_split_angle(ctx, dec, half_n, bits, next_level, b0, SplitKind::Partition)?;
     fill = split.restrict_fill(fill, half_blocks);
     bits -= split.qalloc;
     let (mid, side) = split.gains();
-    let delta = short_block_delta(&split, b0, next_lm, half_n);
+    let delta = short_block_delta(&split, b0, next_level, half_n);
     let mbits = 0.max(bits.min((bits - delta) / 2));
     let sbits = bits - mbits;
     ctx.remaining_bits -= split.qalloc;
 
     let (x_first, x_second) = x[..n].split_at_mut(half_n);
     let (lb_first, lb_second) = lowband.map(|lb| lb[..n].split_at(half_n)).unzip();
-    let half = Partition { n: half_n, blocks: half_blocks, lm: next_lm, ..part };
+    let half = Partition { n: half_n, blocks: half_blocks, level: next_level, ..part };
     let first = Half {
         x: x_first,
         lowband: Lowband { source: lb_first, out: None },
@@ -738,14 +746,14 @@ fn decode_split_partition(
 /// Maps the budget `bits` of a leaf partition at level `lm` to a pseudo-pulse index through the
 /// pulse cache, lowering it while the frame budget is overrun
 /// ([RFC 6716 Section 4.3.4.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.1>)).
-fn select_pulse_index(ctx: &mut BandDecoderCtx, lm: CacheLevel, bits: i32) -> i32 {
-    let mut q = bits2pulses_at_level(lm, ctx.band, bits);
-    let mut curr_bits = pulses2bits_at_level(lm, ctx.band, q);
+fn select_pulse_index(ctx: &mut BandDecoderCtx, level: CacheLevel, bits: i32) -> i32 {
+    let mut q = bits2pulses_at_level(level, ctx.band, bits);
+    let mut curr_bits = pulses2bits_at_level(level, ctx.band, q);
     ctx.remaining_bits -= curr_bits;
     while ctx.remaining_bits < 0 && q > 0 {
         ctx.remaining_bits += curr_bits;
         q -= 1;
-        curr_bits = pulses2bits_at_level(lm, ctx.band, q);
+        curr_bits = pulses2bits_at_level(level, ctx.band, q);
         ctx.remaining_bits -= curr_bits;
     }
     return q;
@@ -795,15 +803,15 @@ fn quant_partition(
     lowband: Option<&[f32]>,
     part: Partition,
 ) -> Result<u32> {
-    let Partition { n, blocks, lm, bits, gain, .. } = part;
+    let Partition { n, blocks, level, bits, gain, .. } = part;
     // The lowest level is never split; checking it first also keeps the cache lookup in range.
     let split_level =
-        lm.split().filter(|_| bits > max_cache_bits(lm, ctx.band) + SPLIT_MARGIN_Q3 && n > 2);
-    if let Some(next_lm) = split_level {
-        return decode_split_partition(ctx, dec, x, lowband, part, next_lm);
+        level.split().filter(|_| bits > max_cache_bits(level, ctx.band) + SPLIT_MARGIN_Q3 && n > 2);
+    if let Some(next_level) = split_level {
+        return decode_split_partition(ctx, dec, x, lowband, part, next_level);
     }
 
-    let q = select_pulse_index(ctx, lm, bits);
+    let q = select_pulse_index(ctx, level, bits);
     if q != 0 {
         return pvq_unquantize(&mut x[..n], get_pulses(q as usize), ctx.spread, blocks, dec, gain);
     }

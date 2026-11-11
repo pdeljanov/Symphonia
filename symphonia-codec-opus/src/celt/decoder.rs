@@ -24,6 +24,8 @@
 //! ([`CombFilter`]), the concealment state ([`PlcState`]) and the synthesis memory
 //! ([`SynthesisMemory`]).
 
+use std::ops::Range;
+
 use symphonia_core::errors::{Error as SymphoniaError, Result};
 
 use crate::celt::bands::{ShapeFrame, anti_collapse, unquantize_bands};
@@ -517,7 +519,7 @@ impl Decoder {
         if self.synthesis.prefilter_and_fold_next {
             self.postfilter.prefilter_and_fold(&mut self.synthesis.decode_mem[..cc], n);
         }
-        let bands = (start_band, end_band.min(MAX_BANDS));
+        let bands = start_band..end_band.min(MAX_BANDS);
         self.synthesize_mdct(&x_norm[..(c * n)], lm, c, bands, header.is_transient, header.silence);
 
         self.postfilter.apply(&mut self.synthesis.decode_mem[..cc], n, lm, header.postfilter);
@@ -564,7 +566,7 @@ impl Decoder {
 
         let mut x_norm = [0.0_f32; MAX_CHANNELS * MAX_FRAME_SIZE];
         self.rng = fill_noise_spectrum(&mut x_norm, cc, n, (start, eff_end), lm, self.rng);
-        self.synthesize_mdct(&x_norm[..(cc * n)], lm, cc, (start, eff_end), false, false);
+        self.synthesize_mdct(&x_norm[..(cc * n)], lm, cc, start..eff_end, false, false);
 
         let held = self.postfilter.held();
         self.postfilter.apply(&mut self.synthesis.decode_mem[..cc], n, lm, held);
@@ -599,15 +601,20 @@ impl Decoder {
         &mut self,
         x_norm: &[f32],
         lm: BlockSize,
-        c: usize,
-        (start, end): (usize, usize),
+        coded_channels: usize,
+        bands: Range<usize>,
         is_transient: bool,
         silence: bool,
     ) {
         let n = lm.frame_samples();
         let out_offset = DECODE_BUFFER_SIZE - n;
-        let layout =
-            Denormalisation { start, end, lm, downsample: self.config.downsample, silence };
+        let layout = Denormalisation {
+            start: bands.start,
+            end: bands.end,
+            lm,
+            downsample: self.config.downsample,
+            silence,
+        };
         let band_e = &self.energy.current;
         let denormalise = |ch: usize, freq: &mut [f32]| {
             let x = &x_norm[(ch * n)..((ch + 1) * n)];
@@ -615,7 +622,7 @@ impl Decoder {
         };
         let mut freq = [[0.0_f32; MAX_FRAME_SIZE]; MAX_CHANNELS];
 
-        let channels = match (self.config.output_channels, c) {
+        let channels = match (self.config.output_channels, coded_channels) {
             (2, 1) => {
                 denormalise(0, &mut freq[0][..n]);
                 freq[1] = freq[0];
