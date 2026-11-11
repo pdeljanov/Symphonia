@@ -44,8 +44,9 @@ Prefer deterministic bitstream and DSP transformations with explicit inputs and 
 
 All code in `symphonia-codec-opus/` must preserve the readability, transparency, and idiomatic Rust style established in `toc.rs`, `header.rs`, and `packet.rs`:
 
-- **Zero `else if` Chains (`match`-First Control Flow)**:
+- **Zero `else if` Chains and No Block `if / else` (`match`-First Control Flow)**:
   - Never use `else if` anywhere in `symphonia-codec-opus/src/` (`rg "else if" symphonia-codec-opus/src/` must return `0` matches).
+  - Never write a block `if cond { ... } else { ... }`, as a statement or as a multi-line expression, anywhere in `symphonia-codec-opus/src/` (`rg -n '^\s*\} else \{$' symphonia-codec-opus/src/` must return `0` matches). Use an early guard return, a `match` on the condition (`match cond { true => .., false => .. }`) or on the discriminant itself (`match signal_type`, `match count { 0 => .., _ => .. }`), or an `Option`/`bool` combinator (`slice.get(i).map_or(..)`, `cond.then(..).transpose()?`). The only permitted `else` is the single-line form `let x = if cond { a } else { b };` with a plain expression in each branch.
   - Replace multi-branch conditionals with exhaustive `match` expressions (`match a.cmp(&b)` with `std::cmp::Ordering`, tuple patterns `match (mode, bandwidth)`, or `match` guards) and early guard clauses (`if !active { return; }`) to avoid deep nesting.
   - Use concise one-line standard library arithmetic methods such as `value.checked_shr(shift).unwrap_or(0)` instead of multi-line shift-guard `if / else` blocks.
 - **Functional Array & Slice Transformations**:
@@ -196,14 +197,16 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 
 ### 5.3 Mandatory verification gate
 
-Before reporting any Rust change complete or closing an issue, execute and pass all three checks:
+Before reporting any Rust change complete or closing an issue, execute and pass all four checks:
 
 ```bash
+rg -n "else if|\bix\b|\w*idx\w*|^\s*\} else \{$" symphonia-codec-opus/src/
 cargo test -p symphonia-codec-opus -- --test-threads=1
 cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
 cargo doc -p symphonia-codec-opus --no-deps --document-private-items
 ```
 
+- `rg` must report `0` matches: no `else if`, no `ix` or `idx` identifiers, and no block `if / else` (a line consisting of `} else {`).
 - All unit, integration, and doc tests must pass (`0 failed`).
 - `cargo clippy` must report zero warnings for this crate (`--no-deps` scopes the lints to it; `-D warnings` fails the gate on any).
 - `cargo doc -p symphonia-codec-opus --no-deps --document-private-items` must complete with `0 warnings`; the crate's modules are private, so the flag is what checks their intra-doc links.

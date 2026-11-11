@@ -87,10 +87,9 @@ impl CngState {
 
     /// Resets the comfort noise state (RFC 6716 Section 4.4).
     pub(crate) fn reset(&mut self) {
-        let lpc_order = if self.sample_rate_khz == 8 || self.sample_rate_khz == 12 {
-            10
-        } else {
-            MAX_LPC_ORDER
+        let lpc_order = match self.sample_rate_khz {
+            8 | 12 => 10,
+            _ => MAX_LPC_ORDER,
         };
         *self = Self::new();
         self.reset_for_lpc_order(lpc_order);
@@ -199,16 +198,17 @@ impl CngState {
         let use_unscaled_int_sq = plc_gain_q16 >= CNG_HIGH_PLC_GAIN_THRES_Q16
             || self.cng_smth_gain_q16 > CNG_HIGH_SMTH_GAIN_THRES_Q16;
 
-        let (plc_gain_sq, smth_gain_sq, sqrt_to_q16_shift) = if use_unscaled_int_sq {
-            let plc_int = plc_gain_q16 >> Q16_SHIFT;
-            let smth_int = self.cng_smth_gain_q16 >> Q16_SHIFT;
-            (plc_int * plc_int, smth_int * smth_int, Q16_SHIFT)
-        } else {
-            (
+        let (plc_gain_sq, smth_gain_sq, sqrt_to_q16_shift) = match use_unscaled_int_sq {
+            true => {
+                let plc_int = plc_gain_q16 >> Q16_SHIFT;
+                let smth_int = self.cng_smth_gain_q16 >> Q16_SHIFT;
+                (plc_int * plc_int, smth_int * smth_int, Q16_SHIFT)
+            }
+            false => (
                 mul_q16(plc_gain_q16, plc_gain_q16),
                 mul_q16(self.cng_smth_gain_q16, self.cng_smth_gain_q16),
                 Q8_SHIFT,
-            )
+            ),
         };
 
         let diff =
@@ -291,10 +291,9 @@ impl CngState {
             );
         }
 
-        if plc_state.loss_count > 0 {
-            self.generate_comfort_noise(plc_state, order, frame_pcm)?;
-        } else {
-            self.cng_synth_state[..order].fill(0);
+        match plc_state.loss_count {
+            0 => self.cng_synth_state[..order].fill(0),
+            _ => self.generate_comfort_noise(plc_state, order, frame_pcm)?,
         }
 
         return Ok(());

@@ -2514,13 +2514,12 @@ mod tests {
 
         let mut prev = 0u32;
         for (i, &cum) in icdf.iter().enumerate().skip(1) {
-            if allow_trailing_zero_pdf && i == icdf.len() - 1 {
-                assert!(cum >= prev, "{name}[{i}]: cumulative value decreased");
-            } else {
-                assert!(
+            match allow_trailing_zero_pdf && i == icdf.len() - 1 {
+                true => assert!(cum >= prev, "{name}[{i}]: cumulative value decreased"),
+                false => assert!(
                     cum > prev,
                     "{name}[{i}]: cumulative probability must strictly increase ({prev} -> {cum})"
-                );
+                ),
             }
             prev = cum;
         }

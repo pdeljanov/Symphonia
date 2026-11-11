@@ -336,15 +336,19 @@ impl PlcState {
 
         let signal_type = frame.frame_type.signal_type;
 
-        if signal_type == SignalType::Voiced {
-            self.select_voiced_pitch_and_ltp_gain(frame, subfr_length, nb_subfr);
-            self.ltp_scale_q14 = frame.ltp_scale_q14;
-            ch_state.prev_pitch_lag = frame.subframes[nb_subfr - 1].pitch_lag as i32;
-        } else {
-            self.pitch_l_q8 = ((sample_rate_khz as i32) * MAX_PITCH_LAG_MS) << PITCH_LAG_Q8_SHIFT;
-            self.ltp_coef_q14 = [0; LTP_ORDER];
-            self.ltp_scale_q14 = 0;
-            ch_state.prev_pitch_lag = 0;
+        match signal_type {
+            SignalType::Voiced => {
+                self.select_voiced_pitch_and_ltp_gain(frame, subfr_length, nb_subfr);
+                self.ltp_scale_q14 = frame.ltp_scale_q14;
+                ch_state.prev_pitch_lag = frame.subframes[nb_subfr - 1].pitch_lag as i32;
+            }
+            SignalType::Inactive | SignalType::Unvoiced => {
+                self.pitch_l_q8 =
+                    ((sample_rate_khz as i32) * MAX_PITCH_LAG_MS) << PITCH_LAG_Q8_SHIFT;
+                self.ltp_coef_q14 = [0; LTP_ORDER];
+                self.ltp_scale_q14 = 0;
+                ch_state.prev_pitch_lag = 0;
+            }
         }
 
         self.prev_lpc_q12[..lpc_order]
@@ -375,11 +379,10 @@ impl PlcState {
             .fold((0i32, self.pitch_l_q8), |(max_gain, best_lag_q8), (_, subfr)| {
                 let gain_q14: i32 =
                     subfr.ltp_coeffs.iter().map(|&c| (c as i32) << LTP_COEFF_Q7_TO_Q14_SHIFT).sum();
-                if gain_q14 > max_gain {
-                    (gain_q14, (subfr.pitch_lag as i32) << PITCH_LAG_Q8_SHIFT)
-                } else {
-                    (max_gain, best_lag_q8)
-                }
+                return match gain_q14 > max_gain {
+                    true => (gain_q14, (subfr.pitch_lag as i32) << PITCH_LAG_Q8_SHIFT),
+                    false => (max_gain, best_lag_q8),
+                };
             });
 
         self.pitch_l_q8 = selected_lag_q8;
@@ -507,11 +510,8 @@ impl PlcState {
         let (energy1, shift1) = sum_sqr_shift(&scaled_exc[..subfr_length]);
         let (energy2, shift2) = sum_sqr_shift(&scaled_exc[subfr_length..2 * subfr_length]);
 
-        let end_subframe = if (energy1 >> shift2) < (energy2 >> shift1) {
-            self.nb_subfr.saturating_sub(1)
-        } else {
-            self.nb_subfr
-        };
+        let drop_last_subframe = (energy1 >> shift2) < (energy2 >> shift1);
+        let end_subframe = self.nb_subfr.saturating_sub(usize::from(drop_last_subframe));
 
         return (end_subframe * self.subfr_length).saturating_sub(RAND_BUF_SIZE);
     }
@@ -521,10 +521,9 @@ impl PlcState {
     /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
     fn excitation_shape(&self, voiced: bool, lpc_order: usize) -> ExcitationShape {
         let stage = self.loss_count.min(NUM_ATTENUATION_STAGES - 1);
-        let base_noise_attenuation_q15 = if voiced {
-            VOICED_NOISE_ATTENUATION_Q15[stage] as i32
-        } else {
-            UNVOICED_NOISE_ATTENUATION_Q15[stage] as i32
+        let base_noise_attenuation_q15 = match voiced {
+            true => VOICED_NOISE_ATTENUATION_Q15[stage] as i32,
+            false => UNVOICED_NOISE_ATTENUATION_Q15[stage] as i32,
         };
         let (rand_scale_q14, noise_attenuation_q15) = self
             .compute_initial_noise_scale_and_attenuation(
@@ -625,11 +624,12 @@ impl PlcState {
 
         for _ in 0..geometry.subframes {
             for _ in 0..geometry.subframe_samples {
-                let prediction_q12 = if shape.voiced {
-                    let history = &ltp_state_q14[..=write + LTP_HALF_ORDER - lag];
-                    ltp_predict_q13(history, &self.ltp_coef_q14)
-                } else {
-                    PREDICTION_ROUNDING_BIAS_Q12
+                let prediction_q12 = match shape.voiced {
+                    true => {
+                        let history = &ltp_state_q14[..=write + LTP_HALF_ORDER - lag];
+                        ltp_predict_q13(history, &self.ltp_coef_q14)
+                    }
+                    false => PREDICTION_ROUNDING_BIAS_Q12,
                 };
                 rand_seed = advance_lcg_seed(rand_seed);
                 let noise_q14 =

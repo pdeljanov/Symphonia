@@ -723,11 +723,12 @@ mod tests {
             assert!(width >= 1, "Band {band} width must be positive");
             assert_eq!(band_width(band, BlockSize::SHORT), width);
             assert_eq!(band_width(band, BlockSize::new(3)), width * 8);
-            if band < 8 {
-                assert_eq!(width, 1);
-                assert_eq!(LOGN[band], 0);
-            } else {
-                assert!(LOGN[band] >= LOGN[band - 1]);
+            match band {
+                0..=7 => {
+                    assert_eq!(width, 1);
+                    assert_eq!(LOGN[band], 0);
+                }
+                _ => assert!(LOGN[band] >= LOGN[band - 1]),
             }
         }
     }

@@ -75,10 +75,9 @@ impl OutputRouting<'_> {
         scratch: &[[f32; MAX_PACKET_SAMPLES_48K]; 2],
         buffer: &mut AudioBuffer<f32>,
     ) -> Result<()> {
-        let (first, count) = if stream_i < self.coupled_count {
-            (2 * stream_i, 2)
-        } else {
-            (self.coupled_count + stream_i, 1)
+        let (first, count) = match stream_i < self.coupled_count {
+            true => (2 * stream_i, 2),
+            false => (self.coupled_count + stream_i, 1),
         };
 
         for (ch, &map) in self.channel_mapping.iter().enumerate() {

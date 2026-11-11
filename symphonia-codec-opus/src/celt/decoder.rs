@@ -390,11 +390,14 @@ impl Decoder {
 
         let header = decode_frame_header(dec, lm, self.config.start_band, total_bits)?;
         let mut x_norm = [0.0_f32; MAX_CHANNELS * MAX_FRAME_SIZE];
-        if header.silence {
-            self.synthesis.shift_history(self.config.output_channels, n);
-            self.energy.silence(self.config.stream_channels);
-        } else {
-            self.decode_spectrum(dec, lm, header, total_bits, &mut x_norm)?;
+        match header.silence {
+            true => {
+                self.synthesis.shift_history(self.config.output_channels, n);
+                self.energy.silence(self.config.stream_channels);
+            }
+            false => {
+                self.decode_spectrum(dec, lm, header, total_bits, &mut x_norm)?;
+            }
         }
 
         self.synthesize(&x_norm, lm, header);
@@ -537,12 +540,13 @@ impl Decoder {
         let n = lm.frame_samples();
         let out_samples = n / self.config.downsample;
 
-        if self.plc.uses_noise(self.config.start_band) {
-            self.conceal_noise_based(lm);
-        } else {
-            let cc = self.config.output_channels;
-            self.plc.conceal_pitch_based(&mut self.synthesis.decode_mem, cc, n);
-            self.synthesis.prefilter_and_fold_next = true;
+        match self.plc.uses_noise(self.config.start_band) {
+            true => self.conceal_noise_based(lm),
+            false => {
+                let cc = self.config.output_channels;
+                self.plc.conceal_pitch_based(&mut self.synthesis.decode_mem, cc, n);
+                self.synthesis.prefilter_and_fold_next = true;
+            }
         }
         self.plc.record_loss(lm);
 

@@ -286,13 +286,16 @@ impl<'a> Decoder<'a> {
     pub(crate) fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let split = self.range >> logp;
 
-        let bit = if self.value < split {
-            self.range = split;
-            1
-        } else {
-            self.value -= split;
-            self.range -= split;
-            0
+        let bit = match self.value < split {
+            true => {
+                self.range = split;
+                1
+            }
+            false => {
+                self.value -= split;
+                self.range -= split;
+                0
+            }
         };
         self.normalize();
 
@@ -398,10 +401,9 @@ impl<'a> Decoder<'a> {
                 low += (2 * tail_steps as u32) * MIN_PROB;
             }
 
-            if fm < low + zero_freq {
-                decoded_value = -decoded_value;
-            } else {
-                low += zero_freq;
+            match fm < low + zero_freq {
+                true => decoded_value = -decoded_value,
+                false => low += zero_freq,
             }
         }
 
