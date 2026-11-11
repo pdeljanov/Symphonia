@@ -130,12 +130,12 @@ pub(super) fn quant_band_stereo(
     part: Partition,
     phase_inversion: bool,
 ) -> Result<u32> {
-    let Partition { n, blocks, lm, bits, fill, .. } = part;
+    let Partition { n, blocks, level, bits, fill, .. } = part;
     if n == 1 {
         return quant_band_n1(ctx, dec, Planes::new(x, Some(y)), lowband);
     }
 
-    let split = decode_split_angle(ctx, dec, n, bits, lm, blocks, SplitKind::Stereo)?;
+    let split = decode_split_angle(ctx, dec, n, bits, level, blocks, SplitKind::Stereo)?;
     let bits = bits - split.qalloc;
     let cm = match n {
         2 => {

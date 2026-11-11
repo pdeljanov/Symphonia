@@ -268,7 +268,7 @@ impl<'a> BandSweep<'a> {
         let part = Partition {
             n,
             blocks: self.frame.blocks,
-            lm: CacheLevel::from_block_size(self.frame.lm),
+            level: CacheLevel::from_block_size(self.frame.lm),
             bits,
             fill: fold.x_mask | fold.y_mask,
             gain: 1.0_f32,
@@ -358,19 +358,19 @@ pub(crate) fn unquantize_bands(
 fn collapse_noise_level(
     energy: &BandEnergyHistory,
     channels: usize,
-    c: usize,
+    channel: usize,
     i: usize,
     lm: BlockSize,
     thresh: f32,
     sqrt_1: f32,
 ) -> f32 {
-    let mut prev1 = energy.previous[c][i];
-    let mut prev2 = energy.two_back[c][i];
+    let mut prev1 = energy.previous[channel][i];
+    let mut prev2 = energy.two_back[channel][i];
     if channels == 1 {
         prev1 = prev1.max(energy.previous[1][i]);
         prev2 = prev2.max(energy.two_back[1][i]);
     }
-    let ediff = (energy.current[c][i] - prev1.min(prev2)).max(0.0_f32);
+    let ediff = (energy.current[channel][i] - prev1.min(prev2)).max(0.0_f32);
 
     let mut r = 2.0_f32 * exp2(-ediff);
     if lm.log2() == MAX_LM {

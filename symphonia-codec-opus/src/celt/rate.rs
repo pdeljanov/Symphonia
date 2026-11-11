@@ -705,7 +705,7 @@ fn decode_band_skips(
     limits: &BandLimits<'_>,
     skip_start: usize,
     bits: &mut [i32; MAX_BANDS],
-    psum: &mut i32,
+    bits_so_far: &mut i32,
     reservations: &mut Reservations,
 ) -> Result<usize> {
     let layout = limits.layout;
@@ -719,7 +719,7 @@ fn decode_band_skips(
         }
 
         // Bits this band would receive from the per-bin redistribution of what is left.
-        let left = reservations.total - *psum;
+        let left = reservations.total - *bits_so_far;
         let coeff_span = (EBANDS[coded_bands] - EBANDS[layout.start]) as i32;
         let percoeff = left / coeff_span;
         let rem_total = left - coeff_span * percoeff;
@@ -731,18 +731,18 @@ fn decode_band_skips(
             if range_decoder.decode_symbol_logp(1)? != 0 {
                 return Ok(coded_bands);
             }
-            *psum += ONE_BIT_Q3;
+            *bits_so_far += ONE_BIT_Q3;
             band_bits -= ONE_BIT_Q3;
         }
 
-        *psum -= bits[j] + reservations.intensity;
+        *bits_so_far -= bits[j] + reservations.intensity;
         if reservations.intensity > 0 {
             reservations.intensity = i32::from(LOG2_FRAC_TABLE[j - layout.start]);
         }
-        *psum += reservations.intensity;
+        *bits_so_far += reservations.intensity;
 
         bits[j] = if band_bits >= floor { floor } else { 0 };
-        *psum += bits[j];
+        *bits_so_far += bits[j];
         coded_bands -= 1;
     }
 }
