@@ -300,16 +300,29 @@ impl PacketBuilder {
         }
         buf.truncate(len);
 
-        // Only accept the recovery if what remains is a self-consistent frame — i.e. its trailing
-        // two bytes are the CRC-16 of everything before them. This distinguishes a genuine trailing
-        // tag from a truncated final frame (which must still be reported as an error).
-        let frag = Fragment::new(buf.into_boxed_slice());
-        if !frag.crc_match {
-            return None;
+        // Try all fragments first, then discard one leading fragment at a time, just as try_build
+        // does. A bad leading fragment must not prevent recovery of a valid frame after it.
+        let mut start = 0;
+        for pending in &self.frags {
+            if len - start < 2 {
+                break;
+            }
+
+            // Only accept a candidate whose trailing two bytes match the CRC-16 of its content.
+            // A truncated final frame must still fall back to the normal truncation handling.
+            let frag = Fragment::new(buf[start..].into());
+            if frag.crc_match {
+                self.frags.clear();
+                return Some(frag);
+            }
+
+            start += pending.data.len();
+            if start >= len {
+                break;
+            }
         }
 
-        self.frags.clear();
-        Some(frag)
+        None
     }
 
     fn reset(&mut self) {
@@ -320,14 +333,15 @@ impl PacketBuilder {
 
 /// If `buf` ends with a metadata tag that some taggers wrongly append after FLAC audio, return the
 /// length of `buf` with that tag removed; otherwise return `buf.len()`. Recognises a 128-byte ID3v1
-/// tag and an APEv2 tag. Such a tag is not part of the FLAC bitstream but, lacking a next-frame sync
-/// word, the demuxer cannot otherwise tell where the final audio frame ends.
+/// tag, an APEv2 tag, or an APEv2 tag followed by ID3v1. These are not part of the FLAC bitstream
+/// but, lacking a next-frame sync word, the demuxer cannot otherwise tell where the final audio
+/// frame ends.
 fn len_without_trailing_tag(buf: &[u8]) -> usize {
-    let len = buf.len();
+    let mut len = buf.len();
 
     // ID3v1 / ID3v1.1: exactly 128 bytes beginning with "TAG".
     if len >= 128 && &buf[len - 128..len - 125] == b"TAG" {
-        return len - 128;
+        len -= 128;
     }
 
     // APEv2: a 32-byte footer ending the stream with the magic "APETAGEX". The footer's size field
@@ -338,9 +352,10 @@ fn len_without_trailing_tag(buf: &[u8]) -> usize {
             as usize;
         let flags = u32::from_le_bytes([buf[len - 12], buf[len - 11], buf[len - 10], buf[len - 9]]);
         let has_header = flags & 0x8000_0000 != 0;
-        let total = size + if has_header { 32 } else { 0 };
-        if total >= 32 && total <= len {
-            return len - total;
+        if let Some(total) = size.checked_add(if has_header { 32 } else { 0 }) {
+            if size >= 32 && total <= len {
+                return len - total;
+            }
         }
     }
 
@@ -782,6 +797,26 @@ mod tests {
         tag
     }
 
+    fn apev2(has_header: bool) -> Vec<u8> {
+        let mut footer = Vec::new();
+        footer.extend_from_slice(b"APETAGEX");
+        footer.extend_from_slice(&2000u32.to_le_bytes()); // version
+        footer.extend_from_slice(&40u32.to_le_bytes()); // size: items + footer
+        footer.extend_from_slice(&1u32.to_le_bytes()); // item count
+        let flags = if has_header { 0x8000_0000u32 } else { 0 };
+        footer.extend_from_slice(&flags.to_le_bytes());
+        footer.extend_from_slice(&[0u8; 8]); // reserved
+        let mut tag = Vec::new();
+        if has_header {
+            let mut header = footer.clone();
+            header[20..24].copy_from_slice(&(flags | 0x2000_0000).to_le_bytes());
+            tag.extend_from_slice(&header);
+        }
+        tag.extend_from_slice(&[0u8; 8]); // items
+        tag.extend_from_slice(&footer);
+        tag
+    }
+
     #[test]
     fn strips_id3v1_trailer() {
         let audio = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
@@ -792,16 +827,71 @@ mod tests {
     #[test]
     fn strips_apev2_trailer() {
         let audio = vec![9u8; 40];
-        let items = vec![0u8; 8];
-        let mut footer = Vec::new();
-        footer.extend_from_slice(b"APETAGEX");
-        footer.extend_from_slice(&2000u32.to_le_bytes()); // version
-        footer.extend_from_slice(&((items.len() + 32) as u32).to_le_bytes()); // size: items + footer
-        footer.extend_from_slice(&1u32.to_le_bytes()); // item count
-        footer.extend_from_slice(&0u32.to_le_bytes()); // flags: no header
-        footer.extend_from_slice(&[0u8; 8]); // reserved
-        let buf = [audio.clone(), items, footer].concat();
+        let buf = [audio.clone(), apev2(false)].concat();
         assert_eq!(len_without_trailing_tag(&buf), audio.len());
+    }
+
+    #[test]
+    fn strips_apev2_with_optional_header_and_id3v1() {
+        let audio = vec![9u8; 40];
+        for has_header in [false, true] {
+            for has_id3v1 in [false, true] {
+                let mut buf = [audio.clone(), apev2(has_header)].concat();
+                if has_id3v1 {
+                    buf.extend_from_slice(&id3v1());
+                }
+                assert_eq!(len_without_trailing_tag(&buf), audio.len());
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_apev2_sizes() {
+        for has_header in [false, true] {
+            for size in [0, 31, 1024, u32::MAX - 31, u32::MAX] {
+                let mut tag = apev2(has_header);
+                let size_offset = tag.len() - 20;
+                tag[size_offset..size_offset + 4].copy_from_slice(&size.to_le_bytes());
+                assert_eq!(len_without_trailing_tag(&tag), tag.len());
+                let buf = [tag.clone(), id3v1()].concat();
+                assert_eq!(len_without_trailing_tag(&buf), tag.len());
+            }
+        }
+    }
+
+    #[test]
+    fn recovers_fragmented_frame_after_bad_fragments() {
+        let frame = frame_with_crc(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+        for bad_count in 0..3 {
+            for split in [2, frame.len()] {
+                let mut builder = PacketBuilder::default();
+                for _ in 0..bad_count {
+                    builder.frags.push(Fragment::new(vec![0xAB; 3].into_boxed_slice()));
+                }
+                builder.frags.push(Fragment::new(frame[..split].into()));
+                // The trailing tags may themselves have been split by an apparent sync word.
+                let tail = [frame[split..].to_vec(), apev2(true), id3v1()].concat();
+                builder.frags.push(Fragment::new(tail[..40].into()));
+                builder.frags.push(Fragment::new(tail[40..].into()));
+
+                let recovered = builder.recover_final_fragment().expect("recover valid suffix");
+                assert_eq!(&recovered.data[..], &frame[..]);
+                assert!(builder.frags.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn does_not_recover_corrupt_or_missing_frame() {
+        for content in [vec![0x11, 0x22, 0x33], Vec::new()] {
+            let buf = [content, id3v1()].concat();
+            let mut builder = PacketBuilder::default();
+            builder.frags.push(Fragment::new(buf.clone().into_boxed_slice()));
+            assert!(builder.recover_final_fragment().is_none());
+            assert_eq!(builder.frags.len(), 1);
+            assert_eq!(&builder.frags[0].data[..], &buf[..]);
+        }
+        assert!(PacketBuilder::default().recover_final_fragment().is_none());
     }
 
     #[test]
