@@ -29,6 +29,7 @@
 //!     Figure 1: Example Packet Organization for a Logical Ogg Opus Stream
 //! ```
 
+use symphonia_core::audio::{Channels, Position};
 use symphonia_core::io::ReadBytes;
 
 use std::convert::TryFrom;
@@ -154,6 +155,82 @@ impl IdentificationHeader {
             mapping_family,
             channel_mapping_table,
         });
+    }
+
+    /// The output channel layout of the channel mapping family
+    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)):
+    /// mono or left/right stereo for family 0
+    /// ([Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)), the
+    /// Vorbis channel order for family 1
+    /// ([Section 5.1.1.2](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.2>)), and
+    /// discrete channels without defined positions for every other family
+    /// ([Section 5.1.1.3](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.3>),
+    /// [Section 5.1.1.4](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.4>)).
+    ///
+    /// ```text
+    ///      Channels | Vorbis channel order (family 1)
+    ///      ---------+---------------------------------------------------------------
+    ///          1    | mono
+    ///          2    | left, right
+    ///          3    | left, center, right
+    ///          4    | front left, front right, rear left, rear right
+    ///          5    | front left, center, front right, rear left, rear right
+    ///          6    | front left, center, front right, rear left, rear right, LFE
+    ///          7    | front left, center, front right, side left, side right, rear
+    ///               | center, LFE
+    ///          8    | front left, center, front right, side left, side right, rear
+    ///               | left, rear right, LFE
+    /// ```
+    pub(crate) fn channels(&self) -> Channels {
+        use ChannelMappingFamily::{Rtp, Vorbis};
+
+        let positions = match (self.mapping_family, self.channel_count) {
+            (Rtp | Vorbis, 1) => Position::FRONT_LEFT,
+            (Rtp | Vorbis, 2) => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            (Vorbis, 3) => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
+            (Vorbis, 4) => {
+                Position::FRONT_LEFT
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+            }
+            (Vorbis, 5) => {
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+            }
+            (Vorbis, 6) => {
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
+            }
+            (Vorbis, 7) => {
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_CENTER
+                    | Position::LFE1
+            }
+            (Vorbis, 8) => {
+                Position::FRONT_LEFT
+                    | Position::FRONT_CENTER
+                    | Position::FRONT_RIGHT
+                    | Position::SIDE_LEFT
+                    | Position::SIDE_RIGHT
+                    | Position::REAR_LEFT
+                    | Position::REAR_RIGHT
+                    | Position::LFE1
+            }
+            _ => return Channels::Discrete(u16::from(self.channel_count)),
+        };
+        return Channels::Positioned(positions);
     }
 
     /// Reads the 8-byte magic signature and rejects anything other than `OpusHead`.
@@ -362,6 +439,40 @@ mod tests {
             let reader = BufReader::new(&invalid_header);
             let result = IdentificationHeader::parse(reader);
             assert!(matches!(result, Err(Error::InvalidMagicSignature)));
+        }
+
+        /// RFC 7845 Section 5.1.1: family 0 and family 1 carry positioned channels in Vorbis
+        /// order; families 2 to 255 carry discrete channels without defined positions.
+        #[test]
+        fn channel_layout_follows_the_mapping_family() {
+            let mut mono = create_valid_id_header();
+            mono[9] = 1;
+            let parsed = IdentificationHeader::parse(BufReader::new(&mono)).unwrap();
+            assert_eq!(parsed.channels(), Channels::Positioned(Position::FRONT_LEFT));
+
+            let stereo = create_valid_id_header();
+            let parsed = IdentificationHeader::parse(BufReader::new(&stereo)).unwrap();
+            let left_right = Position::FRONT_LEFT | Position::FRONT_RIGHT;
+            assert_eq!(parsed.channels(), Channels::Positioned(left_right));
+
+            let mut surround = create_valid_id_header();
+            surround[9] = 6;
+            surround[18] = 1;
+            surround.extend_from_slice(&[4, 2, 0, 4, 1, 2, 3, 5]);
+            let parsed = IdentificationHeader::parse(BufReader::new(&surround)).unwrap();
+            let layout_5_1 = Position::FRONT_LEFT
+                | Position::FRONT_CENTER
+                | Position::FRONT_RIGHT
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
+                | Position::LFE1;
+            assert_eq!(parsed.channels(), Channels::Positioned(layout_5_1));
+
+            let mut undefined = create_valid_id_header();
+            undefined[18] = 255;
+            undefined.extend_from_slice(&[2, 0, 0, 1]);
+            let parsed = IdentificationHeader::parse(BufReader::new(&undefined)).unwrap();
+            assert_eq!(parsed.channels(), Channels::Discrete(2));
         }
 
         /// RFC 7845 Section 5.1: an implementation SHOULD accept any stream with a version number
