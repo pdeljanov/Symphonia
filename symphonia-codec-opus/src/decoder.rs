@@ -47,7 +47,7 @@
 use std::sync::LazyLock;
 
 use symphonia_core::audio::{
-    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
@@ -64,7 +64,9 @@ use crate::celt::BlockSize;
 use crate::celt::constant::CELT_WINDOW;
 use crate::celt::decoder::{FrameInput, FrameLayout, Mix};
 use crate::entropy;
-use crate::header::{self, ChannelMappingFamily};
+use crate::header::{
+    ChannelMapping, ChannelMappingTable, IdentificationHeader, OutputGain, SILENT_CHANNEL,
+};
 use crate::packet::FramePacket;
 use crate::planes::Planes;
 use crate::sample_rate::SampleRate;
@@ -122,20 +124,9 @@ const BITS_PER_BYTE: i32 = u8::BITS as i32;
 /// Right shift that divides a bit count by [`BITS_PER_BYTE`].
 const BYTE_SHIFT: u32 = 3;
 
-/// Channel mapping entry that marks a silent output channel (`255`,
-/// [RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
-const UNMAPPED_CHANNEL_INDEX: u8 = 255;
-
 /// Largest output channel count an `OpusHead` can describe: the channel count is one byte
 /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
 const MAX_OUTPUT_CHANNELS: usize = u8::MAX as usize;
-
-/// Units of the Q7.8 `output_gain` field per decibel
-/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
-const OUTPUT_GAIN_UNITS_PER_DB: f64 = 256.0;
-
-/// Decibels per decade of amplitude: a gain of `g` dB scales samples by `10^(g / 20)`.
-const DB_PER_AMPLITUDE_DECADE: f64 = 20.0;
 
 /// Static Opus codec info.
 static CODEC_INFO: LazyLock<CodecInfo> = LazyLock::new(|| CodecInfo {
@@ -147,15 +138,6 @@ static CODEC_INFO: LazyLock<CodecInfo> = LazyLock::new(|| CodecInfo {
 /// Static supported codecs array.
 static SUPPORTED_CODECS: LazyLock<[SupportedAudioCodec; 1]> =
     LazyLock::new(|| [SupportedAudioCodec { id: CODEC_ID_OPUS, info: *CODEC_INFO }]);
-
-/// Linear scale of the Q7.8 dB `output_gain` field, `10^(output_gain / (20 * 256))`, the formula
-/// RFC 7845 gives for applying the gain
-/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
-#[inline]
-fn output_gain_scale(output_gain: i16) -> f32 {
-    let gain_db = f64::from(output_gain) / OUTPUT_GAIN_UNITS_PER_DB;
-    return 10.0_f64.powf(gain_db / DB_PER_AMPLITUDE_DECADE) as f32;
-}
 
 /// Which operand of a 5 ms cross-lap the rising CELT window favours
 /// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
@@ -1015,13 +997,102 @@ impl OutputRouting<'_> {
     }
 }
 
-/// Parsed multi-stream layout and `OpusHead` metadata for [`OpusDecoder`].
+/// The elementary streams of a packet and how their decoded channels reach the output channels
+/// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
 struct StreamLayout {
     streams: Vec<StreamDecoder>,
     coupled_count: usize,
     channel_mapping: Vec<u8>,
-    pre_skip: u16,
-    output_gain: i16,
+}
+
+impl StreamLayout {
+    /// Family 0, the RTP mapping: one stream decoding straight to 1 or 2 output channels
+    /// ([RFC 7845 Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)).
+    fn rtp(sample_rate: SampleRate, num_output_channels: usize) -> Result<Self> {
+        let channel_mapping = match num_output_channels {
+            1 => vec![0],
+            2 => vec![0, 1],
+            _ => return unsupported_error("opus: more than 2 channels need an OpusHead mapping"),
+        };
+        return Ok(Self {
+            streams: vec![StreamDecoder::new(sample_rate, num_output_channels)?],
+            coupled_count: usize::from(num_output_channels == 2),
+            channel_mapping,
+        });
+    }
+
+    /// `N` streams, `M` of them coupled, routed to the output channels by the mapping table
+    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
+    fn from_table(sample_rate: SampleRate, table: &ChannelMappingTable) -> Result<Self> {
+        let stream_count = usize::from(table.stream_count);
+        let coupled_count = usize::from(table.coupled_count);
+        let streams = (0..stream_count)
+            .map(|i| StreamDecoder::new(sample_rate, coded_channels(i < coupled_count)))
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(Self { streams, coupled_count, channel_mapping: table.channel_mapping.clone() });
+    }
+
+    /// Selects the layout the header describes, or the RTP mapping when there is no header.
+    fn resolve(
+        id: Option<&IdentificationHeader>,
+        sample_rate: SampleRate,
+        num_output_channels: usize,
+    ) -> Result<Self> {
+        let Some(id) = id else {
+            return Self::rtp(sample_rate, num_output_channels);
+        };
+        if usize::from(id.channel_count) != num_output_channels {
+            return Err(SymphoniaError::DecodeError(
+                "opus: OpusHead channel count does not match AudioCodecParameters",
+            ));
+        }
+        return match &id.channel_mapping {
+            ChannelMapping::Rtp => Self::rtp(sample_rate, num_output_channels),
+            ChannelMapping::Vorbis(table) => Self::from_table(sample_rate, table),
+            ChannelMapping::Reserved(..) | ChannelMapping::Undefined(_) => {
+                unsupported_error("opus: unsupported channel mapping family")
+            }
+        };
+    }
+}
+
+/// The output sample rate and channel layout the decoder produces.
+struct OutputFormat {
+    sample_rate: SampleRate,
+    channels: Channels,
+}
+
+impl OutputFormat {
+    /// Resolves the format from the codec parameters, falling back to the header.
+    ///
+    /// Every Opus stream decodes at 48 kHz; the `Input Sample Rate` of the header is not a
+    /// playback rate
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)). A
+    /// declared rate selects a downsampled output only when it is one the decoder can produce;
+    /// an absent or foreign rate (such as a container's original recording rate) decodes at
+    /// 48 kHz. The channel layout comes from the parameters, else from the header's channel
+    /// count and mapping family
+    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
+    fn resolve(params: &AudioCodecParameters, id: Option<&IdentificationHeader>) -> Result<Self> {
+        let sample_rate = match params.sample_rate.map(SampleRate::try_from) {
+            Some(Ok(rate)) => rate,
+            Some(Err(_)) => {
+                log::debug!("opus: declared sample rate is not an Opus output rate, using 48 kHz");
+                SampleRate::Hz48000
+            }
+            None => SampleRate::Hz48000,
+        };
+        let channels = params
+            .channels
+            .clone()
+            .or_else(|| id.map(IdentificationHeader::channels))
+            .ok_or(SymphoniaError::Unsupported("opus: missing channel layout"))?;
+        let count = channels.count();
+        if count == 0 || count > MAX_OUTPUT_CHANNELS {
+            return unsupported_error("opus: unsupported output channel count");
+        }
+        return Ok(Self { sample_rate, channels });
+    }
 }
 
 /// The `OpusDecoder` struct implements the Symphonia [`AudioDecoder`] trait.
@@ -1037,127 +1108,25 @@ pub struct OpusDecoder {
     coupled_count: usize,
     channel_mapping: Vec<u8>,
     pre_skip: u16,
-    output_gain: i16,
-    /// Linear output gain, `None` when `output_gain` is zero.
-    gain: Option<f32>,
+    output_gain: OutputGain,
     range_final: u32,
 }
 
 impl OpusDecoder {
-    /// Builds a single-stream RTP (Family 0) [`StreamLayout`] for `1` or `2` output channels
-    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
-    fn build_rtp_stream_layout(
-        sample_rate: SampleRate,
-        num_output_channels: usize,
-        pre_skip: u16,
-        output_gain: i16,
-    ) -> Result<StreamLayout> {
-        let channel_mapping = match num_output_channels {
-            1 => vec![0],
-            2 => vec![0, 1],
-            _ => {
-                return Err(SymphoniaError::DecodeError(
-                    "opus: RTP mapping family 0 only supports 1 or 2 channels",
-                ));
-            }
-        };
-
-        return Ok(StreamLayout {
-            streams: vec![StreamDecoder::new(sample_rate, num_output_channels)?],
-            coupled_count: usize::from(num_output_channels == 2),
-            channel_mapping,
-            pre_skip,
-            output_gain,
-        });
-    }
-
     /// Parses the `OpusHead` identification header
     /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) from
     /// `params.extra_data`, or returns `None` when the parameters carry no extra data.
     fn parse_identification_header(
         params: &AudioCodecParameters,
-    ) -> Result<Option<header::IdentificationHeader>> {
+    ) -> Result<Option<IdentificationHeader>> {
         return params
             .extra_data
             .as_deref()
             .filter(|extra| !extra.is_empty())
             .map(|extra| {
-                header::IdentificationHeader::parse(BufReader::new(extra))
-                    .map_err(|_| SymphoniaError::DecodeError("opus: invalid OpusHead extra_data"))
+                IdentificationHeader::parse(BufReader::new(extra)).map_err(SymphoniaError::from)
             })
             .transpose();
-    }
-
-    /// Selects the output sample rate. Every Opus stream decodes at 48 kHz; the `Input Sample
-    /// Rate` of the header is not a playback rate
-    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)). A
-    /// declared rate selects a downsampled output only when it is one the decoder can produce;
-    /// an absent or foreign rate (such as a container's original recording rate) decodes at
-    /// 48 kHz.
-    fn output_sample_rate(params: &AudioCodecParameters) -> SampleRate {
-        return match params.sample_rate.map(SampleRate::try_from) {
-            Some(Ok(rate)) => rate,
-            Some(Err(_)) => {
-                log::debug!("opus: declared sample rate is not an Opus output rate, using 48 kHz");
-                SampleRate::Hz48000
-            }
-            None => SampleRate::Hz48000,
-        };
-    }
-
-    /// Builds the [`StreamLayout`] from the parsed `OpusHead`
-    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) or
-    /// defaults to Family 0 when there is none.
-    fn parse_stream_layout(
-        id: Option<&header::IdentificationHeader>,
-        sample_rate: SampleRate,
-        num_output_channels: usize,
-    ) -> Result<StreamLayout> {
-        let Some(id) = id else {
-            if num_output_channels > 2 {
-                return unsupported_error("opus: more than 2 channels need an OpusHead mapping");
-            }
-            return Self::build_rtp_stream_layout(sample_rate, num_output_channels, 0, 0);
-        };
-
-        if id.channel_count as usize != num_output_channels {
-            return Err(SymphoniaError::DecodeError(
-                "opus: OpusHead channel count does not match AudioCodecParameters",
-            ));
-        }
-
-        match id.mapping_family {
-            ChannelMappingFamily::Rtp => {
-                return Self::build_rtp_stream_layout(
-                    sample_rate,
-                    num_output_channels,
-                    id.pre_skip,
-                    id.output_gain,
-                );
-            }
-            ChannelMappingFamily::Vorbis => {
-                let table =
-                    id.channel_mapping_table.as_ref().ok_or(SymphoniaError::DecodeError(
-                        "opus: missing channel mapping table for Vorbis family 1",
-                    ))?;
-                let stream_count = table.stream_count as usize;
-                let coupled_count = table.coupled_count as usize;
-                let streams = (0..stream_count)
-                    .map(|i| StreamDecoder::new(sample_rate, coded_channels(i < coupled_count)))
-                    .collect::<Result<Vec<_>>>()?;
-
-                return Ok(StreamLayout {
-                    streams,
-                    coupled_count,
-                    channel_mapping: table.channel_mapping.clone(),
-                    pre_skip: id.pre_skip,
-                    output_gain: id.output_gain,
-                });
-            }
-            ChannelMappingFamily::Reserved(_) | ChannelMappingFamily::Undefined => {
-                return unsupported_error("opus: unsupported channel mapping family");
-            }
-        }
     }
 
     /// Creates a new [`OpusDecoder`] from `params` and `_options`.
@@ -1167,40 +1136,33 @@ impl OpusDecoder {
         }
 
         let id = Self::parse_identification_header(params)?;
-        let sample_rate = Self::output_sample_rate(params);
-        let channels = params
-            .channels
-            .clone()
-            .or_else(|| id.as_ref().map(header::IdentificationHeader::channels))
-            .ok_or(SymphoniaError::Unsupported("opus: missing channel layout"))?;
-        let num_output_channels = channels.count();
-        if num_output_channels == 0 || num_output_channels > MAX_OUTPUT_CHANNELS {
-            return unsupported_error("opus: unsupported output channel count");
-        }
-
-        let StreamLayout { streams, coupled_count, channel_mapping, pre_skip, output_gain } =
-            Self::parse_stream_layout(id.as_ref(), sample_rate, num_output_channels)?;
+        let format = OutputFormat::resolve(params, id.as_ref())?;
+        let layout =
+            StreamLayout::resolve(id.as_ref(), format.sample_rate, format.channels.count())?;
+        let (pre_skip, output_gain) =
+            id.map_or((0, OutputGain::UNITY), |id| (id.pre_skip, id.output_gain));
 
         // One packet carries at most 120 ms (RFC 6716 Section 3.2.5).
-        let spec = AudioSpec::new(sample_rate.hz(), channels.clone());
-        let buffer =
-            AudioBuffer::new(spec, MAX_PACKET_SAMPLES_48K / sample_rate.downsample_from_48k());
+        let spec = AudioSpec::new(format.sample_rate.hz(), format.channels.clone());
+        let buffer = AudioBuffer::new(
+            spec,
+            MAX_PACKET_SAMPLES_48K / format.sample_rate.downsample_from_48k(),
+        );
 
         // Report the effective output format through `codec_params`.
         let mut params = params.to_owned();
-        params.with_sample_rate(sample_rate.hz()).with_channels(channels);
+        params.with_sample_rate(format.sample_rate.hz()).with_channels(format.channels);
 
         return Ok(Self {
             params,
-            sample_rate,
+            sample_rate: format.sample_rate,
             buffer,
-            streams,
+            streams: layout.streams,
             scratch: [[0.0; MAX_PACKET_SAMPLES_48K]; 2],
-            coupled_count,
-            channel_mapping,
+            coupled_count: layout.coupled_count,
+            channel_mapping: layout.channel_mapping,
             pre_skip,
             output_gain,
-            gain: (output_gain != 0).then(|| output_gain_scale(output_gain)),
             range_final: 0,
         });
     }
@@ -1214,7 +1176,7 @@ impl OpusDecoder {
     /// Returns the Q7.8 dB `output_gain` parsed from the `OpusHead` identification header.
     #[inline]
     pub fn output_gain(&self) -> i16 {
-        return self.output_gain;
+        return self.output_gain.q7_8_db();
     }
 
     /// Returns the final range decoder state of the last decoded packet, XOR-combined across
@@ -1242,7 +1204,7 @@ impl OpusDecoder {
         let routing = OutputRouting {
             channel_mapping: &self.channel_mapping,
             coupled_count: self.coupled_count,
-            gain: self.gain,
+            gain: self.output_gain.scale(),
         };
         for (i, stream) in self.streams.iter_mut().enumerate() {
             stream.conceal_lost_packet(duration, &mut self.scratch)?;
@@ -1254,7 +1216,7 @@ impl OpusDecoder {
     }
 
     /// Clears the output buffer, renders `total_samples` frames and silences the output
-    /// channels whose mapping entry is [`UNMAPPED_CHANNEL_INDEX`]
+    /// channels whose mapping entry is [`SILENT_CHANNEL`]
     /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
     fn prepare_output_buffer(&mut self, total_samples: usize) -> Result<()> {
         self.buffer.clear();
@@ -1263,7 +1225,7 @@ impl OpusDecoder {
             .channel_mapping
             .iter()
             .enumerate()
-            .filter(|&(_, &map)| map == UNMAPPED_CHANNEL_INDEX)
+            .filter(|&(_, &map)| map == SILENT_CHANNEL)
             .map(|(ch, _)| ch);
         for ch in unmapped {
             let plane = self
@@ -1312,7 +1274,7 @@ impl AudioDecoder for OpusDecoder {
         let routing = OutputRouting {
             channel_mapping: &self.channel_mapping,
             coupled_count: self.coupled_count,
-            gain: self.gain,
+            gain: self.output_gain.scale(),
         };
         let packets = std::iter::once(Ok(first)).chain(packets);
         let mut combined_range = 0u32;
@@ -1362,23 +1324,24 @@ mod tests {
     // vectors by `tests/rfc6716_conformance.rs`; the concealment steps are regression pins for
     // behaviour that RFC 6716 Section 4.4 leaves to the implementation.
     use super::*;
+    use crate::header::test_support::OpusHeadBuilder;
     use crate::test_vectors::*;
     use symphonia_core::audio::{Audio, Channels, Position};
     use symphonia_core::codecs::audio::well_known::CODEC_ID_VORBIS;
     use symphonia_core::units::{Duration, Timestamp};
 
     /// The 48 kHz codec parameters of an output with the channels `positions`.
-    /// Family 0 stereo `OpusHead`: version 1, pre_skip 312, input rate 48000, gain 0.
-    const OPUS_HEAD_STEREO: [u8; 19] = [
-        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xbb, 0x00, 0x00,
-        0x00, 0x00, 0,
-    ];
+    /// Parameters carrying only `OpusHead` extra data; rate and channels come from the fallbacks.
+    fn head_params(head: OpusHeadBuilder) -> AudioCodecParameters {
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_OPUS).with_extra_data(head.build().into_boxed_slice());
+        return params;
+    }
 
     /// Family 1 three-channel `OpusHead`: 2 streams, 1 coupled, channel mapping `[0, 2, 1]`.
-    const OPUS_HEAD_3CH_FAMILY_1: [u8; 24] = [
-        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 3, 0x38, 0x01, 0x80, 0xbb, 0x00, 0x00,
-        0x00, 0x00, 1, 2, 1, 0, 2, 1,
-    ];
+    fn three_channel_head() -> OpusHeadBuilder {
+        return OpusHeadBuilder::new().channels(3).family(1).table(2, 1, &[0, 2, 1]);
+    }
 
     fn params(positions: Position) -> AudioCodecParameters {
         let mut params = AudioCodecParameters::new();
@@ -1554,23 +1517,17 @@ mod tests {
     /// carries version 0, so a version-0 header must configure the decoder like a version-1 one.
     #[test]
     fn version_0_opus_head_from_isomp4_configures_the_decoder() {
-        // "OpusHead" | version=0 | channels=2 | pre_skip=312 LE | rate=48000 LE
-        // | output_gain=-256 LE (-1.0 dB) | mapping_family=0
-        let opus_head_v0: [u8; 19] = [
-            b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 0, 2, 0x38, 0x01, 0x80, 0xbb, 0x00,
-            0x00, 0x00, 0xff, 0,
-        ];
         let mut params = stereo_params();
-        params.with_extra_data(Box::from(opus_head_v0));
+        let head = OpusHeadBuilder::new().version(0).output_gain(-256).build();
+        params.with_extra_data(head.into_boxed_slice());
 
         let dec = decoder(&params);
         assert_eq!(dec.pre_skip(), 312);
         assert_eq!(dec.output_gain(), -256);
 
         let mut rejected = stereo_params();
-        let mut opus_head_v16 = opus_head_v0;
-        opus_head_v16[8] = 16;
-        rejected.with_extra_data(Box::from(opus_head_v16));
+        let head = OpusHeadBuilder::new().version(16).build();
+        rejected.with_extra_data(head.into_boxed_slice());
         assert!(OpusDecoder::try_new(&rejected, &AudioDecoderOptions::default()).is_err());
         return;
     }
@@ -1581,8 +1538,7 @@ mod tests {
     #[test]
     fn missing_or_foreign_sample_rate_decodes_at_48_khz() {
         for declared in [None, Some(44_100)] {
-            let mut params = AudioCodecParameters::new();
-            params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_STEREO));
+            let mut params = head_params(OpusHeadBuilder::new());
             declared.into_iter().for_each(|hz| {
                 params.with_sample_rate(hz);
             });
@@ -1591,11 +1547,8 @@ mod tests {
             assert_eq!(dec.codec_params().sample_rate, Some(48_000));
         }
 
-        let mut params = AudioCodecParameters::new();
-        params
-            .for_codec(CODEC_ID_OPUS)
-            .with_sample_rate(16_000)
-            .with_extra_data(Box::from(OPUS_HEAD_STEREO));
+        let mut params = head_params(OpusHeadBuilder::new());
+        params.with_sample_rate(16_000);
         assert_eq!(decoder(&params).buffer.spec().rate(), 16_000);
         return;
     }
@@ -1604,16 +1557,12 @@ mod tests {
     /// count and mapping family define it. Without either, the decoder cannot be created.
     #[test]
     fn missing_channels_come_from_the_opus_head() {
-        let mut params = AudioCodecParameters::new();
-        params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_STEREO));
-        let dec = decoder(&params);
+        let dec = decoder(&head_params(OpusHeadBuilder::new()));
         let left_right = Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT);
         assert_eq!(dec.buffer.spec().channels(), &left_right);
         assert_eq!(dec.codec_params().channels, Some(left_right));
 
-        let mut params = AudioCodecParameters::new();
-        params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_3CH_FAMILY_1));
-        let dec = decoder(&params);
+        let dec = decoder(&head_params(three_channel_head()));
         let three = Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT;
         assert_eq!(dec.buffer.spec().channels(), &Channels::Positioned(three));
         assert_eq!(dec.streams.len(), 2);
@@ -1626,15 +1575,6 @@ mod tests {
 
     #[test]
     fn multistream_family_1_decodes_to_recorded_values() {
-        // 3-channel Vorbis Family 1 OpusHead:
-        // "OpusHead" (8B) | version=1 (1B) | channels=3 (1B) | pre_skip=312 (2B LE)
-        // | input_sample_rate=48000 (4B LE) | output_gain=0 (2B LE) | mapping_family=1 (1B)
-        // | stream_count=2 (1B) | coupled_count=1 (1B) | channel_mapping=[0, 2, 1] (3B)
-        let opus_head_3ch: [u8; 24] = [
-            b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 3, 0x38, 0x01, 0x80, 0xbb, 0x00,
-            0x00, 0x00, 0x00, 1, 2, 1, 0, 2, 1,
-        ];
-
         let mut params = AudioCodecParameters::new();
         params
             .for_codec(CODEC_ID_OPUS)
@@ -1642,7 +1582,7 @@ mod tests {
             .with_channels(Channels::Positioned(
                 Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
             ))
-            .with_extra_data(Box::from(opus_head_3ch));
+            .with_extra_data(three_channel_head().build().into_boxed_slice());
 
         let mut dec = OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap();
         assert_eq!(dec.pre_skip(), 312);
@@ -1651,10 +1591,12 @@ mod tests {
         assert_stream_decodes(&mut dec, &MULTISTREAM_FAMILY_1);
 
         // Also verify non-zero output_gain (+256 Q7.8 = +1.0 dB) and muted channel mapping (255)
-        let opus_head_gain_mute: [u8; 24] = [
-            b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 3, 0x00, 0x00, 0x80, 0xbb, 0x00,
-            0x00, 0x00, 0x01, 1, 2, 1, 0, 255, 1,
-        ];
+        let gain_mute = OpusHeadBuilder::new()
+            .channels(3)
+            .pre_skip(0)
+            .output_gain(256)
+            .family(1)
+            .table(2, 1, &[0, 255, 1]);
         let mut gain_params = AudioCodecParameters::new();
         gain_params
             .for_codec(CODEC_ID_OPUS)
@@ -1662,7 +1604,7 @@ mod tests {
             .with_channels(Channels::Positioned(
                 Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
             ))
-            .with_extra_data(Box::from(opus_head_gain_mute));
+            .with_extra_data(gain_mute.build().into_boxed_slice());
         let mut gain_dec =
             OpusDecoder::try_new(&gain_params, &AudioDecoderOptions::default()).unwrap();
         assert_eq!(gain_dec.output_gain(), 256);
