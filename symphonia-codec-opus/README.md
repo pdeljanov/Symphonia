@@ -540,6 +540,8 @@ The 143 self-contained unit tests require no external files:
 cargo test -p symphonia-codec-opus
 ```
 
+The packet fixtures and expected intermediate values of those unit tests were recorded with libopus 1.6.1 (floating-point build). They pin the behaviour of each stage; the RFC conformance of the decoder is established only by the test-vector suite below, which compares against the RFC 6716 Appendix A reference decoder with the RFC 8251 update.
+
 The RFC 6716 / RFC 8251 conformance and reference comparison suite in `tests/rfc6716_conformance.rs` reads [`opus_newvectors`](https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz) from `OPUS_TESTVECTORS_DIR` (and optional `opus_demo -d` outputs from `OPUS_REFERENCE_OUTPUT_DIR`):
 
 ```bash

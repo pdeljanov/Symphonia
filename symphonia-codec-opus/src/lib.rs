@@ -43,6 +43,12 @@
 //!   ([RFC 6716 Section 2](<https://datatracker.ietf.org/doc/html/rfc6716#section-2>)).
 //! - `planes`: The planar `f32` channel pair every decode stage writes into
 //!   ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+//!
+//! # Logging
+//!
+//! The decoder logs through the `log` crate at two points only: `warn` when it departs from the
+//! codec parameters it was given (a declared sample rate it cannot produce is replaced by
+//! 48 kHz), and `debug` when it conceals a lost packet. The per-frame decode path never logs.
 
 #![forbid(unsafe_code)]
 #![allow(clippy::needless_return)]

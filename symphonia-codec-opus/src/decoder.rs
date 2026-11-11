@@ -125,12 +125,11 @@ impl OutputFormat {
     /// count and mapping family
     /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
     fn resolve(params: &AudioCodecParameters, id: Option<&IdentificationHeader>) -> Result<Self> {
-        let sample_rate = match params.sample_rate.map(SampleRate::try_from) {
-            Some(Ok(rate)) => rate,
-            Some(Err(_)) => {
-                log::debug!("opus: declared sample rate is not an Opus output rate, using 48 kHz");
-                SampleRate::Hz48000
-            }
+        let sample_rate = match params.sample_rate {
+            Some(hz) => SampleRate::try_from(hz).unwrap_or_else(|_| {
+                log::warn!("opus: declared sample rate {hz} Hz is not an Opus output rate, decoding at 48 kHz");
+                return SampleRate::Hz48000;
+            }),
             None => SampleRate::Hz48000,
         };
         let channels = params
@@ -217,6 +216,11 @@ impl OpusDecoder {
     }
 
     /// Returns the `pre_skip` sample count parsed from the `OpusHead` identification header.
+    ///
+    /// `pre_skip`, [`output_gain`](Self::output_gain) and [`final_range`](Self::final_range) are
+    /// the decoder's diagnostics beyond the [`AudioDecoder`] trait: they expose what the decoder
+    /// read from the header and the range coder so that tests and tools can check it. Playback
+    /// does not need them; the demuxers apply the pre-skip as the track delay.
     #[inline]
     pub fn pre_skip(&self) -> u16 {
         return self.pre_skip;
@@ -231,7 +235,8 @@ impl OpusDecoder {
     /// Returns the final range decoder state of the last decoded packet, XOR-combined across
     /// elementary streams
     /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)); zero
-    /// after a lost or concealed packet.
+    /// after a lost or concealed packet. The conformance test compares it with the encoder's
+    /// final range for every packet.
     pub fn final_range(&self) -> u32 {
         return self.streams.iter().fold(0, |range, stream| range ^ stream.final_range());
     }
@@ -247,6 +252,7 @@ impl OpusDecoder {
             .and_then(StreamDecoder::last_duration)
             .unwrap_or(FrameDuration::Ms20);
         let total_samples = self.sample_rate.samples_per(duration);
+        log::debug!("opus: concealing a lost packet of {total_samples} samples per channel");
         self.prepare_output_buffer(total_samples)?;
 
         let routing = OutputRouting {
