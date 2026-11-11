@@ -34,9 +34,14 @@ use symphonia_core::io::ReadBytes;
 use std::convert::TryFrom;
 use thiserror::Error;
 
-/// Version of the encapsulation this parser accepts
+/// Highest `Version` field value this parser accepts
 /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
-const SUPPORTED_VERSION: u8 = 1;
+///
+/// The upper four bits of the version are the major version and the lower four bits the minor
+/// version. An implementation SHOULD accept any stream with a version number of 15 or less and
+/// assume that a stream with a greater version is incompatible. This also admits version 0, which
+/// the ISO Base Media File Format `dOps` box uses for the same fields.
+const MAX_SUPPORTED_VERSION: u8 = 15;
 /// Channel mapping entry that marks an output channel as silent
 /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
 const SILENT_CHANNEL: u8 = 255;
@@ -49,7 +54,7 @@ pub(crate) enum Error {
     #[error("Invalid magic signature")]
     InvalidMagicSignature,
 
-    /// The version field is not the supported version 1.
+    /// The version field is above [`MAX_SUPPORTED_VERSION`]: its major version is not 0.
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(u8),
 
@@ -104,7 +109,7 @@ pub(crate) enum Error {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct IdentificationHeader {
-    /// The `Version` field, always 1 for an accepted header.
+    /// The `Version` field, 0 to 15 for an accepted header; 1 for RFC 7845 streams.
     pub(crate) version: u8,
     /// The `Output Channel Count` field `C`, the number of output channels.
     pub(crate) channel_count: u8,
@@ -161,13 +166,12 @@ impl IdentificationHeader {
         return Ok(());
     }
 
-    /// Reads the version and rejects every version other than [`SUPPORTED_VERSION`].
+    /// Reads the version and rejects every version above [`MAX_SUPPORTED_VERSION`].
     fn parse_version<R: ReadBytes>(reader: &mut R) -> Result<u8, Error> {
         let version = reader.read_u8()?;
-        if version != SUPPORTED_VERSION {
-            return Err(Error::UnsupportedVersion(version));
-        }
-        return Ok(version);
+        return (version <= MAX_SUPPORTED_VERSION)
+            .then_some(version)
+            .ok_or(Error::UnsupportedVersion(version));
     }
 
     /// Reads the output channel count, which MUST NOT be zero.
@@ -360,14 +364,28 @@ mod tests {
             assert!(matches!(result, Err(Error::InvalidMagicSignature)));
         }
 
+        /// RFC 7845 Section 5.1: an implementation SHOULD accept any stream with a version number
+        /// of 15 or less. Version 0 is what the ISO Base Media File Format `dOps` box carries.
         #[test]
-        fn unsupported_version() {
-            let mut invalid_header = create_valid_id_header();
-            invalid_header[8] = 2; // Change version to 2
+        fn versions_up_to_15_are_accepted() {
+            for version in [0, 1, 2, 15] {
+                let mut header = create_valid_id_header();
+                header[8] = version;
+                let parsed = IdentificationHeader::parse(BufReader::new(&header)).unwrap();
+                assert_eq!(parsed.version, version);
+            }
+        }
 
-            let reader = BufReader::new(&invalid_header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::UnsupportedVersion(2))));
+        /// RFC 7845 Section 5.1: a version above 15 has a different major version and the stream
+        /// is assumed to be incompatible.
+        #[test]
+        fn versions_above_15_are_rejected() {
+            for version in [16, 0x1f, 0xff] {
+                let mut header = create_valid_id_header();
+                header[8] = version;
+                let result = IdentificationHeader::parse(BufReader::new(&header));
+                assert!(matches!(result, Err(Error::UnsupportedVersion(v)) if v == version));
+            }
         }
 
         #[test]
