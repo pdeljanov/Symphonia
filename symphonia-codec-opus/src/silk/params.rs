@@ -232,10 +232,9 @@ pub(crate) fn decode_frame_type(
     vad_flag: bool,
     is_lbrr_frame: bool,
 ) -> Result<FrameType> {
-    let (cdf, frame_types): (Cdf<'static>, &[FrameType]) = if vad_flag || is_lbrr_frame {
-        (constant::CDF_FRAME_TYPE_VAD_ACTIVE, &ACTIVE_FRAME_TYPES)
-    } else {
-        (constant::CDF_FRAME_TYPE_VAD_INACTIVE, &INACTIVE_FRAME_TYPES)
+    let (cdf, frame_types): (Cdf<'static>, &[FrameType]) = match vad_flag || is_lbrr_frame {
+        true => (constant::CDF_FRAME_TYPE_VAD_ACTIVE, &ACTIVE_FRAME_TYPES),
+        false => (constant::CDF_FRAME_TYPE_VAD_INACTIVE, &INACTIVE_FRAME_TYPES),
     };
     return Ok(frame_types[decoder.decode_symbol(cdf)? as usize]);
 }
@@ -253,10 +252,9 @@ impl CodingReferences {
         let signal_type = frame.frame_type.signal_type;
         for (i, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
             let independent = i == 0 && coding_mode != CodingMode::Conditional;
-            let log_gain = if independent {
-                decode_independent_log_gain(decoder, signal_type, self.last_gain_index)?
-            } else {
-                decode_delta_log_gain(decoder, self.last_gain_index)?
+            let log_gain = match independent {
+                true => decode_independent_log_gain(decoder, signal_type, self.last_gain_index)?,
+                false => decode_delta_log_gain(decoder, self.last_gain_index)?,
             };
             self.last_gain_index = log_gain;
             subframe.log_gain = log_gain;
@@ -323,10 +321,9 @@ impl CodingReferences {
     ) -> Result<i32> {
         let relative =
             coding_mode == CodingMode::Conditional && self.prev_signal_type == SignalType::Voiced;
-        let delta_lag_index = if relative {
-            decoder.decode_symbol(constant::CDF_RELATIVE_DELTA_PITCH_LAG)? as i32
-        } else {
-            0
+        let delta_lag_index = match relative {
+            true => decoder.decode_symbol(constant::CDF_RELATIVE_DELTA_PITCH_LAG)? as i32,
+            false => 0,
         };
 
         let lag_index = match delta_lag_index {
@@ -392,10 +389,9 @@ pub(crate) fn gain_q16_from_log_gain(log_gain: i32) -> i32 {
     let frac_q7 = in_log_q7 & LOG2_Q7_FRAC_MASK;
     let frac_correction_q7 = frac_q7
         + ((((frac_q7 * (LOG2_Q7_ONE - frac_q7)) as i64 * LOG2LIN_PARABOLIC_Q16) >> 16) as i32);
-    let fractional_part = if in_log_q7 < LOG2LIN_EXACT_SHIFT_LIMIT_Q7 {
-        (integer_part * frac_correction_q7) >> LOG2_Q7_SHIFT
-    } else {
-        (integer_part >> LOG2_Q7_SHIFT) * frac_correction_q7
+    let fractional_part = match in_log_q7 < LOG2LIN_EXACT_SHIFT_LIMIT_Q7 {
+        true => (integer_part * frac_correction_q7) >> LOG2_Q7_SHIFT,
+        false => (integer_part >> LOG2_Q7_SHIFT) * frac_correction_q7,
     };
     return integer_part + fractional_part;
 }
@@ -480,10 +476,11 @@ fn decode_ltp_coeffs(
 /// frames and LBRR side frames after a coded frame use the first codebook entry
 /// ([RFC 6716 Section 4.2.7.6.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.3>)).
 fn decode_ltp_scaling(decoder: &mut entropy::Decoder<'_>, coding_mode: CodingMode) -> Result<i16> {
-    let i = if coding_mode == CodingMode::Independent {
-        decoder.decode_symbol(constant::CDF_LTP_SCALING_PARAMETER)? as usize
-    } else {
-        0
+    let i = match coding_mode {
+        CodingMode::Independent => {
+            decoder.decode_symbol(constant::CDF_LTP_SCALING_PARAMETER)? as usize
+        }
+        CodingMode::IndependentWithoutLtpScaling | CodingMode::Conditional => 0,
     };
     return Ok(constant::CODEBOOK_LTP_SCALING_Q14[i]);
 }

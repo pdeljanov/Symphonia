@@ -144,10 +144,9 @@ fn decode_block_pulse_count(
 
     while count == ESCAPE_PULSE_COUNT {
         lsb_count += 1;
-        let row = if lsb_count == MAX_LSB_COUNT {
-            PULSE_COUNT_CDF_LAST_ESCAPE
-        } else {
-            PULSE_COUNT_CDF_AFTER_ESCAPE
+        let row = match lsb_count {
+            MAX_LSB_COUNT => PULSE_COUNT_CDF_LAST_ESCAPE,
+            _ => PULSE_COUNT_CDF_AFTER_ESCAPE,
         };
         count = decoder.decode_symbol(constant::CDF_PULSE_COUNT[row])?;
     }

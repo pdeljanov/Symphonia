@@ -195,11 +195,9 @@ impl Decoder {
         if is_stereo && self.prev_decode_only_middle {
             self.channels[1].core.references.last_gain_index = LAST_GAIN_INDEX_AFTER_RESET;
         }
-        let side = if is_stereo && !self.prev_decode_only_middle {
-            Some(self.conceal_channel_frame(1)?)
-        } else {
-            None
-        };
+        let side = (is_stereo && !self.prev_decode_only_middle)
+            .then(|| self.conceal_channel_frame(1))
+            .transpose()?;
         return Ok(SilkChannelFramePair { stereo_weights: None, mid, side });
     }
 
@@ -264,18 +262,18 @@ impl Decoder {
         let is_lbrr = plan.kind == FrameKind::Lbrr;
         let decode_mid = !is_lbrr || plan.mid_active;
 
-        let (stereo_weights, mid_only) = if plan.is_stereo && decode_mid {
-            let weights = decode_stereo_prediction_weights(range_decoder)?;
-            (Some(weights), decode_mid_only_flag(range_decoder, plan.side_active)?)
-        } else {
-            (None, false)
+        let (stereo_weights, mid_only) = match plan.is_stereo && decode_mid {
+            true => {
+                let weights = decode_stereo_prediction_weights(range_decoder)?;
+                (Some(weights), decode_mid_only_flag(range_decoder, plan.side_active)?)
+            }
+            false => (None, false),
         };
 
         let layout = self.layout;
-        let mut mid = if decode_mid {
-            self.decode_single_silk_frame(range_decoder, 0, &plan, plan.mid_coding)?
-        } else {
-            Frame::for_layout(&layout)
+        let mut mid = match decode_mid {
+            true => self.decode_single_silk_frame(range_decoder, 0, &plan, plan.mid_coding)?,
+            false => Frame::for_layout(&layout),
         };
         mid.stereo_weights = stereo_weights;
         mid.mid_only = mid_only;
@@ -287,14 +285,15 @@ impl Decoder {
         if decode_side && !is_lbrr && self.prev_decode_only_middle {
             self.channels[1].reset_after_mid_only();
         }
-        let side = if decode_side {
-            let mut side =
-                self.decode_single_silk_frame(range_decoder, 1, &plan, plan.side_coding)?;
-            side.stereo_weights = stereo_weights;
-            side.mid_only = mid_only;
-            Some(side)
-        } else {
-            None
+        let side = match decode_side {
+            true => {
+                let mut side =
+                    self.decode_single_silk_frame(range_decoder, 1, &plan, plan.side_coding)?;
+                side.stereo_weights = stereo_weights;
+                side.mid_only = mid_only;
+                Some(side)
+            }
+            false => None,
         };
 
         if plan.is_stereo && !is_lbrr {

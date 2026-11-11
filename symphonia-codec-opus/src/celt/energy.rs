@@ -187,12 +187,15 @@ impl BandEnergyHistory {
         if channels == 1 {
             self.current[1] = self.current[0];
         }
-        if is_transient {
-            let previous = self.previous.as_flattened_mut().iter_mut();
-            previous.zip(self.current.as_flattened()).for_each(|(e, &now)| *e = e.min(now));
-        } else {
-            self.two_back = self.previous;
-            self.previous = self.current;
+        match is_transient {
+            true => {
+                let previous = self.previous.as_flattened_mut().iter_mut();
+                previous.zip(self.current.as_flattened()).for_each(|(e, &now)| *e = e.min(now));
+            }
+            false => {
+                self.two_back = self.previous;
+                self.previous = self.current;
+            }
         }
 
         let elapsed_units = (loss_duration + lm.blocks()).min(MAX_BACKGROUND_INCREASE_UNITS);

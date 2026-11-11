@@ -509,10 +509,9 @@ impl<'a, 'd> BandDecoderCtx<'a, 'd> {
     where
         F: FnMut(&mut Self, &mut [f32], Lowband<'_>, Partition) -> Result<u32>,
     {
-        let (first, mut second, theta_guard) = if mid.part.bits >= side.part.bits {
-            (mid, side, 0)
-        } else {
-            (side, mid, THETA_MAX_Q14)
+        let (first, mut second, theta_guard) = match mid.part.bits >= side.part.bits {
+            true => (mid, side, 0),
+            false => (side, mid, THETA_MAX_Q14),
         };
 
         let before = self.remaining_bits;
@@ -763,10 +762,9 @@ fn decode_step_pdf(dec: &mut Decoder<'_>, qn: i32) -> i32 {
     return dec.decode_with((knee + x0) as u32, |frequency| {
         let fs = frequency as i32;
         let x = if fs < knee { fs / STEP_PDF_WEIGHT } else { x0 + 1 + (fs - knee) };
-        let (fl, fh) = if x <= x0 {
-            (STEP_PDF_WEIGHT * x, STEP_PDF_WEIGHT * (x + 1))
-        } else {
-            (x - 1 - x0 + knee, x - x0 + knee)
+        let (fl, fh) = match x <= x0 {
+            true => (STEP_PDF_WEIGHT * x, STEP_PDF_WEIGHT * (x + 1)),
+            false => (x - 1 - x0 + knee, x - x0 + knee),
         };
         return (x, fl as u32, fh as u32);
     });
@@ -781,12 +779,15 @@ fn decode_triangular_pdf(dec: &mut Decoder<'_>, qn: i32) -> i32 {
     let rising = (half_qn * (half_qn + 1)) >> 1;
     return dec.decode_with(ft as u32, |frequency| {
         let fm = frequency as i32;
-        let (x, fl, fs) = if fm < rising {
-            let x = ((((8 * fm + 1) as u32).isqrt() as i32) - 1) >> 1;
-            (x, (x * (x + 1)) >> 1, x + 1)
-        } else {
-            let x = (2 * (qn + 1) - (((8 * (ft - fm - 1) + 1) as u32).isqrt() as i32)) >> 1;
-            (x, ft - (((qn + 1 - x) * (qn + 2 - x)) >> 1), qn + 1 - x)
+        let (x, fl, fs) = match fm < rising {
+            true => {
+                let x = ((((8 * fm + 1) as u32).isqrt() as i32) - 1) >> 1;
+                (x, (x * (x + 1)) >> 1, x + 1)
+            }
+            false => {
+                let x = (2 * (qn + 1) - (((8 * (ft - fm - 1) + 1) as u32).isqrt() as i32)) >> 1;
+                (x, ft - (((qn + 1 - x) * (qn + 2 - x)) >> 1), qn + 1 - x)
+            }
         };
         return (x, fl as u32, (fl + fs) as u32);
     });

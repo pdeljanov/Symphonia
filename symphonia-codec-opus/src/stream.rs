@@ -282,11 +282,12 @@ impl<'a> FramePayload<'a> {
             return Ok(Self::without_redundancy(bytes));
         }
         let at_start = range_decoder.decode_symbol_logp(REDUNDANCY_POSITION_LOGP)? != 0;
-        let redundant_len = if explicit {
-            (range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX)? as usize)
-                + HYBRID_REDUNDANCY_MIN_BYTES
-        } else {
-            bytes.len().saturating_sub(whole_bytes(range_decoder.tell()))
+        let redundant_len = match explicit {
+            true => {
+                (range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX)? as usize)
+                    + HYBRID_REDUNDANCY_MIN_BYTES
+            }
+            false => bytes.len().saturating_sub(whole_bytes(range_decoder.tell())),
         };
 
         let active_len = bytes.len().saturating_sub(redundant_len);
@@ -297,10 +298,9 @@ impl<'a> FramePayload<'a> {
 
         let active = &bytes[..active_len];
         let redundant = &bytes[active_len..(active_len + redundant_len)];
-        let redundancy = if at_start {
-            Redundancy::CeltToSilk(redundant)
-        } else {
-            Redundancy::SilkToCelt(redundant)
+        let redundancy = match at_start {
+            true => Redundancy::CeltToSilk(redundant),
+            false => Redundancy::SilkToCelt(redundant),
         };
         return Ok(Self { active, redundancy });
     }

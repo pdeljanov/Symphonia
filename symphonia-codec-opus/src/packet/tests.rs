@@ -70,20 +70,15 @@ impl Packet {
         }
 
         if self.vbr {
-            for (i, frame) in self.frames.iter().enumerate() {
-                if i != self.frames.len() - 1 {
-                    let frame_len = frame.len();
-                    assert!(frame_len < 252, "Frame length too long for test builder (max 251)");
-                    data.push(frame_len as u8);
-                }
+            // Every frame but the last carries its length; the last takes the remaining bytes.
+            for frame in self.frames.iter().take(self.frames.len().saturating_sub(1)) {
+                let frame_len = frame.len();
+                assert!(frame_len < 252, "Frame length too long for test builder (max 251)");
+                data.push(frame_len as u8);
             }
-            for frame in self.frames {
-                data.extend(frame);
-            }
-        } else {
-            for frame in self.frames {
-                data.extend(frame);
-            }
+        }
+        for frame in self.frames {
+            data.extend(frame);
         }
 
         if self.padding_flag {

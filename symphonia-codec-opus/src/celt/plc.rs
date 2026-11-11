@@ -131,14 +131,15 @@ impl PlcState {
         channels: usize,
         n: usize,
     ) {
-        let (pitch_index, fade) = if !self.last_frame_periodic_plc {
-            let ch_refs =
-                [&decode_mem[0][..DECODE_BUFFER_SIZE], &decode_mem[1][..DECODE_BUFFER_SIZE]];
-            let found_pitch = estimate_pitch_period(&ch_refs[..channels]);
-            self.last_pitch_index = found_pitch;
-            (found_pitch, FIRST_PERIODIC_FADE)
-        } else {
-            (self.last_pitch_index, LATER_PERIODIC_FADE)
+        let (pitch_index, fade) = match self.last_frame_periodic_plc {
+            false => {
+                let ch_refs =
+                    [&decode_mem[0][..DECODE_BUFFER_SIZE], &decode_mem[1][..DECODE_BUFFER_SIZE]];
+                let found_pitch = estimate_pitch_period(&ch_refs[..channels]);
+                self.last_pitch_index = found_pitch;
+                (found_pitch, FIRST_PERIODIC_FADE)
+            }
+            true => (self.last_pitch_index, LATER_PERIODIC_FADE),
         };
 
         for (channel, lpc) in decode_mem.iter_mut().zip(self.lpc.iter_mut()).take(channels) {
@@ -541,17 +542,20 @@ fn find_top2_pitch_candidates(
             let xcorr16 = xc * XCORR_SQUARE_SCALE;
             let num = xcorr16 * xcorr16;
             if num * best_ener[1] > best_num[1] * syy {
-                if num * best_ener[0] > best_num[0] * syy {
-                    best_num[1] = best_num[0];
-                    best_ener[1] = best_ener[0];
-                    best_pitch[1] = best_pitch[0];
-                    best_num[0] = num;
-                    best_ener[0] = syy;
-                    best_pitch[0] = i;
-                } else {
-                    best_num[1] = num;
-                    best_ener[1] = syy;
-                    best_pitch[1] = i;
+                match num * best_ener[0] > best_num[0] * syy {
+                    true => {
+                        best_num[1] = best_num[0];
+                        best_ener[1] = best_ener[0];
+                        best_pitch[1] = best_pitch[0];
+                        best_num[0] = num;
+                        best_ener[0] = syy;
+                        best_pitch[0] = i;
+                    }
+                    false => {
+                        best_num[1] = num;
+                        best_ener[1] = syy;
+                        best_pitch[1] = i;
+                    }
                 }
             }
         }

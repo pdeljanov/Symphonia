@@ -224,18 +224,18 @@ impl CodingReferences {
 
         let w_q2 = self.decode_interpolation_weight(decoder, frame, layout)?;
         let interpolate = w_q2 < NLSF_INTERPOLATION_FULL_Q2 && frame.num_subframes == 4;
-        let (nlsf0_q15, a0_q12) = if interpolate {
-            let nlsf0_q15 = interpolate_nlsf_q15(&self.prev_nlsf_q15, &nlsf_q15, order, w_q2);
-            (nlsf0_q15, nlsf_to_lpc_q12(&nlsf0_q15[..order])?)
-        } else {
-            (nlsf_q15, a1_q12)
+        let (nlsf0_q15, a0_q12) = match interpolate {
+            true => {
+                let nlsf0_q15 = interpolate_nlsf_q15(&self.prev_nlsf_q15, &nlsf_q15, order, w_q2);
+                (nlsf0_q15, nlsf_to_lpc_q12(&nlsf0_q15[..order])?)
+            }
+            false => (nlsf_q15, a1_q12),
         };
 
         for (k, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
-            (subframe.nlsf_q15, subframe.lpc_coeffs_q12) = if k < NLSF_FIRST_HALF_SUBFRAMES {
-                (nlsf0_q15, a0_q12)
-            } else {
-                (nlsf_q15, a1_q12)
+            (subframe.nlsf_q15, subframe.lpc_coeffs_q12) = match k < NLSF_FIRST_HALF_SUBFRAMES {
+                true => (nlsf0_q15, a0_q12),
+                false => (nlsf_q15, a1_q12),
             };
         }
 
@@ -310,12 +310,10 @@ fn dequantize_lsf_residual_q10(
     let qstep_q16 = codebook.quantization_step_q16() as i64;
     let mut res_q10 = [0i16; MAX_LPC_ORDER];
     for i in (0..order).rev() {
-        let pred_q10 = if i + 1 < order {
-            ((res_q10[i + 1] as i32) * codebook.prediction_weight_q8(i1, i))
+        let pred_q10 = res_q10[..order].get(i + 1).map_or(0, |&next_q10| {
+            ((next_q10 as i32) * codebook.prediction_weight_q8(i1, i))
                 >> NLSF_PREDICTION_WEIGHT_Q8_SHIFT
-        } else {
-            0
-        };
+        });
         let level_q10 = quantization_level_q10(indices[i]) as i64;
         res_q10[i] = (pred_q10
             + (((level_q10 * qstep_q16) >> NLSF_QUANTIZATION_STEP_Q16_SHIFT) as i32))

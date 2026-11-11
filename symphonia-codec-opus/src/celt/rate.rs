@@ -22,7 +22,7 @@ use crate::celt::BlockSize;
 use crate::celt::constant::{
     ALLOC_STEPS, ALLOC_VECTORS, BITRES, CACHE_BITS, CACHE_CAPS, CACHE_INDEX, CDF_SPREAD,
     CDF_TAPSET, CDF_TRIM, EBANDS, FINE_OFFSET, LOG2_FRAC_TABLE, LOGN, MAX_BANDS, MAX_FINE_BITS,
-    MAX_PSEUDO, NB_ALLOC_VECTORS, Spread, TF_SELECT_TABLE, band_width,
+    MAX_PSEUDO, Spread, TF_SELECT_TABLE, band_width,
 };
 use crate::entropy::Decoder;
 
@@ -645,11 +645,8 @@ impl InterpolationCurve {
             if !coded(j) {
                 return 0;
             }
-            let raw = if over_row >= NB_ALLOC_VECTORS {
-                limits.cap[j]
-            } else {
-                limits.static_bits(&ALLOC_VECTORS[over_row], j)
-            };
+            let raw =
+                ALLOC_VECTORS.get(over_row).map_or(limits.cap[j], |row| limits.static_bits(row, j));
             let upper = limits.trimmed(raw, j) + limits.offsets[j];
             return (upper - lower[j]).max(0);
         });

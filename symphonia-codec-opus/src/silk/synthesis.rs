@@ -125,16 +125,17 @@ impl ChannelState {
                 self.rescale_lpc_state(gain_q16, &mut lpc_state_q14[..MAX_LPC_ORDER]);
 
             let residual_q14 = &mut lpc_state_q14[MAX_LPC_ORDER..MAX_LPC_ORDER + subframe_samples];
-            if voiced {
-                self.ltp_synthesis_subframe(
-                    frame,
-                    k,
-                    gain_adj_q16,
-                    &mut ltp_state_q15,
-                    residual_q14,
-                );
-            } else {
-                residual_q14.copy_from_slice(&frame.exc_q14[range.clone()]);
+            match voiced {
+                true => {
+                    self.ltp_synthesis_subframe(
+                        frame,
+                        k,
+                        gain_adj_q16,
+                        &mut ltp_state_q15,
+                        residual_q14,
+                    );
+                }
+                false => residual_q14.copy_from_slice(&frame.exc_q14[range.clone()]),
             }
 
             lpc_synthesize_q14(
@@ -156,12 +157,13 @@ impl ChannelState {
     /// of the previous gain to `gain_q16`, unit when the gain is unchanged
     /// ([RFC 6716 Section 4.2.7.9.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.2>)).
     fn rescale_lpc_state(&mut self, gain_q16: i32, lpc_state_q14: &mut [i32]) -> i32 {
-        let gain_adj_q16 = if gain_q16 != self.prev_gain_q16 {
-            let adj_q16 = div_q(self.prev_gain_q16, gain_q16, 16);
-            lpc_state_q14.iter_mut().for_each(|state| *state = mul_q16(adj_q16, *state));
-            adj_q16
-        } else {
-            UNIT_GAIN_Q16
+        let gain_adj_q16 = match gain_q16 == self.prev_gain_q16 {
+            true => UNIT_GAIN_Q16,
+            false => {
+                let adj_q16 = div_q(self.prev_gain_q16, gain_q16, 16);
+                lpc_state_q14.iter_mut().for_each(|state| *state = mul_q16(adj_q16, *state));
+                adj_q16
+            }
         };
         self.prev_gain_q16 = gain_q16;
         return gain_adj_q16;
