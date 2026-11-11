@@ -67,6 +67,7 @@ use crate::entropy;
 use crate::header::{
     ChannelMapping, ChannelMappingTable, IdentificationHeader, OutputGain, SILENT_CHANNEL,
 };
+use crate::layout::Layout;
 use crate::packet::FramePacket;
 use crate::planes::Planes;
 use crate::sample_rate::SampleRate;
@@ -91,7 +92,7 @@ const HYBRID_START_BAND: usize = celt::HYBRID_START_BAND;
 /// Samples at 48 kHz of the 2.5 ms silence frame that flushes the CELT overlap buffer into a
 /// SILK-only frame following a Hybrid frame (`120`,
 /// [RFC 6716 Section 4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5>)).
-const OVERLAP_FLUSH_SAMPLES_48K: usize = celt::SHORT_MDCT_SIZE;
+const OVERLAP_FLUSH_SAMPLES_48K: usize = celt::OVERLAP;
 
 /// Bits that must remain after the SILK layer of a SILK-only frame for it to carry redundancy
 /// ([RFC 6716 Section 4.5.1.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.1>)).
@@ -120,9 +121,6 @@ const HYBRID_REDUNDANCY_MIN_BYTES: usize = 2;
 
 /// Bits per byte, in the `i32` domain of [`entropy::Decoder::tell`].
 const BITS_PER_BYTE: i32 = u8::BITS as i32;
-
-/// Right shift that divides a bit count by [`BITS_PER_BYTE`].
-const BYTE_SHIFT: u32 = 3;
 
 /// Largest output channel count an `OpusHead` can describe: the channel count is one byte
 /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
@@ -215,12 +213,6 @@ const fn celt_mix(mode: AudioMode) -> Mix {
     };
 }
 
-/// Channel count a frame codes, from its TOC stereo flag
-/// ([RFC 6716 Section 3.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-3.1>)).
-const fn coded_channels(stereo: bool) -> usize {
-    return if stereo { 2 } else { 1 };
-}
-
 /// Bit count of `bytes` whole bytes, in the `i32` domain of [`entropy::Decoder::tell`].
 const fn bits_in(bytes: usize) -> i32 {
     return (bytes as i32) * BITS_PER_BYTE;
@@ -228,7 +220,7 @@ const fn bits_in(bytes: usize) -> i32 {
 
 /// Whole bytes that hold `bits` bits, rounded up to the next byte boundary.
 const fn whole_bytes(bits: i32) -> usize {
-    return ((bits + (BITS_PER_BYTE - 1)) >> BYTE_SHIFT) as usize;
+    return (bits as u32).div_ceil(u8::BITS) as usize;
 }
 
 /// TOC configuration shared by every frame of a packet
@@ -403,31 +395,46 @@ impl Transition {
     }
 }
 
-/// Elementary Opus stream decoder pairing a SILK decoder and a CELT decoder for a mono
-/// (`output_channels == 1`) or coupled stereo (`output_channels == 2`) stream
+/// Final range coder states of one frame's CELT work: the active layer and the 5 ms redundant
+/// frame, zero without one
+/// ([RFC 6716 Section 4.5.1.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.1.4>)).
+#[derive(Debug, Clone, Copy)]
+struct CeltRanges {
+    layer: u32,
+    redundant: u32,
+}
+
+impl CeltRanges {
+    /// The frame's contribution to the final range: both states XOR-combined
+    /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)).
+    const fn combined(self) -> u32 {
+        return self.layer ^ self.redundant;
+    }
+}
+
+/// Elementary Opus stream decoder pairing a SILK decoder and a CELT decoder for a mono or
+/// coupled stereo stream
 /// ([RFC 6716 Section 4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4>)).
 pub(crate) struct StreamDecoder {
-    output_channels: usize,
+    layout: Layout,
     sample_rate: SampleRate,
     silk_decoder: silk::Decoder,
     celt_decoder: celt::Decoder,
     /// `None` until the first frame has been decoded; a loss before that produces silence.
     last: Option<LastFrame>,
+    /// Final range coder state of the last decoded frame, zero after a loss
+    /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)).
     range_final: u32,
 }
 
 impl StreamDecoder {
-    /// Creates a new [`StreamDecoder`] for `sample_rate` and `output_channels` (`1` or `2`).
-    pub(crate) fn new(sample_rate: SampleRate, output_channels: usize) -> Result<Self> {
-        let mut silk_decoder = silk::Decoder::new();
-        silk_decoder.set_output_sample_rate(sample_rate.hz());
-        let celt_decoder = celt::Decoder::new(sample_rate, output_channels)?;
-
+    /// Creates a new [`StreamDecoder`] producing `layout` output at `sample_rate`.
+    pub(crate) fn new(sample_rate: SampleRate, layout: Layout) -> Result<Self> {
         return Ok(Self {
-            output_channels,
+            layout,
             sample_rate,
-            silk_decoder,
-            celt_decoder,
+            silk_decoder: silk::Decoder::new(sample_rate),
+            celt_decoder: celt::Decoder::new(sample_rate, layout.channels())?,
             last: None,
             range_final: 0,
         });
@@ -442,10 +449,16 @@ impl StreamDecoder {
         return;
     }
 
+    /// The final range coder state of the last decoded frame, zero after a loss.
+    #[inline]
+    pub(crate) fn final_range(&self) -> u32 {
+        return self.range_final;
+    }
+
     /// Whether the stream decodes into two output planes.
     #[inline]
     fn is_stereo(&self) -> bool {
-        return self.output_channels == 2;
+        return self.layout.is_stereo();
     }
 
     /// Decodes every frame of `packet` back to back into the `scratch` rows and returns the
@@ -544,7 +557,7 @@ impl StreamDecoder {
 
         if samples >= f10 {
             self.silk_decoder.configure(
-                coded_channels(config.stereo),
+                Layout::from_stereo_flag(config.stereo).channels(),
                 duration,
                 config.bandwidth,
             )?;
@@ -555,7 +568,7 @@ impl StreamDecoder {
         let mut full = [[0.0_f32; MAX_20MS_SAMPLES_48K]; 2];
         let mut full_planes = Planes::from_rows(&mut full, self.is_stereo());
         self.silk_decoder.configure(
-            coded_channels(config.stereo),
+            Layout::from_stereo_flag(config.stereo).channels(),
             FrameDuration::Ms10,
             config.bandwidth,
         )?;
@@ -589,7 +602,7 @@ impl StreamDecoder {
             block: BlockSize::from_frame_size_48k(frame_size_48k)?,
             start_band: celt_start_band(config.mode),
             bandwidth: config.bandwidth,
-            stream_channels: coded_channels(config.stereo),
+            stream_channels: Layout::from_stereo_flag(config.stereo).channels(),
         });
     }
 
@@ -644,7 +657,7 @@ impl StreamDecoder {
         }
 
         let mut redundant = [[0.0_f32; MAX_5MS_SAMPLES_48K]; 2];
-        let (layer_range, redundant_range) = self.decode_celt_layers(
+        let ranges = self.decode_celt_layers(
             &mut range_decoder,
             &payload,
             config,
@@ -658,8 +671,10 @@ impl StreamDecoder {
 
         // RFC 6716 Section 6: the final range state is part of conformance. A frame left
         // without a decodable payload reports zero, like a lost frame.
-        self.range_final =
-            if payload.active.len() <= 1 { 0 } else { layer_range ^ redundant_range };
+        self.range_final = match payload.active.len() {
+            0 | 1 => 0,
+            _ => ranges.combined(),
+        };
         self.last = Some(LastFrame {
             config,
             silk_to_celt_redundancy: matches!(payload.redundancy, Redundancy::SilkToCelt(_)),
@@ -685,7 +700,7 @@ impl StreamDecoder {
             self.silk_decoder.reset();
         }
         self.silk_decoder.configure(
-            coded_channels(config.stereo),
+            Layout::from_stereo_flag(config.stereo).channels(),
             config.duration,
             config.bandwidth,
         )?;
@@ -705,7 +720,7 @@ impl StreamDecoder {
         config: FrameConfig,
         redundant: &mut [[f32; MAX_5MS_SAMPLES_48K]; 2],
         mut out: Planes<'_>,
-    ) -> Result<(u32, u32)> {
+    ) -> Result<CeltRanges> {
         let leading_range = match payload.redundancy {
             Redundancy::CeltToSilk(frame) => {
                 self.decode_redundant_frame(frame, config, redundant)?
@@ -734,7 +749,7 @@ impl StreamDecoder {
             }
             Redundancy::None | Redundancy::CeltToSilk(_) => leading_range,
         };
-        return Ok((layer_range, redundant_range));
+        return Ok(CeltRanges { layer: layer_range, redundant: redundant_range });
     }
 
     /// Decodes the 5 ms redundant CELT frame `frame` into the `redundant` rows as a CELT-only
@@ -752,7 +767,7 @@ impl StreamDecoder {
             block: BlockSize::from_frame_size_48k(MAX_5MS_SAMPLES_48K)?,
             start_band: 0,
             bandwidth: config.bandwidth,
-            stream_channels: coded_channels(config.stereo),
+            stream_channels: Layout::from_stereo_flag(config.stereo).channels(),
         };
         let mut out = Planes::from_rows(redundant, self.is_stereo());
         self.celt_decoder.decode_frame(
@@ -816,7 +831,7 @@ impl StreamDecoder {
                 block: BlockSize::from_frame_size_48k(OVERLAP_FLUSH_SAMPLES_48K)?,
                 start_band: 0,
                 bandwidth: config.bandwidth,
-                stream_channels: coded_channels(config.stereo),
+                stream_channels: Layout::from_stereo_flag(config.stereo).channels(),
             };
             self.celt_decoder.decode_frame(
                 FrameInput::Silence,
@@ -1009,14 +1024,16 @@ impl StreamLayout {
     /// Family 0, the RTP mapping: one stream decoding straight to 1 or 2 output channels
     /// ([RFC 7845 Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)).
     fn rtp(sample_rate: SampleRate, num_output_channels: usize) -> Result<Self> {
-        let channel_mapping = match num_output_channels {
-            1 => vec![0],
-            2 => vec![0, 1],
-            _ => return unsupported_error("opus: more than 2 channels need an OpusHead mapping"),
+        let Some(layout) = Layout::from_channels(num_output_channels) else {
+            return unsupported_error("opus: more than 2 channels need an OpusHead mapping");
+        };
+        let channel_mapping = match layout {
+            Layout::Mono => vec![0],
+            Layout::Stereo => vec![0, 1],
         };
         return Ok(Self {
-            streams: vec![StreamDecoder::new(sample_rate, num_output_channels)?],
-            coupled_count: usize::from(num_output_channels == 2),
+            streams: vec![StreamDecoder::new(sample_rate, layout)?],
+            coupled_count: usize::from(layout.is_stereo()),
             channel_mapping,
         });
     }
@@ -1027,7 +1044,7 @@ impl StreamLayout {
         let stream_count = usize::from(table.stream_count);
         let coupled_count = usize::from(table.coupled_count);
         let streams = (0..stream_count)
-            .map(|i| StreamDecoder::new(sample_rate, coded_channels(i < coupled_count)))
+            .map(|i| StreamDecoder::new(sample_rate, Layout::from_stereo_flag(i < coupled_count)))
             .collect::<Result<Vec<_>>>()?;
         return Ok(Self { streams, coupled_count, channel_mapping: table.channel_mapping.clone() });
     }
@@ -1109,7 +1126,6 @@ pub struct OpusDecoder {
     channel_mapping: Vec<u8>,
     pre_skip: u16,
     output_gain: OutputGain,
-    range_final: u32,
 }
 
 impl OpusDecoder {
@@ -1163,7 +1179,6 @@ impl OpusDecoder {
             channel_mapping: layout.channel_mapping,
             pre_skip,
             output_gain,
-            range_final: 0,
         });
     }
 
@@ -1183,9 +1198,8 @@ impl OpusDecoder {
     /// elementary streams
     /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)); zero
     /// after a lost or concealed packet.
-    #[inline]
     pub fn final_range(&self) -> u32 {
-        return self.range_final;
+        return self.streams.iter().fold(0, |range, stream| range ^ stream.final_range());
     }
 
     /// Conceals a lost packet across all elementary streams with the duration of the last
@@ -1211,7 +1225,6 @@ impl OpusDecoder {
             routing.route(i, total_samples, &self.scratch, &mut self.buffer)?;
         }
 
-        self.range_final = 0;
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 
@@ -1242,7 +1255,6 @@ impl AudioDecoder for OpusDecoder {
     fn reset(&mut self) {
         self.streams.iter_mut().for_each(StreamDecoder::reset);
         self.scratch.iter_mut().for_each(|row| row.fill(0.0));
-        self.range_final = 0;
         self.buffer.clear();
         return;
     }
@@ -1277,7 +1289,6 @@ impl AudioDecoder for OpusDecoder {
             gain: self.output_gain.scale(),
         };
         let packets = std::iter::once(Ok(first)).chain(packets);
-        let mut combined_range = 0u32;
         for (i, (stream, stream_packet)) in self.streams.iter_mut().zip(packets).enumerate() {
             let stream_packet = stream_packet?;
             if (stream_packet.frames.len(), stream_packet.frame_duration) != shape {
@@ -1287,11 +1298,9 @@ impl AudioDecoder for OpusDecoder {
                 ));
             }
             stream.decode_packet(&stream_packet, &mut self.scratch)?;
-            combined_range ^= stream.range_final;
             routing.route(i, total_samples, &self.scratch, &mut self.buffer)?;
         }
 
-        self.range_final = combined_range;
         return Ok(self.buffer.as_generic_audio_buffer_ref());
     }
 

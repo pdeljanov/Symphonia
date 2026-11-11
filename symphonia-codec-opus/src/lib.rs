@@ -52,6 +52,7 @@ mod decoder;
 mod entropy;
 mod fixed;
 mod header;
+mod layout;
 mod packet;
 mod planes;
 mod sample_rate;

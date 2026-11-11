@@ -9,6 +9,7 @@ use symphonia_core::errors::Result;
 
 use crate::entropy;
 use crate::planes::Planes;
+use crate::sample_rate::SampleRate;
 use crate::silk::error::Error;
 use crate::silk::excitation::{decode_excitation, decode_lcg_seed};
 use crate::silk::params::{
@@ -51,18 +52,13 @@ pub(crate) struct Decoder {
     internal_rate_changed: bool,
 }
 
-impl Default for Decoder {
-    fn default() -> Self {
-        return Self::new();
-    }
-}
-
 impl Decoder {
-    /// Creates a new SILK layer decoder with default unconfigured state.
-    pub(crate) fn new() -> Self {
+    /// Creates a new SILK layer decoder with default unconfigured state, resampling its output
+    /// to `output_sample_rate`.
+    pub(crate) fn new(output_sample_rate: SampleRate) -> Self {
         return Self {
             layout: SilkLayout::UNCONFIGURED,
-            output_sample_rate: 48_000,
+            output_sample_rate: output_sample_rate.hz(),
             channels: [ChannelDecoder::new(), ChannelDecoder::new()],
             lbrr_references: [CodingReferences::new(); 2],
             stereo: StereoState::new(),
@@ -70,11 +66,6 @@ impl Decoder {
             prev_internal_channels: 0,
             internal_rate_changed: false,
         };
-    }
-
-    /// Sets the target API output sample rate (`8000`, `12000`, `16000`, `24000`, or `48000` Hz).
-    pub(crate) fn set_output_sample_rate(&mut self, output_sample_rate: u32) {
-        self.output_sample_rate = output_sample_rate;
     }
 
     /// Resets the SILK decoder state across stream discontinuities
@@ -542,7 +533,7 @@ mod tests {
         bandwidth: Bandwidth,
     ) -> Decoder {
         let channels = if stereo { 2 } else { 1 };
-        let mut decoder = Decoder::new();
+        let mut decoder = Decoder::new(SampleRate::Hz48000);
         decoder.configure(channels, frame_size, bandwidth).unwrap();
         return decoder;
     }
