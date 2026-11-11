@@ -6,7 +6,6 @@
 //! `excitation`, `resampler`) and re-exported at this module's root.
 
 // The codebooks and filter tables are lookup tables read by index.
-#![allow(clippy::large_const_arrays)]
 
 pub(crate) use self::excitation::*;
 pub(crate) use self::gain::*;
@@ -231,7 +230,7 @@ pub(crate) mod lsf {
     ///             Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND: [[u8; 10];
+    pub(crate) static CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND: [[u8; 10];
         32] = [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [1, 3, 1, 2, 2, 1, 2, 1, 1, 1],
@@ -342,7 +341,7 @@ pub(crate) mod lsf {
     ///            Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND: [[u8; 16]; 32] = [
+    pub(crate) static CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND: [[u8; 16]; 32] = [
         [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
         [10, 11, 11, 11, 11, 11, 10, 10, 10, 10, 10, 9, 9, 9, 8, 11],
         [10, 13, 13, 11, 15, 12, 12, 13, 10, 13, 12, 13, 13, 12, 11, 11],
@@ -501,7 +500,7 @@ pub(crate) mod lsf {
     ///            Decoding
     /// ```
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.2>
-    pub(crate) const PREDICTION_WEIGHT_SELECTION_NB_MB: [[u8; 9]; 32] = [
+    pub(crate) static PREDICTION_WEIGHT_SELECTION_NB_MB: [[u8; 9]; 32] = [
         [0, 1, 0, 0, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -611,7 +610,7 @@ pub(crate) mod lsf {
     ///
     /// Table 22: Prediction Weight Selection for WB Normalized LSF Decoding
     /// ```
-    pub(crate) const PREDICTION_WEIGHT_SELECTION_WB: [[u8; 15]; 32] = [
+    pub(crate) static PREDICTION_WEIGHT_SELECTION_WB: [[u8; 15]; 32] = [
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0],
@@ -720,7 +719,7 @@ pub(crate) mod lsf {
     ///
     /// Table 23: NB/MB Normalized LSF Stage-1 Codebook Vectors
     /// ```
-    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
+    pub(crate) static CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND: [[u8; 10]; 32] = [
         [12, 35, 60, 83, 108, 132, 157, 180, 206, 228],
         [15, 32, 55, 77, 101, 125, 151, 175, 201, 225],
         [19, 42, 66, 89, 114, 137, 162, 184, 209, 230],
@@ -828,7 +827,7 @@ pub(crate) mod lsf {
     /// +----+------------------------------------------------------------+
     /// Table 24: WB Normalized LSF Stage-1 Codebook Vectors
     /// ```
-    pub(crate) const CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND: [[u8; 16]; 32] = [
+    pub(crate) static CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND: [[u8; 16]; 32] = [
         [7, 23, 38, 54, 69, 85, 100, 116, 131, 147, 162, 178, 193, 208, 223, 239],
         [13, 25, 41, 55, 69, 83, 98, 112, 127, 142, 157, 171, 187, 203, 220, 236],
         [15, 21, 34, 51, 61, 78, 92, 106, 126, 136, 152, 167, 185, 205, 225, 240],
@@ -981,7 +980,7 @@ pub(crate) mod lsf {
     ///
     /// Table 28: Q12 Cosine Table for LSF Conversion
     /// ```
-    pub(crate) const Q12_COSINE_TABLE_FOR_LSF_CONVERSION: [i32; 129] = [
+    pub(crate) static Q12_COSINE_TABLE_FOR_LSF_CONVERSION: [i32; 129] = [
         4096, 4095, 4091, 4085, 4076, 4065, 4052, 4036, 4017, 3997, 3973, 3948, 3920, 3889, 3857,
         3822, 3784, 3745, 3703, 3659, 3613, 3564, 3513, 3461, 3406, 3349, 3290, 3229, 3166, 3102,
         3035, 2967, 2896, 2824, 2751, 2676, 2599, 2520, 2440, 2359, 2276, 2191, 2106, 2019, 1931,
@@ -2327,7 +2326,7 @@ pub(crate) mod excitation {
     /// - `pulse_count`: `0..=6` (where `6` represents `6 or more` pulses)
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.8.5>
-    pub(crate) const CDF_EXCITATION_SIGN: [[[Cdf<'static>; 7]; 2]; 3] = [
+    pub(crate) static CDF_EXCITATION_SIGN: [[[Cdf<'static>; 7]; 2]; 3] = [
         // SignalType::Inactive
         [
             // QuantizationOffsetType::Low (0..=6+ pulses)

@@ -8,7 +8,6 @@
 // `E_MEANS`, `COMB_FILTER_GAINS` and `CELT_WINDOW` keep the reference digits beyond `f32` precision.
 #![allow(clippy::excessive_precision)]
 // `CACHE_BITS` and `CELT_WINDOW` exceed the 256-byte threshold; both are lookup tables read by index.
-#![allow(clippy::large_const_arrays)]
 
 use crate::celt::BlockSize;
 use crate::entropy::Cdf;
@@ -151,7 +150,7 @@ pub(crate) const CACHE_INDEX: [[i16; MAX_BANDS]; CACHE_LEVELS] = [
 /// The sub-table of a band starts at `CACHE_INDEX[level][band]`; its first entry is the largest
 /// pseudo-pulse index `max_pseudo`, followed by `max_pseudo` non-decreasing entries holding
 /// `required_eighth_bits - 1` for pseudo-pulse indices `1..=max_pseudo`.
-pub(crate) const CACHE_BITS: [u8; 392] = [
+pub(crate) static CACHE_BITS: [u8; 392] = [
     40, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 40, 15, 23, 28, 31, 34, 36, 38, 39, 41, 42, 43, 44, 45, 46, 47,
     47, 49, 50, 51, 52, 53, 54, 55, 55, 57, 58, 59, 60, 61, 62, 63, 63, 65, 66, 67, 68, 69, 70, 71,
@@ -295,7 +294,7 @@ impl LaplaceModel {
 /// `0` for inter-frame and `1` for intra-frame prediction
 /// ([RFC 6716 Section 4.3.2.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.1>),
 /// values from Appendix A).
-pub(crate) const E_PROB_MODEL: [[[LaplaceModel; MAX_BANDS]; 2]; MAX_LM + 1] = [
+pub(crate) static E_PROB_MODEL: [[[LaplaceModel; MAX_BANDS]; 2]; MAX_LM + 1] = [
     [
         [
             LaplaceModel::new(72, 127),
@@ -565,7 +564,7 @@ pub(crate) const BIT_DEINTERLEAVE_TABLE: [u8; 16] = [
 /// Low-overlap MDCT window of 120 samples (2.5 ms at 48 kHz),
 /// `w[i] = sin(pi/2 * sin^2(pi/2 * (i + 0.5) / 120))`
 /// ([RFC 6716 Section 4.3.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7>)).
-pub(crate) const CELT_WINDOW: [f32; OVERLAP] = [
+pub(crate) static CELT_WINDOW: [f32; OVERLAP] = [
     6.7286966e-05,
     0.00060551348,
     0.0016815970,

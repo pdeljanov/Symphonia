@@ -13,7 +13,6 @@
 //! ```
 
 // The `U(N, K)` table is a lookup table read by index.
-#![allow(clippy::large_const_arrays)]
 
 use symphonia_core::errors::Result;
 
@@ -29,7 +28,7 @@ const PVQ_U_ROW_START: [usize; 15] =
 /// `V(N, K)` fits in 32 bits
 /// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
 #[rustfmt::skip]
-pub(crate) const PVQ_U_DATA: [u32; 1272] = [
+pub(crate) static PVQ_U_DATA: [u32; 1272] = [
     // N = 0, K = 0..=176
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
