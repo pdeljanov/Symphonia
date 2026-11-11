@@ -66,6 +66,7 @@
 //!   orchestration ([RFC 6716 Section 4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3>),
 //!   [Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 
+pub(crate) mod bands;
 pub(crate) mod constant;
 pub(crate) mod cwrs;
 pub(crate) mod decoder;
@@ -76,6 +77,7 @@ pub(crate) mod mdct;
 pub(crate) mod plc;
 pub(crate) mod postfilter;
 pub(crate) mod rate;
+mod stereo;
 pub(crate) mod synthesis;
 pub(crate) mod vq;
 

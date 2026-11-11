@@ -26,6 +26,7 @@
 
 use symphonia_core::errors::{Error as SymphoniaError, Result};
 
+use crate::celt::bands::{ShapeFrame, anti_collapse, unquantize_bands};
 use crate::celt::energy::{
     BandEnergyHistory, unquant_coarse_energy, unquant_energy_finalise, unquant_fine_energy,
 };
@@ -38,7 +39,6 @@ use crate::celt::rate::{
     decode_spread_decision, tf_decode,
 };
 use crate::celt::synthesis::{Denormalisation, deemphasis_channel, denormalise_bands};
-use crate::celt::vq::{ShapeFrame, anti_collapse, unquantize_bands};
 use crate::celt::{
     BITRES, BlockSize, DECODE_BUFFER_SIZE, MAX_BANDS, MAX_CHANNELS, MAX_FRAME_SIZE, OVERLAP,
     SILENCE_FRAME, Spread, end_band_for,
