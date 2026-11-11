@@ -214,10 +214,9 @@ cargo doc -p symphonia-codec-opus --no-deps --document-private-items
   - `origin`: `https://github.com/jiztastamablastamarang/symphonia.git` (user fork)
   - `upstream`: `https://github.com/pdeljanov/Symphonia.git` (parent repository)
   - `main`: tracks `upstream/main` 1:1. Never commit Opus work directly to `main`.
-  - `opus-decoder`: active development branch rebased linearly onto `upstream/dev-0.6`. It is the head branch of the open upstream Pull Request `pdeljanov/Symphonia#398`, so every push to `origin/opus-decoder` updates that PR.
-  - Pushing to `origin/opus-decoder` (and therefore updating PR `#398`) is allowed once the change has passed the verification gate in section 5.3. Keep the branch in a reviewable state: no broken builds, no failing tests, no scratch files.
-  - Do not mark PR `#398` ready for review, request a review, or open additional Pull Requests against `pdeljanov/Symphonia` without the user's explicit instruction.
-  - Remove `AGENTS.md` from the branch (`git rm AGENTS.md` or drop its commit during rebase) as part of final pre-PR cleanup before PR `#398` is marked ready for review.
+  - `opus-decoder`: active development branch rebased linearly onto `upstream/dev-0.6`; it is the head branch of the open upstream Pull Request `pdeljanov/Symphonia#398`, so every push to `origin/opus-decoder` updates that PR.
+  - Do not mark PR `#398` ready for review or open further Pull Requests against `pdeljanov/Symphonia` without the user's explicit instruction.
+  - Remove `AGENTS.md` from the branch (`git rm AGENTS.md` or drop its commit during rebase) before PR `#398` is marked ready for review.
 - **Staging & Commits**:
   - Commit only when requested by the user.
   - Never commit with `git add -A` or broad snapshot commands; stage explicit file paths (`git add <path>`) and inspect `git diff --cached --stat` before committing.
