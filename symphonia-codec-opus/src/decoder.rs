@@ -1071,23 +1071,54 @@ impl OpusDecoder {
         });
     }
 
-    /// Parses the [`StreamLayout`] from `params.extra_data` (`OpusHead`,
-    /// [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) or
-    /// defaults to Family 0.
-    fn parse_stream_layout(
+    /// Parses the `OpusHead` identification header
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) from
+    /// `params.extra_data`, or returns `None` when the parameters carry no extra data.
+    fn parse_identification_header(
         params: &AudioCodecParameters,
+    ) -> Result<Option<header::IdentificationHeader>> {
+        return params
+            .extra_data
+            .as_deref()
+            .filter(|extra| !extra.is_empty())
+            .map(|extra| {
+                header::IdentificationHeader::parse(BufReader::new(extra))
+                    .map_err(|_| SymphoniaError::DecodeError("opus: invalid OpusHead extra_data"))
+            })
+            .transpose();
+    }
+
+    /// Selects the output sample rate. Every Opus stream decodes at 48 kHz; the `Input Sample
+    /// Rate` of the header is not a playback rate
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)). A
+    /// declared rate selects a downsampled output only when it is one the decoder can produce;
+    /// an absent or foreign rate (such as a container's original recording rate) decodes at
+    /// 48 kHz.
+    fn output_sample_rate(params: &AudioCodecParameters) -> SampleRate {
+        return match params.sample_rate.map(SampleRate::try_from) {
+            Some(Ok(rate)) => rate,
+            Some(Err(_)) => {
+                log::debug!("opus: declared sample rate is not an Opus output rate, using 48 kHz");
+                SampleRate::Hz48000
+            }
+            None => SampleRate::Hz48000,
+        };
+    }
+
+    /// Builds the [`StreamLayout`] from the parsed `OpusHead`
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)) or
+    /// defaults to Family 0 when there is none.
+    fn parse_stream_layout(
+        id: Option<&header::IdentificationHeader>,
         sample_rate: SampleRate,
         num_output_channels: usize,
     ) -> Result<StreamLayout> {
-        let Some(extra) = params.extra_data.as_deref().filter(|b| !b.is_empty()) else {
+        let Some(id) = id else {
             if num_output_channels > 2 {
                 return unsupported_error("opus: more than 2 channels need an OpusHead mapping");
             }
             return Self::build_rtp_stream_layout(sample_rate, num_output_channels, 0, 0);
         };
-
-        let id = header::IdentificationHeader::parse(BufReader::new(extra))
-            .map_err(|_| SymphoniaError::DecodeError("opus: invalid OpusHead extra_data"))?;
 
         if id.channel_count as usize != num_output_channels {
             return Err(SymphoniaError::DecodeError(
@@ -1105,9 +1136,10 @@ impl OpusDecoder {
                 );
             }
             ChannelMappingFamily::Vorbis => {
-                let table = id.channel_mapping_table.ok_or(SymphoniaError::DecodeError(
-                    "opus: missing channel mapping table for Vorbis family 1",
-                ))?;
+                let table =
+                    id.channel_mapping_table.as_ref().ok_or(SymphoniaError::DecodeError(
+                        "opus: missing channel mapping table for Vorbis family 1",
+                    ))?;
                 let stream_count = table.stream_count as usize;
                 let coupled_count = table.coupled_count as usize;
                 let streams = (0..stream_count)
@@ -1117,7 +1149,7 @@ impl OpusDecoder {
                 return Ok(StreamLayout {
                     streams,
                     coupled_count,
-                    channel_mapping: table.channel_mapping,
+                    channel_mapping: table.channel_mapping.clone(),
                     pre_skip: id.pre_skip,
                     output_gain: id.output_gain,
                 });
@@ -1134,12 +1166,12 @@ impl OpusDecoder {
             return unsupported_error("opus: invalid codec");
         }
 
-        let sample_rate = SampleRate::try_from(
-            params.sample_rate.ok_or(SymphoniaError::Unsupported("opus: missing sample rate"))?,
-        )?;
+        let id = Self::parse_identification_header(params)?;
+        let sample_rate = Self::output_sample_rate(params);
         let channels = params
             .channels
             .clone()
+            .or_else(|| id.as_ref().map(header::IdentificationHeader::channels))
             .ok_or(SymphoniaError::Unsupported("opus: missing channel layout"))?;
         let num_output_channels = channels.count();
         if num_output_channels == 0 || num_output_channels > MAX_OUTPUT_CHANNELS {
@@ -1147,15 +1179,19 @@ impl OpusDecoder {
         }
 
         let StreamLayout { streams, coupled_count, channel_mapping, pre_skip, output_gain } =
-            Self::parse_stream_layout(params, sample_rate, num_output_channels)?;
+            Self::parse_stream_layout(id.as_ref(), sample_rate, num_output_channels)?;
 
         // One packet carries at most 120 ms (RFC 6716 Section 3.2.5).
-        let spec = AudioSpec::new(sample_rate.hz(), channels);
+        let spec = AudioSpec::new(sample_rate.hz(), channels.clone());
         let buffer =
             AudioBuffer::new(spec, MAX_PACKET_SAMPLES_48K / sample_rate.downsample_from_48k());
 
+        // Report the effective output format through `codec_params`.
+        let mut params = params.to_owned();
+        params.with_sample_rate(sample_rate.hz()).with_channels(channels);
+
         return Ok(Self {
-            params: params.to_owned(),
+            params,
             sample_rate,
             buffer,
             streams,
@@ -1332,6 +1368,18 @@ mod tests {
     use symphonia_core::units::{Duration, Timestamp};
 
     /// The 48 kHz codec parameters of an output with the channels `positions`.
+    /// Family 0 stereo `OpusHead`: version 1, pre_skip 312, input rate 48000, gain 0.
+    const OPUS_HEAD_STEREO: [u8; 19] = [
+        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 2, 0x38, 0x01, 0x80, 0xbb, 0x00, 0x00,
+        0x00, 0x00, 0,
+    ];
+
+    /// Family 1 three-channel `OpusHead`: 2 streams, 1 coupled, channel mapping `[0, 2, 1]`.
+    const OPUS_HEAD_3CH_FAMILY_1: [u8; 24] = [
+        b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 1, 3, 0x38, 0x01, 0x80, 0xbb, 0x00, 0x00,
+        0x00, 0x00, 1, 2, 1, 0, 2, 1,
+    ];
+
     fn params(positions: Position) -> AudioCodecParameters {
         let mut params = AudioCodecParameters::new();
         params
@@ -1524,6 +1572,55 @@ mod tests {
         opus_head_v16[8] = 16;
         rejected.with_extra_data(Box::from(opus_head_v16));
         assert!(OpusDecoder::try_new(&rejected, &AudioDecoderOptions::default()).is_err());
+        return;
+    }
+
+    /// RFC 7845 Section 5.1: every Opus stream decodes at 48 kHz and the header's input sample
+    /// rate is not a playback rate. A missing or foreign declared rate (a container's original
+    /// recording rate) decodes at 48 kHz; a declared Opus output rate still selects that rate.
+    #[test]
+    fn missing_or_foreign_sample_rate_decodes_at_48_khz() {
+        for declared in [None, Some(44_100)] {
+            let mut params = AudioCodecParameters::new();
+            params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_STEREO));
+            declared.into_iter().for_each(|hz| {
+                params.with_sample_rate(hz);
+            });
+            let dec = decoder(&params);
+            assert_eq!(dec.buffer.spec().rate(), 48_000);
+            assert_eq!(dec.codec_params().sample_rate, Some(48_000));
+        }
+
+        let mut params = AudioCodecParameters::new();
+        params
+            .for_codec(CODEC_ID_OPUS)
+            .with_sample_rate(16_000)
+            .with_extra_data(Box::from(OPUS_HEAD_STEREO));
+        assert_eq!(decoder(&params).buffer.spec().rate(), 16_000);
+        return;
+    }
+
+    /// RFC 7845 Section 5.1.1: when the parameters carry no channel layout, the `OpusHead` channel
+    /// count and mapping family define it. Without either, the decoder cannot be created.
+    #[test]
+    fn missing_channels_come_from_the_opus_head() {
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_STEREO));
+        let dec = decoder(&params);
+        let left_right = Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT);
+        assert_eq!(dec.buffer.spec().channels(), &left_right);
+        assert_eq!(dec.codec_params().channels, Some(left_right));
+
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_OPUS).with_extra_data(Box::from(OPUS_HEAD_3CH_FAMILY_1));
+        let dec = decoder(&params);
+        let three = Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT;
+        assert_eq!(dec.buffer.spec().channels(), &Channels::Positioned(three));
+        assert_eq!(dec.streams.len(), 2);
+
+        let mut params = AudioCodecParameters::new();
+        params.for_codec(CODEC_ID_OPUS).with_sample_rate(48_000);
+        assert!(OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).is_err());
         return;
     }
 
