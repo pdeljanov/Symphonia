@@ -1502,6 +1502,31 @@ mod tests {
         return;
     }
 
+    /// RFC 7845 Section 5.1 accepts any `OpusHead` version of 15 or less. An ISO/MP4 `dOps` box
+    /// carries version 0, so a version-0 header must configure the decoder like a version-1 one.
+    #[test]
+    fn version_0_opus_head_from_isomp4_configures_the_decoder() {
+        // "OpusHead" | version=0 | channels=2 | pre_skip=312 LE | rate=48000 LE
+        // | output_gain=-256 LE (-1.0 dB) | mapping_family=0
+        let opus_head_v0: [u8; 19] = [
+            b'O', b'p', b'u', b's', b'H', b'e', b'a', b'd', 0, 2, 0x38, 0x01, 0x80, 0xbb, 0x00,
+            0x00, 0x00, 0xff, 0,
+        ];
+        let mut params = stereo_params();
+        params.with_extra_data(Box::from(opus_head_v0));
+
+        let dec = decoder(&params);
+        assert_eq!(dec.pre_skip(), 312);
+        assert_eq!(dec.output_gain(), -256);
+
+        let mut rejected = stereo_params();
+        let mut opus_head_v16 = opus_head_v0;
+        opus_head_v16[8] = 16;
+        rejected.with_extra_data(Box::from(opus_head_v16));
+        assert!(OpusDecoder::try_new(&rejected, &AudioDecoderOptions::default()).is_err());
+        return;
+    }
+
     #[test]
     fn multistream_family_1_decodes_to_recorded_values() {
         // 3-channel Vorbis Family 1 OpusHead:
