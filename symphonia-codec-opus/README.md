@@ -38,7 +38,9 @@ symphonia-codec-opus
 │   ├── routing.rs        - Multi-stream packet splitting and output channel routing (RFC 7845 Section 5.1.1)
 │   ├── decoder.rs        - OpusDecoder: Symphonia AudioDecoder facade, output format and stream layout from the codec parameters
 │   ├── silk/             - SILK linear prediction layer (RFC 6716 Section 4.2)
-│   │   ├── mod.rs        - Frame geometry (SilkLayout), channel state and coding references, frame types
+│   │   ├── mod.rs        - Module map, size constants and re-exports
+│   │   ├── frame.rs      - Frame geometry (SilkLayout), header flags, stereo weights, frame and subframe parameters (Sections 4.2.2 to 4.2.7)
+│   │   ├── state.rs      - Channel state and history, stereo history and coding references (Sections 4.2.7.9, 4.2.8, 4.5.2)
 │   │   ├── constant.rs   - CDF tables, codebooks and filter coefficients
 │   │   ├── error.rs      - SILK error type
 │   │   ├── params.rs     - Header flags, stereo weights, gains and LTP parameters (Sections 4.2.3 to 4.2.7.6)
