@@ -20,11 +20,9 @@
 use crate::celt::constant::{BITRES, EBANDS, MAX_BANDS, Spread, band_width};
 use crate::celt::energy::BandEnergyHistory;
 use crate::celt::rate::{BandAllocation, CacheLevel};
-use crate::celt::stereo::quant_band_stereo;
 use crate::celt::vq::{
     BALANCE_SHARE_BANDS, BandDecoderCtx, COLLAPSE_DEPTH_DECAY, LCG_SIGN_BIT, Lowband,
-    MAX_BAND_BITS_Q3, MAX_BAND_WIDTH, MAX_NORM_BUFFER_SIZE, Partition, exp2, quant_band,
-    renormalise_vector,
+    MAX_BAND_BITS_Q3, MAX_BAND_WIDTH, MAX_NORM_BUFFER_SIZE, Partition, exp2, renormalise_vector,
 };
 use crate::celt::{BlockSize, MAX_CHANNELS, MAX_LM, lcg_next};
 use crate::entropy::Decoder;
@@ -143,10 +141,10 @@ struct FoldSource {
 /// band the folding reads from
 /// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>),
 /// [Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>)).
-struct BandSweep<'a> {
+struct BandSweep<'a, 'd> {
     frame: &'a ShapeFrame,
     alloc: &'a BandAllocation,
-    ctx: BandDecoderCtx,
+    ctx: BandDecoderCtx<'a, 'd>,
     /// Eighth bits left over by the bands decoded so far, shared out to the bands that follow.
     balance: i32,
     /// Whether the two channels are still coded independently (cleared at the intensity band).
@@ -157,12 +155,18 @@ struct BandSweep<'a> {
     update_lowband: bool,
 }
 
-impl<'a> BandSweep<'a> {
-    fn new(frame: &'a ShapeFrame, alloc: &'a BandAllocation, seed: u32) -> Self {
+impl<'a, 'd> BandSweep<'a, 'd> {
+    fn new(
+        frame: &'a ShapeFrame,
+        alloc: &'a BandAllocation,
+        dec: &'a mut Decoder<'d>,
+        seed: u32,
+    ) -> Self {
         return Self {
             frame,
             alloc,
             ctx: BandDecoderCtx {
+                dec,
                 band: frame.start,
                 intensity_band: alloc.intensity,
                 spread: frame.spread,
@@ -180,8 +184,8 @@ impl<'a> BandSweep<'a> {
     /// Positions the context on band `i` and returns `(tell, bits)`: the range coder position in
     /// eighth bits and the band's shape budget
     /// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>)).
-    fn begin_band(&mut self, dec: &Decoder<'_>, i: usize) -> (i32, i32) {
-        let tell = dec.tell_frac() as i32;
+    fn begin_band(&mut self, i: usize) -> (i32, i32) {
+        let tell = self.ctx.dec.tell_frac() as i32;
         if i != self.frame.start {
             self.balance -= tell;
         }
@@ -257,7 +261,6 @@ impl<'a> BandSweep<'a> {
     /// ([RFC 6716 Section 4.3.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4>)).
     fn decode_band_shapes(
         &mut self,
-        dec: &mut Decoder<'_>,
         band: Planes<'_>,
         lowbands: [Lowband<'_>; 2],
         (n, bits): (usize, i32),
@@ -280,17 +283,17 @@ impl<'a> BandSweep<'a> {
             (Some(y), true) => {
                 let x_part = Partition { bits: bits / 2, fill: fold.x_mask, ..part };
                 let y_part = Partition { bits: bits / 2, fill: fold.y_mask, ..part };
-                let x_cm = quant_band(ctx, dec, x, x_lowband, x_part)?;
-                let y_cm = quant_band(ctx, dec, y, y_lowband, y_part)?;
+                let x_cm = ctx.quant_band(x, x_lowband, x_part)?;
+                let y_cm = ctx.quant_band(y, y_lowband, y_part)?;
                 Ok((x_cm, y_cm))
             }
             (Some(y), false) => {
                 let cm =
-                    quant_band_stereo(ctx, dec, x, y, x_lowband, part, self.frame.phase_inversion)?;
+                    ctx.quant_band_stereo(x, y, x_lowband, part, self.frame.phase_inversion)?;
                 Ok((cm, cm))
             }
             (None, _) => {
-                let cm = quant_band(ctx, dec, x, x_lowband, part)?;
+                let cm = ctx.quant_band(x, x_lowband, part)?;
                 Ok((cm, cm))
             }
         };
@@ -321,12 +324,12 @@ pub(crate) fn unquantize_bands(
     let norm_offset = m * EBANDS[start];
     let channels = if spectra.is_stereo() { 2usize } else { 1usize };
     let mut history = FoldingHistory { norm: [[0.0_f32; MAX_NORM_BUFFER_SIZE]; MAX_CHANNELS] };
-    let mut sweep = BandSweep::new(frame, alloc, *seed);
+    let mut sweep = BandSweep::new(frame, alloc, dec, *seed);
 
     for i in start..end {
         let band_start = m * EBANDS[i];
         let n = band_width(i, lm);
-        let (tell, bits) = sweep.begin_band(dec, i);
+        let (tell, bits) = sweep.begin_band(i);
         sweep.select_lowband(i, band_start, norm_offset, n);
         if i == start + 1 {
             history.fold_first_hybrid_band(start, m, sweep.dual_stereo);
@@ -341,7 +344,7 @@ pub(crate) fn unquantize_bands(
         let write = (i != end - 1).then_some(band_start - norm_offset);
         let lowbands = history.band_lowbands(&mut scratch, &fold, n, write, sweep.dual_stereo);
         let band = spectra.range(band_start..(band_start + n));
-        let (x_cm, y_cm) = sweep.decode_band_shapes(dec, band, lowbands, (n, bits), &fold)?;
+        let (x_cm, y_cm) = sweep.decode_band_shapes(band, lowbands, (n, bits), &fold)?;
 
         collapse_masks[i * channels] = x_cm as u8;
         collapse_masks[i * channels + channels - 1] = y_cm as u8;
