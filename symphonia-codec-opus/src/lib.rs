@@ -55,8 +55,10 @@ mod header;
 mod layout;
 mod packet;
 mod planes;
+mod routing;
 mod sample_rate;
 mod silk;
+mod stream;
 #[cfg(test)]
 mod test_vectors;
 mod toc;
