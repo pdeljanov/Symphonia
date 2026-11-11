@@ -182,7 +182,7 @@ Testing in `symphonia-codec-opus` follows a five-layer strategy from static tabl
 - **Compact, Readable Tests with Declarative Macros (`macro_rules!`) & `TestCase` Tables**:
   - Match the clarity and compactness of `toc.rs`, `header.rs`, and `packet.rs` tests.
   - Eliminate repetitive decode-and-assert boilerplate using module-local declarative macros (`assert_mono_f32_packets!`, `assert_stereo_f32_packets!`, `assert_celt_frame_matches_reference!`, `assert_plc_loss_steps!`, `assert_subframe_field!`), `TestCase` table structs, and stack-array helpers (`std::array::from_fn` instead of `.collect::<Vec<_>>()`).
-- **Keep tests self-contained and deterministic**: Embed extracted packet byte slices and expected reference decoder values directly in `#[cfg(test)] mod tests` at the bottom of the owning module so unit tests execute with zero external network or filesystem dependencies.
+- **Keep tests self-contained and deterministic**: Embed extracted packet byte slices and expected reference decoder values directly in the owning module's `#[cfg(test)] mod tests` (inline at the bottom of the file, or declared as `mod tests;` with a sibling `<module>/tests.rs` child file when the tests outgrow the production code) so unit tests execute with zero external network or filesystem dependencies.
 
 ### 5.2 Five testing layers
 
