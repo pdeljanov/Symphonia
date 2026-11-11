@@ -247,7 +247,7 @@ pub(crate) struct PlcState {
     /// Subframe count of the last decoded frame.
     nb_subfr: usize,
     /// Internal sample rate in kHz the state was set up for.
-    fs_khz: u32,
+    sample_rate_khz: usize,
     /// Lost frames since the last decoded frame.
     pub(super) loss_count: usize,
     /// Whether the previous frame was concealed, so the next decoded frame is glued to it.
@@ -276,7 +276,7 @@ impl PlcState {
             prev_exc_q14: [0; MAX_FRAME_SAMPLES],
             subfr_length: 20,
             nb_subfr: 2,
-            fs_khz: 0,
+            sample_rate_khz: 0,
             loss_count: 0,
             last_frame_lost: false,
         };
@@ -292,13 +292,13 @@ impl PlcState {
         return;
     }
 
-    /// Synchronizes `self.fs_khz` with the channel's internal sample rate, resetting
+    /// Synchronizes `self.sample_rate_khz` with the channel's internal sample rate, resetting
     /// frame parameters if the rate changed (RFC 6716 Section 4.4).
     #[inline]
-    pub(crate) fn ensure_sample_rate(&mut self, fs_khz: u32, frame_length: usize) {
-        if self.fs_khz != fs_khz {
+    pub(crate) fn ensure_sample_rate(&mut self, sample_rate_khz: usize, frame_length: usize) {
+        if self.sample_rate_khz != sample_rate_khz {
             self.reset_frame_parameters(frame_length);
-            self.fs_khz = fs_khz;
+            self.sample_rate_khz = sample_rate_khz;
         }
         return;
     }
@@ -323,16 +323,16 @@ impl PlcState {
     /// For voiced frames, scans backward from the final subframe across the pitch period to
     /// locate the subframe with maximum summed LTP gain, collapses the 5-tap LTP filter into a
     /// single center tap clamped to `[0.70, 0.95]` in Q14, and records its pitch lag in Q8.
-    /// For unvoiced or inactive frames, sets the pitch lag to `18 ms * fs_khz` and zeroes the
+    /// For unvoiced or inactive frames, sets the pitch lag to `18 ms * sample_rate_khz` and zeroes the
     /// LTP filter.
     pub(crate) fn update_from_decoded_frame(&mut self, ch_state: &mut ChannelState, frame: &Frame) {
         let frame_length = frame.sample_count.min(MAX_FRAME_SAMPLES);
         let nb_subfr = frame.num_subframes.clamp(2, MAX_SUBFRAMES);
         let subfr_length = (frame_length / nb_subfr).min(MAX_SUBFRAME_SAMPLES);
         let lpc_order = frame.lpc_order.min(MAX_LPC_ORDER);
-        let fs_khz = ch_state.sample_rate_khz as u32;
+        let sample_rate_khz = ch_state.sample_rate_khz;
 
-        self.ensure_sample_rate(fs_khz, frame_length);
+        self.ensure_sample_rate(sample_rate_khz, frame_length);
 
         let signal_type = frame.frame_type.signal_type;
 
@@ -341,7 +341,7 @@ impl PlcState {
             self.ltp_scale_q14 = frame.ltp_scale_q14;
             ch_state.prev_pitch_lag = frame.subframes[nb_subfr - 1].pitch_lag as i32;
         } else {
-            self.pitch_l_q8 = ((fs_khz as i32) * MAX_PITCH_LAG_MS) << PITCH_LAG_Q8_SHIFT;
+            self.pitch_l_q8 = ((sample_rate_khz as i32) * MAX_PITCH_LAG_MS) << PITCH_LAG_Q8_SHIFT;
             self.ltp_coef_q14 = [0; LTP_ORDER];
             self.ltp_scale_q14 = 0;
             ch_state.prev_pitch_lag = 0;
@@ -422,7 +422,7 @@ impl PlcState {
         let subframes = layout.subframes.clamp(2, MAX_SUBFRAMES);
         let subframe_samples = (frame_length / subframes).min(MAX_SUBFRAME_SAMPLES);
         let lpc_order = layout.lpc_order.min(MAX_LPC_ORDER);
-        let sample_rate_khz = ch_state.sample_rate_khz as u32;
+        let sample_rate_khz = ch_state.sample_rate_khz;
         self.ensure_sample_rate(sample_rate_khz, frame_length);
         if ch_state.references.first_frame_after_reset {
             self.prev_lpc_q12.fill(0);
