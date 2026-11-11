@@ -265,8 +265,8 @@ impl ChannelDecoder {
         }
         let frame_length = Self::concealment_frame_length(sample_rate_khz);
         let lpc_order = SilkLayout::lpc_order_for_rate(sample_rate_khz);
-        self.plc.ensure_sample_rate(sample_rate_khz as u32, frame_length);
-        self.cng.ensure_sample_rate(sample_rate_khz as u32, lpc_order);
+        self.plc.ensure_sample_rate(sample_rate_khz, frame_length);
+        self.cng.ensure_sample_rate(sample_rate_khz, lpc_order);
     }
 
     /// Resets the side channel when it is coded again after a mid-only frame
@@ -290,8 +290,8 @@ impl ChannelDecoder {
         if self.core.update_sample_rate(sample_rate_khz, output_sample_rate)? {
             let frame_length = Self::concealment_frame_length(sample_rate_khz);
             let lpc_order = SilkLayout::lpc_order_for_rate(sample_rate_khz);
-            self.plc.ensure_sample_rate(sample_rate_khz as u32, frame_length);
-            self.cng.ensure_sample_rate(sample_rate_khz as u32, lpc_order);
+            self.plc.ensure_sample_rate(sample_rate_khz, frame_length);
+            self.cng.ensure_sample_rate(sample_rate_khz, lpc_order);
         }
         return Ok(());
     }

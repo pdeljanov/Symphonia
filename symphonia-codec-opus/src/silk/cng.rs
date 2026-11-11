@@ -60,7 +60,7 @@ pub(crate) struct CngState {
     /// Seed of the comfort noise generator.
     rand_seed: i32,
     /// Internal sample rate in kHz the state was set up for.
-    fs_khz: u32,
+    sample_rate_khz: usize,
 }
 
 impl Default for CngState {
@@ -81,13 +81,17 @@ impl CngState {
             cng_synth_state: [0; MAX_LPC_ORDER],
             cng_smth_gain_q16: 0,
             rand_seed: CNG_INITIAL_RAND_SEED,
-            fs_khz: 0,
+            sample_rate_khz: 0,
         };
     }
 
     /// Resets the comfort noise state (RFC 6716 Section 4.4).
     pub(crate) fn reset(&mut self) {
-        let lpc_order = if self.fs_khz == 8 || self.fs_khz == 12 { 10 } else { MAX_LPC_ORDER };
+        let lpc_order = if self.sample_rate_khz == 8 || self.sample_rate_khz == 12 {
+            10
+        } else {
+            MAX_LPC_ORDER
+        };
         *self = Self::new();
         self.reset_for_lpc_order(lpc_order);
         return;
@@ -107,13 +111,13 @@ impl CngState {
         return;
     }
 
-    /// Synchronizes `self.fs_khz` with the channel's internal sample rate, resetting
+    /// Synchronizes `self.sample_rate_khz` with the channel's internal sample rate, resetting
     /// smoothed NLSFs and gain when the rate changes (RFC 6716 Section 4.4).
     #[inline]
-    pub(crate) fn ensure_sample_rate(&mut self, fs_khz: u32, lpc_order: usize) {
-        if self.fs_khz != fs_khz {
+    pub(crate) fn ensure_sample_rate(&mut self, sample_rate_khz: usize, lpc_order: usize) {
+        if self.sample_rate_khz != sample_rate_khz {
             self.reset_for_lpc_order(lpc_order);
-            self.fs_khz = fs_khz;
+            self.sample_rate_khz = sample_rate_khz;
         }
         return;
     }
@@ -269,7 +273,7 @@ impl CngState {
         frame_pcm: &mut [i16],
     ) -> Result<()> {
         let order = lpc_order.min(MAX_LPC_ORDER);
-        self.ensure_sample_rate(ch_state.sample_rate_khz as u32, order);
+        self.ensure_sample_rate(ch_state.sample_rate_khz, order);
 
         let estimate = plc_state.loss_count == 0
             && ch_state.references.prev_signal_type == SignalType::Inactive;
@@ -387,7 +391,7 @@ mod tests {
 
         assert_eq!(cng.cng_smth_gain_q16, 185_963);
         assert_eq!(cng.rand_seed, 3_176_576);
-        assert_eq!(cng.fs_khz, 8);
+        assert_eq!(cng.sample_rate_khz, 8);
         assert_eq!(&cng.cng_smth_nlsf_q15[..10], &EXPECTED_SMTH_NLSF_1);
         assert_eq!(&cng.cng_exc_buf_q14[..16], &EXPECTED_EXC_BUF_HEAD_1);
 
