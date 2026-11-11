@@ -30,9 +30,9 @@
 //! ```
 
 use symphonia_core::audio::{Channels, Position};
+use symphonia_core::errors::Error as SymphoniaError;
 use symphonia_core::io::ReadBytes;
 
-use std::convert::TryFrom;
 use thiserror::Error;
 
 /// Highest `Version` field value this parser accepts
@@ -45,7 +45,12 @@ use thiserror::Error;
 const MAX_SUPPORTED_VERSION: u8 = 15;
 /// Channel mapping entry that marks an output channel as silent
 /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
-const SILENT_CHANNEL: u8 = 255;
+pub(crate) const SILENT_CHANNEL: u8 = 255;
+/// Units of the Q7.8 `Output Gain` field per decibel
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+const OUTPUT_GAIN_UNITS_PER_DB: f64 = 256.0;
+/// Decibels per decade of amplitude: a gain of `g` dB scales samples by `10^(g / 20)`.
+const DB_PER_AMPLITUDE_DECADE: f64 = 20.0;
 
 /// Ways an identification header can violate
 /// [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>).
@@ -84,6 +89,28 @@ pub(crate) enum Error {
     Io(#[from] std::io::Error),
 }
 
+impl Error {
+    /// The message the Symphonia error carries for this header error.
+    fn message(&self) -> &'static str {
+        return match self {
+            Self::InvalidMagicSignature => "opus: OpusHead has an invalid magic signature",
+            Self::UnsupportedVersion(_) => "opus: unsupported OpusHead version",
+            Self::InvalidChannelCount(_) => "opus: invalid OpusHead channel count",
+            Self::InvalidStreamCount(_) => "opus: invalid OpusHead stream count",
+            Self::InvalidCoupledCount(_) => "opus: invalid OpusHead coupled stream count",
+            Self::ExcessiveDecodedChannels => "opus: OpusHead streams exceed 255 decoded channels",
+            Self::InvalidChannelMapping => "opus: invalid OpusHead channel mapping",
+            Self::Io(_) => "opus: truncated OpusHead",
+        };
+    }
+}
+
+impl From<Error> for SymphoniaError {
+    fn from(error: Error) -> Self {
+        return SymphoniaError::DecodeError(error.message());
+    }
+}
+
 /// The identification header `OpusHead`, the first packet of an Ogg Opus stream
 /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
 ///
@@ -120,12 +147,10 @@ pub(crate) struct IdentificationHeader {
     /// The `Input Sample Rate` field in Hz, the rate of the original input. It is metadata only
     /// and does not change the decoder output rate.
     pub(crate) input_sample_rate: u32,
-    /// The `Output Gain` field, a Q7.8 gain in dB applied to the decoded output.
-    pub(crate) output_gain: i16,
-    /// The `Channel Mapping Family` field.
-    pub(crate) mapping_family: ChannelMappingFamily,
-    /// The channel mapping table, present for every family except family 0.
-    pub(crate) channel_mapping_table: Option<ChannelMappingTable>,
+    /// The `Output Gain` field applied to the decoded output.
+    pub(crate) output_gain: OutputGain,
+    /// The `Channel Mapping Family` field with its channel mapping table.
+    pub(crate) channel_mapping: ChannelMapping,
 }
 
 impl IdentificationHeader {
@@ -140,11 +165,8 @@ impl IdentificationHeader {
         let channel_count = Self::parse_channel_count(&mut reader)?;
         let pre_skip = reader.read_u16()?;
         let input_sample_rate = reader.read_u32()?;
-        let output_gain = reader.read_i16()?;
-        let mapping_family = ChannelMappingFamily::try_from(reader.read_u8()?)?;
-        Self::check_channel_count_for_family(channel_count, &mapping_family)?;
-        let channel_mapping_table =
-            ChannelMappingTable::parse(&mut reader, channel_count, &mapping_family)?;
+        let output_gain = OutputGain(reader.read_i16()?);
+        let channel_mapping = ChannelMapping::parse(&mut reader, channel_count)?;
 
         return Ok(Self {
             version,
@@ -152,8 +174,7 @@ impl IdentificationHeader {
             pre_skip,
             input_sample_rate,
             output_gain,
-            mapping_family,
-            channel_mapping_table,
+            channel_mapping,
         });
     }
 
@@ -182,26 +203,26 @@ impl IdentificationHeader {
     ///               | left, rear right, LFE
     /// ```
     pub(crate) fn channels(&self) -> Channels {
-        use ChannelMappingFamily::{Rtp, Vorbis};
+        use ChannelMapping::{Rtp, Vorbis};
 
-        let positions = match (self.mapping_family, self.channel_count) {
-            (Rtp | Vorbis, 1) => Position::FRONT_LEFT,
-            (Rtp | Vorbis, 2) => Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            (Vorbis, 3) => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
-            (Vorbis, 4) => {
+        let positions = match (&self.channel_mapping, self.channel_count) {
+            (Rtp | Vorbis(_), 1) => Position::FRONT_LEFT,
+            (Rtp | Vorbis(_), 2) => Position::FRONT_LEFT | Position::FRONT_RIGHT,
+            (Vorbis(_), 3) => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
+            (Vorbis(_), 4) => {
                 Position::FRONT_LEFT
                     | Position::FRONT_RIGHT
                     | Position::REAR_LEFT
                     | Position::REAR_RIGHT
             }
-            (Vorbis, 5) => {
+            (Vorbis(_), 5) => {
                 Position::FRONT_LEFT
                     | Position::FRONT_CENTER
                     | Position::FRONT_RIGHT
                     | Position::REAR_LEFT
                     | Position::REAR_RIGHT
             }
-            (Vorbis, 6) => {
+            (Vorbis(_), 6) => {
                 Position::FRONT_LEFT
                     | Position::FRONT_CENTER
                     | Position::FRONT_RIGHT
@@ -209,7 +230,7 @@ impl IdentificationHeader {
                     | Position::REAR_RIGHT
                     | Position::LFE1
             }
-            (Vorbis, 7) => {
+            (Vorbis(_), 7) => {
                 Position::FRONT_LEFT
                     | Position::FRONT_CENTER
                     | Position::FRONT_RIGHT
@@ -218,7 +239,7 @@ impl IdentificationHeader {
                     | Position::REAR_CENTER
                     | Position::LFE1
             }
-            (Vorbis, 8) => {
+            (Vorbis(_), 8) => {
                 Position::FRONT_LEFT
                     | Position::FRONT_CENTER
                     | Position::FRONT_RIGHT
@@ -254,62 +275,76 @@ impl IdentificationHeader {
     /// Reads the output channel count, which MUST NOT be zero.
     fn parse_channel_count<R: ReadBytes>(reader: &mut R) -> Result<u8, Error> {
         let channel_count = reader.read_u8()?;
-        if channel_count == 0 {
-            return Err(Error::InvalidChannelCount(channel_count));
-        }
-        return Ok(channel_count);
-    }
-
-    /// Checks the channel count against the family's allowed range: 1 or 2 for family 0
-    /// ([RFC 7845 Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)),
-    /// 1 to 8 for family 1
-    /// ([RFC 7845 Section 5.1.1.2](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.2>)),
-    /// and any non-zero count otherwise.
-    fn check_channel_count_for_family(
-        channel_count: u8,
-        family: &ChannelMappingFamily,
-    ) -> Result<(), Error> {
-        let allowed = match family {
-            ChannelMappingFamily::Rtp => 1..=2,
-            ChannelMappingFamily::Vorbis => 1..=8,
-            ChannelMappingFamily::Reserved(_) | ChannelMappingFamily::Undefined => 1..=u8::MAX,
-        };
-        if !allowed.contains(&channel_count) {
-            return Err(Error::InvalidChannelCount(channel_count));
-        }
-        return Ok(());
+        return (channel_count != 0)
+            .then_some(channel_count)
+            .ok_or(Error::InvalidChannelCount(channel_count));
     }
 }
 
-/// The `Channel Mapping Family` field: how the decoded channels map to output channels and
-/// what each output channel means
+/// The `Output Gain` field: a Q7.8 gain in dB applied to the decoded output
+/// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct OutputGain(pub(crate) i16);
+
+impl OutputGain {
+    /// Unity gain, the value a stream without a header decodes with.
+    pub(crate) const UNITY: Self = Self(0);
+
+    /// The raw Q7.8 dB value of the field.
+    pub(crate) const fn q7_8_db(self) -> i16 {
+        return self.0;
+    }
+
+    /// Linear scale of the gain, `10^(gain / (20 * 256))`, the formula RFC 7845 gives for
+    /// applying it; `None` at unity gain so the output can be copied unscaled.
+    pub(crate) fn scale(self) -> Option<f32> {
+        let gain_db = f64::from(self.0) / OUTPUT_GAIN_UNITS_PER_DB;
+        return (self != Self::UNITY)
+            .then(|| 10.0_f64.powf(gain_db / DB_PER_AMPLITUDE_DECADE) as f32);
+    }
+}
+
+/// The `Channel Mapping Family` field together with the channel mapping table that every family
+/// other than 0 carries: how the decoded channels map to output channels and what each output
+/// channel means
 /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChannelMappingFamily {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ChannelMapping {
     /// Family 0, the RTP mapping: one stream carrying mono or left/right stereo, with no
     /// channel mapping table
     /// ([RFC 7845 Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)).
     Rtp,
     /// Family 1: 1 to 8 channels in Vorbis channel order, from mono up to 7.1 surround
     /// ([RFC 7845 Section 5.1.1.2](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.2>)).
-    Vorbis,
+    Vorbis(ChannelMappingTable),
     /// Families 2 to 254, reserved; a decoder treats them as family 255
     /// ([RFC 7845 Section 5.1.1.4](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.4>)).
-    Reserved(u8),
+    Reserved(u8, ChannelMappingTable),
     /// Family 255: any number of channels with no defined meaning or order
     /// ([RFC 7845 Section 5.1.1.3](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.3>)).
-    Undefined,
+    Undefined(ChannelMappingTable),
 }
 
-impl TryFrom<u8> for ChannelMappingFamily {
-    type Error = Error;
+impl ChannelMapping {
+    /// Reads the family byte and, for every family but 0, the table that follows it, after
+    /// checking `channel_count` against the family's allowed range: 1 or 2 for family 0, 1 to 8
+    /// for family 1, and any non-zero count otherwise.
+    fn parse<R: ReadBytes>(reader: &mut R, channel_count: u8) -> Result<Self, Error> {
+        let family = reader.read_u8()?;
+        let allowed = match family {
+            0 => 1..=2,
+            1 => 1..=8,
+            _ => 1..=u8::MAX,
+        };
+        if !allowed.contains(&channel_count) {
+            return Err(Error::InvalidChannelCount(channel_count));
+        }
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        return match value {
+        return match family {
             0 => Ok(Self::Rtp),
-            1 => Ok(Self::Vorbis),
-            2..=254 => Ok(Self::Reserved(value)),
-            255 => Ok(Self::Undefined),
+            1 => Ok(Self::Vorbis(ChannelMappingTable::parse(reader, channel_count)?)),
+            255 => Ok(Self::Undefined(ChannelMappingTable::parse(reader, channel_count)?)),
+            _ => Ok(Self::Reserved(family, ChannelMappingTable::parse(reader, channel_count)?)),
         };
     }
 }
@@ -336,30 +371,14 @@ pub(crate) struct ChannelMappingTable {
     /// The `Coupled Stream Count` field `M`, the number of streams that decode to two channels.
     pub(crate) coupled_count: u8,
     /// The `Channel Mapping` field: for each output channel, the decoded channel it plays, or
-    /// 255 for silence.
+    /// [`SILENT_CHANNEL`] for silence.
     pub(crate) channel_mapping: Vec<u8>,
 }
 
 impl ChannelMappingTable {
-    /// Reads the table when `channel_mapping_family` requires one: it MUST be omitted for
-    /// family 0 and is REQUIRED for every other family
-    /// ([RFC 7845 Section 5.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1>)).
-    pub(crate) fn parse<R: ReadBytes>(
-        reader: &mut R,
-        channel_count: u8,
-        channel_mapping_family: &ChannelMappingFamily,
-    ) -> Result<Option<Self>, Error> {
-        return match channel_mapping_family {
-            ChannelMappingFamily::Rtp => Ok(None),
-            ChannelMappingFamily::Vorbis
-            | ChannelMappingFamily::Reserved(_)
-            | ChannelMappingFamily::Undefined => Self::parse_table(reader, channel_count).map(Some),
-        };
-    }
-
     /// Reads the stream counts and one mapping entry per output channel, rejecting an entry
     /// that names a decoded channel beyond `N + M`.
-    fn parse_table<R: ReadBytes>(reader: &mut R, channel_count: u8) -> Result<Self, Error> {
+    fn parse<R: ReadBytes>(reader: &mut R, channel_count: u8) -> Result<Self, Error> {
         let stream_count = reader.read_u8()?;
         if stream_count == 0 {
             return Err(Error::InvalidStreamCount(stream_count));
@@ -370,7 +389,7 @@ impl ChannelMappingTable {
             return Err(Error::InvalidCoupledCount(coupled_count));
         }
 
-        let mut channel_mapping = vec![0u8; channel_count as usize];
+        let mut channel_mapping = vec![0u8; usize::from(channel_count)];
         reader.read_buf_exact(&mut channel_mapping)?;
 
         let decoded_channels =
@@ -386,273 +405,313 @@ impl ChannelMappingTable {
     }
 }
 
+/// Builders of `OpusHead` packets for the tests of this crate.
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// Builds an `OpusHead` packet from RFC 7845 Section 5.1 defaults (version 1, stereo,
+    /// pre-skip 312, 48 kHz input, unity gain, family 0) with one setter per field.
+    pub(crate) struct OpusHeadBuilder {
+        magic: [u8; 8],
+        version: u8,
+        channel_count: u8,
+        pre_skip: u16,
+        input_sample_rate: u32,
+        output_gain: i16,
+        family: u8,
+        table: Vec<u8>,
+        trailing: Vec<u8>,
+    }
+
+    impl OpusHeadBuilder {
+        pub(crate) fn new() -> Self {
+            return Self {
+                magic: *b"OpusHead",
+                version: 1,
+                channel_count: 2,
+                pre_skip: 312,
+                input_sample_rate: 48_000,
+                output_gain: 0,
+                family: 0,
+                table: Vec::new(),
+                trailing: Vec::new(),
+            };
+        }
+
+        pub(crate) fn magic(mut self, magic: &[u8; 8]) -> Self {
+            self.magic = *magic;
+            return self;
+        }
+
+        pub(crate) fn version(mut self, version: u8) -> Self {
+            self.version = version;
+            return self;
+        }
+
+        pub(crate) fn channels(mut self, channel_count: u8) -> Self {
+            self.channel_count = channel_count;
+            return self;
+        }
+
+        pub(crate) fn pre_skip(mut self, pre_skip: u16) -> Self {
+            self.pre_skip = pre_skip;
+            return self;
+        }
+
+        pub(crate) fn output_gain(mut self, output_gain: i16) -> Self {
+            self.output_gain = output_gain;
+            return self;
+        }
+
+        pub(crate) fn family(mut self, family: u8) -> Self {
+            self.family = family;
+            return self;
+        }
+
+        /// Appends a channel mapping table: `N` streams, `M` of them coupled, and one mapping
+        /// entry per output channel.
+        pub(crate) fn table(
+            mut self,
+            stream_count: u8,
+            coupled_count: u8,
+            channel_mapping: &[u8],
+        ) -> Self {
+            self.table = [&[stream_count, coupled_count], channel_mapping].concat();
+            return self;
+        }
+
+        /// Appends bytes after the known fields.
+        pub(crate) fn trailing(mut self, bytes: &[u8]) -> Self {
+            self.trailing = bytes.to_vec();
+            return self;
+        }
+
+        pub(crate) fn build(self) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&self.magic);
+            bytes.push(self.version);
+            bytes.push(self.channel_count);
+            bytes.extend_from_slice(&self.pre_skip.to_le_bytes());
+            bytes.extend_from_slice(&self.input_sample_rate.to_le_bytes());
+            bytes.extend_from_slice(&self.output_gain.to_le_bytes());
+            bytes.push(self.family);
+            bytes.extend_from_slice(&self.table);
+            bytes.extend_from_slice(&self.trailing);
+            return bytes;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::OpusHeadBuilder;
     use super::*;
+    use symphonia_core::io::BufReader;
 
-    mod id {
-        use super::*;
-        use symphonia_core::io::BufReader;
+    fn parse(header: &[u8]) -> Result<IdentificationHeader, Error> {
+        return IdentificationHeader::parse(BufReader::new(header));
+    }
 
-        fn create_valid_id_header() -> Vec<u8> {
-            return vec![
-                0x4F, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, // Magic signature "OpusHead"
-                0x01, // Version
-                0x02, // Channel count
-                0x38, 0x01, // Pre-skip
-                0x80, 0xBB, 0x00, 0x00, // Input sample rate (48000 Hz)
-                0x00, 0x00, // Output gain
-                0x00, // Channel mapping family (RTP)
-            ];
+    fn table(stream_count: u8, coupled_count: u8, channel_mapping: &[u8]) -> ChannelMappingTable {
+        return ChannelMappingTable {
+            stream_count,
+            coupled_count,
+            channel_mapping: channel_mapping.to_vec(),
+        };
+    }
+
+    #[test]
+    fn valid_id_header_parsing() {
+        let parsed = parse(&OpusHeadBuilder::new().build()).unwrap();
+        let expected = IdentificationHeader {
+            version: 1,
+            channel_count: 2,
+            pre_skip: 312,
+            input_sample_rate: 48_000,
+            output_gain: OutputGain::UNITY,
+            channel_mapping: ChannelMapping::Rtp,
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    /// A header that ends inside its fixed fields reports the failed read
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
+    #[test]
+    fn truncated_header_reports_the_read_error() {
+        let result = parse(&OpusHeadBuilder::new().build()[..12]);
+        let eof = std::io::ErrorKind::UnexpectedEof;
+        assert!(matches!(result, Err(Error::Io(ref error)) if error.kind() == eof));
+    }
+
+    #[test]
+    fn invalid_magic_signature() {
+        let result = parse(&OpusHeadBuilder::new().magic(b"OpusHeas").build());
+        assert!(matches!(result, Err(Error::InvalidMagicSignature)));
+    }
+
+    /// Every header error converts to a Symphonia decode error with a crate-prefixed message.
+    #[test]
+    fn errors_convert_to_symphonia_decode_errors() {
+        let error = parse(&OpusHeadBuilder::new().version(16).build()).unwrap_err();
+        let converted = SymphoniaError::from(error);
+        assert!(
+            matches!(converted, SymphoniaError::DecodeError(message) if message.starts_with("opus: "))
+        );
+    }
+
+    /// RFC 7845 Section 5.1.1: family 0 and family 1 carry positioned channels in Vorbis
+    /// order; families 2 to 255 carry discrete channels without defined positions.
+    #[test]
+    fn channel_layout_follows_the_mapping_family() {
+        let mono = parse(&OpusHeadBuilder::new().channels(1).build()).unwrap();
+        assert_eq!(mono.channels(), Channels::Positioned(Position::FRONT_LEFT));
+
+        let stereo = parse(&OpusHeadBuilder::new().build()).unwrap();
+        let left_right = Position::FRONT_LEFT | Position::FRONT_RIGHT;
+        assert_eq!(stereo.channels(), Channels::Positioned(left_right));
+
+        let surround =
+            OpusHeadBuilder::new().channels(6).family(1).table(4, 2, &[0, 4, 1, 2, 3, 5]);
+        let layout_5_1 = Position::FRONT_LEFT
+            | Position::FRONT_CENTER
+            | Position::FRONT_RIGHT
+            | Position::REAR_LEFT
+            | Position::REAR_RIGHT
+            | Position::LFE1;
+        assert_eq!(parse(&surround.build()).unwrap().channels(), Channels::Positioned(layout_5_1));
+
+        let undefined = OpusHeadBuilder::new().family(255).table(2, 0, &[0, 1]);
+        assert_eq!(parse(&undefined.build()).unwrap().channels(), Channels::Discrete(2));
+    }
+
+    /// RFC 7845 Section 5.1: the linear scale of the Q7.8 dB gain is `10^(gain / (20 * 256))`,
+    /// and unity gain needs no scaling at all.
+    #[test]
+    fn output_gain_scale_follows_the_rfc_formula() {
+        assert_eq!(OutputGain::UNITY.scale(), None);
+        let plus_one_db = OutputGain(256).scale().unwrap();
+        assert!((plus_one_db - 1.122_018_5).abs() < 1e-6);
+        let minus_one_db = OutputGain(-256).scale().unwrap();
+        assert!((minus_one_db - 0.891_250_9).abs() < 1e-6);
+    }
+
+    /// RFC 7845 Section 5.1: an implementation SHOULD accept any stream with a version number
+    /// of 15 or less. Version 0 is what the ISO Base Media File Format `dOps` box carries.
+    #[test]
+    fn versions_up_to_15_are_accepted() {
+        for version in [0, 1, 2, 15] {
+            let parsed = parse(&OpusHeadBuilder::new().version(version).build()).unwrap();
+            assert_eq!(parsed.version, version);
         }
+    }
 
-        #[test]
-        fn valid_id_header_parsing() {
-            let id_header = create_valid_id_header();
-            let reader = BufReader::new(&id_header);
-            let parsed_header = IdentificationHeader::parse(reader).unwrap();
+    /// RFC 7845 Section 5.1: a header with a compatible major version but a larger minor
+    /// version MUST NOT be treated as invalid for containing additional data not specified
+    /// there. The known fields parse unchanged and the trailing bytes are left unread.
+    #[test]
+    fn trailing_data_after_the_known_fields_is_tolerated() {
+        let trailing = [0xde, 0xad, 0xbe, 0xef];
 
-            assert_eq!(parsed_header.version, 1);
-            assert_eq!(parsed_header.channel_count, 2);
-            assert_eq!(parsed_header.pre_skip, 312);
-            assert_eq!(parsed_header.input_sample_rate, 48000);
-            assert_eq!(parsed_header.output_gain, 0);
-            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::Rtp);
-            assert!(parsed_header.channel_mapping_table.is_none());
+        let family_zero = parse(&OpusHeadBuilder::new().version(2).build()).unwrap();
+        let with_trailing = OpusHeadBuilder::new().version(2).trailing(&trailing).build();
+        assert_eq!(parse(&with_trailing).unwrap(), family_zero);
+
+        let family_one = OpusHeadBuilder::new().version(2).family(1).table(2, 1, &[0, 1]);
+        let expected = parse(&family_one.build()).unwrap();
+        let with_trailing = OpusHeadBuilder::new()
+            .version(2)
+            .family(1)
+            .table(2, 1, &[0, 1])
+            .trailing(&trailing)
+            .build();
+        let parsed = parse(&with_trailing).unwrap();
+        assert_eq!(parsed, expected);
+        assert_eq!(parsed.channel_mapping, ChannelMapping::Vorbis(table(2, 1, &[0, 1])));
+    }
+
+    /// RFC 7845 Section 5.1: a version above 15 has a different major version and the stream
+    /// is assumed to be incompatible.
+    #[test]
+    fn versions_above_15_are_rejected() {
+        for version in [16, 0x1f, 0xff] {
+            let result = parse(&OpusHeadBuilder::new().version(version).build());
+            assert!(matches!(result, Err(Error::UnsupportedVersion(v)) if v == version));
         }
+    }
 
-        /// A header that ends inside its fixed fields reports the failed read
-        /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
-        #[test]
-        fn truncated_header_reports_the_read_error() {
-            let header = create_valid_id_header();
-            let result = IdentificationHeader::parse(BufReader::new(&header[..12]));
-            let eof = std::io::ErrorKind::UnexpectedEof;
-            assert!(matches!(result, Err(Error::Io(ref error)) if error.kind() == eof));
-        }
+    #[test]
+    fn invalid_channel_count() {
+        let result = parse(&OpusHeadBuilder::new().channels(0).build());
+        assert!(matches!(result, Err(Error::InvalidChannelCount(0))));
+    }
 
-        #[test]
-        fn invalid_magic_signature() {
-            let mut invalid_header = create_valid_id_header();
-            invalid_header[7] = b's'; // Change last byte of signature
+    #[test]
+    fn family_one_channel_mapping() {
+        let parsed = parse(&OpusHeadBuilder::new().family(1).table(2, 1, &[0, 1]).build()).unwrap();
+        assert_eq!(parsed.channel_mapping, ChannelMapping::Vorbis(table(2, 1, &[0, 1])));
+    }
 
-            let reader = BufReader::new(&invalid_header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::InvalidMagicSignature)));
-        }
+    /// RFC 7845 Section 5.1.1: `N + M` decoded channels must fit in a byte; a crafted header
+    /// must produce an error, never an arithmetic overflow.
+    #[test]
+    fn stream_and_coupled_counts_summing_past_255_are_rejected() {
+        let result = parse(&OpusHeadBuilder::new().family(1).table(200, 100, &[0, 1]).build());
+        assert!(matches!(result, Err(Error::ExcessiveDecodedChannels)));
+    }
 
-        /// RFC 7845 Section 5.1.1: family 0 and family 1 carry positioned channels in Vorbis
-        /// order; families 2 to 255 carry discrete channels without defined positions.
-        #[test]
-        fn channel_layout_follows_the_mapping_family() {
-            let mut mono = create_valid_id_header();
-            mono[9] = 1;
-            let parsed = IdentificationHeader::parse(BufReader::new(&mono)).unwrap();
-            assert_eq!(parsed.channels(), Channels::Positioned(Position::FRONT_LEFT));
+    /// RFC 7845 Section 5.1.1.3 and Section 5.1.1.4: family 255 and the reserved families carry
+    /// a channel mapping table like every family other than 0.
+    #[test]
+    fn families_other_than_0_carry_a_channel_mapping_table() {
+        let undefined = parse(&OpusHeadBuilder::new().family(255).table(2, 0, &[0, 1]).build());
+        assert_eq!(
+            undefined.unwrap().channel_mapping,
+            ChannelMapping::Undefined(table(2, 0, &[0, 1]))
+        );
 
-            let stereo = create_valid_id_header();
-            let parsed = IdentificationHeader::parse(BufReader::new(&stereo)).unwrap();
-            let left_right = Position::FRONT_LEFT | Position::FRONT_RIGHT;
-            assert_eq!(parsed.channels(), Channels::Positioned(left_right));
+        let reserved = parse(&OpusHeadBuilder::new().family(7).table(2, 0, &[0, 1]).build());
+        assert_eq!(
+            reserved.unwrap().channel_mapping,
+            ChannelMapping::Reserved(7, table(2, 0, &[0, 1]))
+        );
+    }
 
-            let mut surround = create_valid_id_header();
-            surround[9] = 6;
-            surround[18] = 1;
-            surround.extend_from_slice(&[4, 2, 0, 4, 1, 2, 3, 5]);
-            let parsed = IdentificationHeader::parse(BufReader::new(&surround)).unwrap();
-            let layout_5_1 = Position::FRONT_LEFT
-                | Position::FRONT_CENTER
-                | Position::FRONT_RIGHT
-                | Position::REAR_LEFT
-                | Position::REAR_RIGHT
-                | Position::LFE1;
-            assert_eq!(parsed.channels(), Channels::Positioned(layout_5_1));
+    /// RFC 7845 Section 5.1.1.1 (family 0: 1 or 2 channels) and Section 5.1.1.2 (family 1:
+    /// 1 to 8 channels).
+    #[test]
+    fn channel_count_outside_the_family_range_is_rejected() {
+        let result = parse(&OpusHeadBuilder::new().channels(3).build());
+        assert!(matches!(result, Err(Error::InvalidChannelCount(3))));
 
-            let mut undefined = create_valid_id_header();
-            undefined[18] = 255;
-            undefined.extend_from_slice(&[2, 0, 0, 1]);
-            let parsed = IdentificationHeader::parse(BufReader::new(&undefined)).unwrap();
-            assert_eq!(parsed.channels(), Channels::Discrete(2));
-        }
+        let nine =
+            OpusHeadBuilder::new().channels(9).family(1).table(5, 4, &[0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let result = parse(&nine.build());
+        assert!(matches!(result, Err(Error::InvalidChannelCount(9))));
+    }
 
-        /// RFC 7845 Section 5.1: an implementation SHOULD accept any stream with a version number
-        /// of 15 or less. Version 0 is what the ISO Base Media File Format `dOps` box carries.
-        #[test]
-        fn versions_up_to_15_are_accepted() {
-            for version in [0, 1, 2, 15] {
-                let mut header = create_valid_id_header();
-                header[8] = version;
-                let parsed = IdentificationHeader::parse(BufReader::new(&header)).unwrap();
-                assert_eq!(parsed.version, version);
-            }
-        }
+    #[test]
+    fn invalid_stream_count() {
+        let result = parse(&OpusHeadBuilder::new().family(1).table(0, 0, &[0, 1]).build());
+        assert!(matches!(result, Err(Error::InvalidStreamCount(0))));
+    }
 
-        /// RFC 7845 Section 5.1: a header with a compatible major version but a larger minor
-        /// version MUST NOT be treated as invalid for containing additional data not specified
-        /// there. The known fields parse unchanged and the trailing bytes are left unread.
-        #[test]
-        fn trailing_data_after_the_known_fields_is_tolerated() {
-            let mut family_zero = create_valid_id_header();
-            family_zero[8] = 2;
-            family_zero.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-            let expected = IdentificationHeader::parse(BufReader::new(&family_zero[..19])).unwrap();
-            let parsed = IdentificationHeader::parse(BufReader::new(&family_zero)).unwrap();
-            assert_eq!(parsed, expected);
+    #[test]
+    fn invalid_coupled_count() {
+        let result = parse(&OpusHeadBuilder::new().family(1).table(2, 3, &[0, 1]).build());
+        assert!(matches!(result, Err(Error::InvalidCoupledCount(3))));
+    }
 
-            let mut family_one = create_valid_id_header();
-            family_one[8] = 2;
-            family_one[18] = 1;
-            family_one.extend_from_slice(&[2, 1, 0, 1]);
-            let known_len = family_one.len();
-            family_one.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-            let expected = IdentificationHeader::parse(BufReader::new(&family_one[..known_len]));
-            let parsed = IdentificationHeader::parse(BufReader::new(&family_one)).unwrap();
-            assert_eq!(parsed, expected.unwrap());
-            assert_eq!(parsed.channel_mapping_table.map(|t| t.channel_mapping), Some(vec![0, 1]));
-        }
+    #[test]
+    fn valid_channel_mapping() {
+        let three = OpusHeadBuilder::new().channels(3).family(1).table(2, 1, &[0, 1, 2]);
+        let parsed = parse(&three.build()).unwrap();
+        assert_eq!(parsed.channel_count, 3);
+        assert_eq!(parsed.channel_mapping, ChannelMapping::Vorbis(table(2, 1, &[0, 1, 2])));
+    }
 
-        /// RFC 7845 Section 5.1: a version above 15 has a different major version and the stream
-        /// is assumed to be incompatible.
-        #[test]
-        fn versions_above_15_are_rejected() {
-            for version in [16, 0x1f, 0xff] {
-                let mut header = create_valid_id_header();
-                header[8] = version;
-                let result = IdentificationHeader::parse(BufReader::new(&header));
-                assert!(matches!(result, Err(Error::UnsupportedVersion(v)) if v == version));
-            }
-        }
-
-        #[test]
-        fn invalid_channel_count() {
-            let mut invalid_header = create_valid_id_header();
-            invalid_header[9] = 0; // Change channel count to 0
-
-            let reader = BufReader::new(&invalid_header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::InvalidChannelCount(0))));
-        }
-        #[test]
-        fn family_one_channel_mapping() {
-            let mut header = create_valid_id_header();
-            header[18] = 1; // Change channel mapping family to Vorbis
-            let (stream_count, coupled_count, channel_mapping) = (2, 1, vec![0, 1]);
-            header.extend_from_slice(&[
-                stream_count,
-                coupled_count,
-                channel_mapping[0],
-                channel_mapping[1],
-            ]);
-
-            let reader = BufReader::new(&header);
-            let parsed_header = IdentificationHeader::parse(reader).unwrap();
-            assert_eq!(parsed_header.mapping_family, ChannelMappingFamily::Vorbis);
-
-            let table = ChannelMappingTable { stream_count, coupled_count, channel_mapping };
-            assert_eq!(parsed_header.channel_mapping_table, Some(table));
-        }
-
-        /// RFC 7845 Section 5.1.1: `N + M` decoded channels must fit in a byte; a crafted header
-        /// must produce an error, never an arithmetic overflow.
-        #[test]
-        fn stream_and_coupled_counts_summing_past_255_are_rejected() {
-            let mut header = create_valid_id_header();
-            header[18] = 1;
-            header.extend_from_slice(&[200, 100, 0, 1]);
-            let result = IdentificationHeader::parse(BufReader::new(&header));
-            assert!(matches!(result, Err(Error::ExcessiveDecodedChannels)));
-        }
-
-        /// RFC 7845 Section 5.1.1.3: family 255 carries a channel mapping table like every
-        /// family other than 0.
-        #[test]
-        fn family_255_carries_a_channel_mapping_table() {
-            let mut header = create_valid_id_header();
-            header[18] = 255;
-            header.extend_from_slice(&[2, 0, 0, 1]);
-            let parsed = IdentificationHeader::parse(BufReader::new(&header)).unwrap();
-            assert_eq!(parsed.mapping_family, ChannelMappingFamily::Undefined);
-            let table = ChannelMappingTable {
-                stream_count: 2,
-                coupled_count: 0,
-                channel_mapping: vec![0, 1],
-            };
-            assert_eq!(parsed.channel_mapping_table, Some(table));
-        }
-
-        /// RFC 7845 Section 5.1.1.1 (family 0: 1 or 2 channels) and Section 5.1.1.2 (family 1:
-        /// 1 to 8 channels).
-        #[test]
-        fn channel_count_outside_the_family_range_is_rejected() {
-            let mut family_zero = create_valid_id_header();
-            family_zero[9] = 3;
-            let result = IdentificationHeader::parse(BufReader::new(&family_zero));
-            assert!(matches!(result, Err(Error::InvalidChannelCount(3))));
-
-            let mut family_one = create_valid_id_header();
-            family_one[9] = 9;
-            family_one[18] = 1;
-            family_one.extend_from_slice(&[5, 4, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
-            let result = IdentificationHeader::parse(BufReader::new(&family_one));
-            assert!(matches!(result, Err(Error::InvalidChannelCount(9))));
-        }
-
-        #[test]
-        fn invalid_stream_count() {
-            let mut header = create_valid_id_header();
-            header[18] = 1; // Change channel mapping family to Vorbis
-            header.extend_from_slice(&[0, 0, 0, 1]); // Invalid stream count (0)
-
-            let reader = BufReader::new(&header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::InvalidStreamCount(0))));
-        }
-
-        #[test]
-        fn invalid_coupled_count() {
-            let mut header = create_valid_id_header();
-            header[18] = 1; // Change channel mapping family to Vorbis
-            header.extend_from_slice(&[2, 3, 0, 1]); // Invalid coupled count (3 > 2)
-
-            let reader = BufReader::new(&header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::InvalidCoupledCount(3))));
-        }
-
-        #[test]
-        fn valid_channel_mapping() {
-            let mut header = create_valid_id_header();
-            header[18] = 1; // Change channel mapping family to Vorbis
-            header[9] = 3; // Set channel count to 3
-            header.extend_from_slice(&[2, 1, 0, 1, 2]); // Stream count, coupled count, channel mapping
-
-            let reader = BufReader::new(&header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(result.is_ok());
-
-            if let Ok(parsed) = result {
-                assert_eq!(parsed.channel_count, 3);
-                assert_eq!(parsed.mapping_family, ChannelMappingFamily::Vorbis);
-                assert_eq!(
-                    parsed.channel_mapping_table,
-                    Some(ChannelMappingTable {
-                        stream_count: 2,
-                        coupled_count: 1,
-                        channel_mapping: vec![0, 1, 2],
-                    })
-                );
-            }
-        }
-        #[test]
-        fn invalid_channel_mapping() {
-            let mut header = create_valid_id_header();
-            header[18] = 1; // Change channel mapping family to Vorbis
-            header[9] = 3; // Set channel count to 3
-            header.extend_from_slice(&[2, 1, 0, 1, 3]); // Stream count, coupled count, channel mapping
-
-            let reader = BufReader::new(&header);
-            let result = IdentificationHeader::parse(reader);
-            assert!(matches!(result, Err(Error::InvalidChannelMapping)));
-        }
+    #[test]
+    fn invalid_channel_mapping() {
+        let three = OpusHeadBuilder::new().channels(3).family(1).table(2, 1, &[0, 1, 3]);
+        let result = parse(&three.build());
+        assert!(matches!(result, Err(Error::InvalidChannelMapping)));
     }
 }
