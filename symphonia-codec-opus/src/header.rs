@@ -487,6 +487,30 @@ mod tests {
             }
         }
 
+        /// RFC 7845 Section 5.1: a header with a compatible major version but a larger minor
+        /// version MUST NOT be treated as invalid for containing additional data not specified
+        /// there. The known fields parse unchanged and the trailing bytes are left unread.
+        #[test]
+        fn trailing_data_after_the_known_fields_is_tolerated() {
+            let mut family_zero = create_valid_id_header();
+            family_zero[8] = 2;
+            family_zero.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+            let expected = IdentificationHeader::parse(BufReader::new(&family_zero[..19])).unwrap();
+            let parsed = IdentificationHeader::parse(BufReader::new(&family_zero)).unwrap();
+            assert_eq!(parsed, expected);
+
+            let mut family_one = create_valid_id_header();
+            family_one[8] = 2;
+            family_one[18] = 1;
+            family_one.extend_from_slice(&[2, 1, 0, 1]);
+            let known_len = family_one.len();
+            family_one.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+            let expected = IdentificationHeader::parse(BufReader::new(&family_one[..known_len]));
+            let parsed = IdentificationHeader::parse(BufReader::new(&family_one)).unwrap();
+            assert_eq!(parsed, expected.unwrap());
+            assert_eq!(parsed.channel_mapping_table.map(|t| t.channel_mapping), Some(vec![0, 1]));
+        }
+
         /// RFC 7845 Section 5.1: a version above 15 has a different major version and the stream
         /// is assumed to be incompatible.
         #[test]

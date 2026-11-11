@@ -526,7 +526,7 @@ Summary across all 5 output sample rates (120 runs total):
 
 ### 8.3 Running the Tests
 
-The 139 self-contained unit tests require no external files:
+The 140 self-contained unit tests require no external files:
 
 ```bash
 cargo test -p symphonia-codec-opus
