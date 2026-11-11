@@ -17,10 +17,12 @@
 //! are duplicated here rather than shared because a format crate must not depend on a codec bundle;
 //! only the small amount of header parsing needed to find frame boundaries is reproduced.
 
+use std::io::{ErrorKind, Seek, SeekFrom};
+
 use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3};
-use symphonia_core::errors::Result;
-use symphonia_core::io::{MediaSourceStream, ReadBytes};
+use symphonia_core::errors::{Result, SeekErrorKind, seek_error};
+use symphonia_core::io::{MediaSource, MediaSourceStream, ReadBytes, SeekBuffered};
 use symphonia_core::packet::Packet;
 use symphonia_core::units::{Duration, Timestamp};
 
@@ -54,6 +56,8 @@ pub struct MpegFrameFormat {
     pub sample_rate: u32,
     /// Number of PCM samples the frame decodes to.
     pub samples_per_frame: u64,
+    /// Channel count, used when confirming consecutive headers.
+    pub n_channels: u8,
 }
 
 /// Parses a 32-bit MPEG audio frame header word into its audio parameters and the total frame
@@ -116,7 +120,8 @@ fn parse_header(word: u32) -> Option<(MpegFrameFormat, usize)> {
         return None;
     }
 
-    Some((MpegFrameFormat { codec, sample_rate, samples_per_frame }, frame_len))
+    let n_channels = if word & 0xc0 == 0xc0 { 1 } else { 2 };
+    Some((MpegFrameFormat { codec, sample_rate, samples_per_frame, n_channels }, frame_len))
 }
 
 /// Synchronises to and reads the next whole MPEG audio frame (header and body) from the `data`
@@ -136,32 +141,128 @@ pub fn read_frame(
 
         let byte = match reader.read_u8() {
             Ok(byte) => byte,
-            // The data chunk ended part way through a sync search; treat as end of stream.
-            Err(_) => return Ok(None),
+            Err(err) if err.kind() == ErrorKind::UnexpectedEof => return Ok(None),
+            Err(err) => return Err(err.into()),
         };
 
         sync = (sync << 8) | u32::from(byte);
-        have += 1;
-
-        // A sync word is only meaningful once four bytes have been shifted in.
+        have = (have + 1).min(4);
         if have < 4 {
             continue;
         }
 
-        if let Some((format, frame_len)) = parse_header(sync) {
-            // The final frame may be truncated by the end of the data chunk (or file). If the whole
-            // body is not available, stop cleanly rather than reading past the audio or failing on
-            // a partial frame — a mid-stream demux failure would otherwise discard the whole hash.
-            if reader.pos().saturating_add(frame_len as u64 - 4) > end_pos {
-                return Ok(None);
-            }
-            let mut frame = vec![0u8; frame_len];
-            frame[0..4].copy_from_slice(&sync.to_be_bytes());
-            if reader.read_buf_exact(&mut frame[4..]).is_err() {
-                return Ok(None);
-            }
-            return Ok(Some((format, frame)));
+        let Some((format, frame_len)) = parse_header(sync)
+        else {
+            continue;
+        };
+        let start_pos = reader.pos() - 4;
+        let mut frame = vec![0u8; frame_len];
+        frame[..4].copy_from_slice(&sync.to_be_bytes());
+
+        let complete = if frame_len as u64 - 4 > end_pos - reader.pos() {
+            false
         }
+        else {
+            match reader.read_buf_exact(&mut frame[4..]) {
+                Ok(()) => true,
+                Err(err) if err.kind() == ErrorKind::UnexpectedEof => false,
+                Err(err) => return Err(err.into()),
+            }
+        };
+
+        if complete {
+            let frame_end_pos = reader.pos();
+            // Confirm another compatible header at the computed frame boundary. Bitrate and
+            // padding may vary. A complete final frame needs no following header.
+            let confirmed = if end_pos - frame_end_pos < 4 {
+                true
+            }
+            else {
+                match reader.read_be_u32() {
+                    Ok(word) => parse_header(word).is_some_and(|(next, _)| {
+                        next.codec == format.codec
+                            && next.sample_rate == format.sample_rate
+                            && next.samples_per_frame == format.samples_per_frame
+                            && next.n_channels == format.n_channels
+                    }),
+                    Err(err) if err.kind() == ErrorKind::UnexpectedEof => true,
+                    Err(err) => return Err(err.into()),
+                }
+            };
+            if confirmed {
+                rewind(reader, frame_end_pos)?;
+                return Ok(Some((format, frame)));
+            }
+        }
+
+        // The candidate may contain the actual sync word, so resume one byte after its start.
+        // Only one MPEG frame plus a header was read, well within the minimum lookback capacity.
+        rewind(reader, start_pos + 1)?;
+        sync = 0;
+        have = 0;
+    }
+}
+
+fn rewind(reader: &mut MediaSourceStream<'_>, pos: u64) -> Result<()> {
+    if reader.seek_buffered(pos) != pos {
+        return seek_error(SeekErrorKind::Unseekable);
+    }
+    Ok(())
+}
+
+/// Seek by counting frame samples rather than estimating byte offsets. Coarse seeks use the same
+/// scan as accurate seeks. Up to four reference frames are retained for the Layer III bit reservoir,
+/// matching the elementary MPEG audio demuxer.
+pub fn seek(
+    reader: &mut MediaSourceStream<'_>,
+    end_pos: u64,
+    first_frame_pos: u64,
+    next_ts: &mut u64,
+    required_ts: u64,
+) -> Result<u64> {
+    if reader.is_seekable() {
+        if reader.seek(SeekFrom::Start(first_frame_pos))? != first_frame_pos {
+            return seek_error(SeekErrorKind::Unseekable);
+        }
+        *next_ts = 0;
+    }
+    else if required_ts < *next_ts {
+        return seek_error(SeekErrorKind::ForwardOnly);
+    }
+
+    let mut positions = [(0u64, 0u64); 4];
+    let mut n_parsed = 0usize;
+    loop {
+        let Some((format, frame)) = read_frame(reader, end_pos)?
+        else {
+            return seek_error(SeekErrorKind::OutOfRange);
+        };
+        let pos = reader.pos() - frame.len() as u64;
+        positions[n_parsed % positions.len()] = (pos, *next_ts);
+        n_parsed += 1;
+        let frame_end_ts = next_ts.saturating_add(format.samples_per_frame);
+        if required_ts < frame_end_ts {
+            let mut reference = (pos, *next_ts);
+            if format.codec == CODEC_ID_MP3 {
+                let side_info = 4 + if frame[1] & 1 == 0 { 2 } else { 0 };
+                let main_data_begin = if format.samples_per_frame == 1152 {
+                    u64::from(u16::from_be_bytes([frame[side_info], frame[side_info + 1]]) >> 7)
+                }
+                else {
+                    u64::from(frame[side_info])
+                };
+                for back in 1..n_parsed.min(positions.len()) {
+                    if pos - reference.0 >= main_data_begin {
+                        break;
+                    }
+                    reference = positions[(n_parsed - back - 1) % positions.len()];
+                }
+            }
+            rewind(reader, reference.0)?;
+            *next_ts = reference.1;
+            return Ok(*next_ts);
+        }
+        *next_ts = frame_end_ts;
     }
 }
 
