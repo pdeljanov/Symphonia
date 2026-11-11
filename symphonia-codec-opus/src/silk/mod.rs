@@ -56,7 +56,9 @@
 //!   [Section 4.2.8](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.8>)).
 //! - [`resampler`]: Conversion from the internal SILK rate to the output rate
 //!   ([RFC 6716 Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
-//! - [`plc`]: Packet loss concealment and comfort noise
+//! - [`plc`]: Packet loss concealment
+//!   ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+//! - [`cng`]: Comfort noise generation for DTX gaps and lost frames
 //!   ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 //! - [`frame`]: The data of one SILK frame: geometry, header flags, stereo weights, frame and
 //!   subframe parameters
@@ -71,6 +73,7 @@
 //!   [Section 4.2.6](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.6>)).
 //! - [`error`]: Errors of the SILK layer.
 
+pub(crate) mod cng;
 pub(crate) mod constant;
 pub(crate) mod decoder;
 pub(crate) mod error;

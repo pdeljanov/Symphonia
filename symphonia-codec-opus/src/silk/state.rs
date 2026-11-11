@@ -5,6 +5,7 @@
 //! [Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
 
 use crate::silk::ResamplerState;
+use crate::silk::cng;
 use crate::silk::plc;
 use crate::silk::{
     Frame, LTP_MEM_LENGTH_MS, MAX_LPC_ORDER, MAX_LTP_MEM_SAMPLES, MAX_SUBFRAMES, OUT_BUF_SAMPLES,
@@ -226,7 +227,7 @@ impl ChannelState {
 pub(crate) struct ChannelDecoder {
     pub(crate) core: ChannelState,
     pub(crate) plc: plc::PlcState,
-    pub(crate) cng: plc::CngState,
+    pub(crate) cng: cng::CngState,
 }
 
 impl Default for ChannelDecoder {
@@ -241,7 +242,7 @@ impl ChannelDecoder {
         return Self {
             core: ChannelState::new(),
             plc: plc::PlcState::new(),
-            cng: plc::CngState::new(),
+            cng: cng::CngState::new(),
         };
     }
 
@@ -257,7 +258,7 @@ impl ChannelDecoder {
     pub(crate) fn reset(&mut self) {
         self.core.reset();
         self.plc = plc::PlcState::new();
-        self.cng = plc::CngState::new();
+        self.cng = cng::CngState::new();
         let sample_rate_khz = self.core.sample_rate_khz;
         if sample_rate_khz == 0 {
             return;
@@ -317,7 +318,7 @@ impl ChannelDecoder {
             output_pcm, exc_q14, subframes, sample_count, num_subframes, lpc_order, ..
         } = frame;
         let sample_count = *sample_count;
-        let decoded = plc::CngFrameInput {
+        let decoded = cng::CngFrameInput {
             gains_q16: std::array::from_fn(|i| subframes[i].gain_q16),
             exc_q14: &exc_q14[..sample_count],
             subframes: *num_subframes,

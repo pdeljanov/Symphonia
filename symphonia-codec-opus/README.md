@@ -49,7 +49,8 @@ symphonia-codec-opus
 │   │   ├── excitation.rs - LCG seed and shell-coded excitation (Sections 4.2.7.7, 4.2.7.8)
 │   │   ├── synthesis.rs  - LTP and LPC synthesis, stereo unmixing (Sections 4.2.7.9, 4.2.8)
 │   │   ├── resampler.rs  - Resampling to the output rate (Section 4.2.9)
-│   │   ├── plc.rs        - Loss concealment and comfort noise (Section 4.4, non-normative)
+│   │   ├── plc.rs        - Loss concealment (Section 4.4, non-normative)
+│   │   ├── cng.rs        - Comfort noise generation for DTX gaps and lost frames (Sections 4.2.7.9, 4.4, non-normative)
 │   │   └── decoder.rs    - Channel transitions and the LBRR and regular frame schedule (Sections 4.2.4 to 4.2.6)
 │   └── celt/             - CELT transform layer (RFC 6716 Section 4.3)
 │       ├── mod.rs        - Block size (LM), band constants, silence frame, module index
