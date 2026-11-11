@@ -526,7 +526,7 @@ Summary across all 5 output sample rates (120 runs total):
 
 ### 8.3 Running the Tests
 
-The 134 self-contained unit tests require no external files:
+The 139 self-contained unit tests require no external files:
 
 ```bash
 cargo test -p symphonia-codec-opus
@@ -539,3 +539,17 @@ OPUS_TESTVECTORS_DIR=<path to opus_newvectors> \
 OPUS_REFERENCE_OUTPUT_DIR=<optional path to ref_*.pcm> \
 cargo test --release -p symphonia-codec-opus --test rfc6716_conformance -- --ignored --nocapture
 ```
+
+---
+
+## 9. License & IETF Document Attribution
+
+`symphonia-codec-opus` is distributed under the Mozilla Public License 2.0 like the rest of Symphonia (see [`LICENSE`](LICENSE)).
+
+This README and the crate's rustdoc reproduce figures, tables and short passages verbatim from the following IETF Documents, each marked with a link to its RFC section:
+
+- [RFC 6716](https://datatracker.ietf.org/doc/html/rfc6716), "Definition of the Opus Audio Codec", Copyright (c) 2012 IETF Trust and the persons identified as the document authors.
+- [RFC 7845](https://datatracker.ietf.org/doc/html/rfc7845), "Ogg Encapsulation for the Opus Audio Codec", Copyright (c) 2016 IETF Trust and the persons identified as the document authors.
+- [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251), "Updates to the Opus Audio Codec", Copyright (c) 2017 IETF Trust and the persons identified as the document authors.
+
+Those excerpts are reproduced under the [IETF Trust Legal Provisions Relating to IETF Documents (TLP 5)](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/), Section 3.c, "Licenses for Use Outside the IETF Standards Process", which permit extracting and reproducing portions of IETF Documents provided that the IETF Trust and the document authors are attributed. The excerpts remain subject to the IETF Trust's terms and are not relicensed under the MPL 2.0; the surrounding text and all Rust source code in this crate are original work.
