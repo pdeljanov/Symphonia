@@ -214,7 +214,7 @@ cargo doc -p symphonia-codec-opus --no-deps --document-private-items
   - `origin`: `https://github.com/jiztastamablastamarang/symphonia.git` (user fork)
   - `upstream`: `https://github.com/pdeljanov/Symphonia.git` (parent repository)
   - `main`: tracks `upstream/main` 1:1. Never commit Opus work directly to `main`.
-  - `opus-decoder`: active development branch rebased linearly onto `upstream/dev-0.6`; it is the head branch of the open upstream Pull Request `pdeljanov/Symphonia#398`, so every push to `origin/opus-decoder` updates that PR.
+  - `opus-decoder`: active development branch rebased linearly onto `upstream/main` (the upstream default branch; `dev-0.6` is a stale branch at v0.6.0-alpha.1); it is the head branch of the open upstream Pull Request `pdeljanov/Symphonia#398`, which targets `main`, so every push to `origin/opus-decoder` updates that PR.
   - Do not mark PR `#398` ready for review or open further Pull Requests against `pdeljanov/Symphonia` without the user's explicit instruction.
   - Remove `AGENTS.md` from the branch (`git rm AGENTS.md` or drop its commit during rebase) before PR `#398` is marked ready for review.
 - **Staging & Commits**:
