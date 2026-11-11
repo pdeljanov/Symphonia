@@ -33,7 +33,10 @@ symphonia-codec-opus
 │   ├── fixed.rs          - Q-format fixed-point arithmetic shared by the SILK layer (RFC 6716 Section 4.2)
 │   ├── sample_rate.rs    - Output sample rates, samples per frame duration, 48 kHz decimation factor
 │   ├── planes.rs         - Planar f32 channel pair handed down the decode chain
-│   ├── decoder.rs        - OpusDecoder: layer sequencing, loss concealment, transitions and redundancy, multi-stream routing (RFC 6716 Sections 4.4, 4.5; RFC 7845 Section 5.1.1)
+│   ├── layout.rs         - Mono or coupled stereo layout of one elementary stream
+│   ├── stream.rs         - StreamDecoder: layer sequencing, loss concealment, transitions and redundancy (RFC 6716 Sections 4.4, 4.5)
+│   ├── routing.rs        - Multi-stream packet splitting and output channel routing (RFC 7845 Section 5.1.1)
+│   ├── decoder.rs        - OpusDecoder: Symphonia AudioDecoder facade, output format and stream layout from the codec parameters
 │   ├── silk/             - SILK linear prediction layer (RFC 6716 Section 4.2)
 │   │   ├── mod.rs        - Frame geometry (SilkLayout), channel state and coding references, frame types
 │   │   ├── constant.rs   - CDF tables, codebooks and filter coefficients
@@ -377,7 +380,7 @@ Every Opus frame is decoded using `entropy::Decoder<'a>` over a single `&'a [u8]
 
 ---
 
-## 7. Hybrid Mode, Mode Transitions & Multi-Stream (`decoder.rs`)
+## 7. Hybrid Mode, Mode Transitions & Multi-Stream (`stream.rs`, `routing.rs`)
 
 ### Hybrid Mode (`AudioMode::Hybrid`, [RFC 6716 Section 3.1](https://datatracker.ietf.org/doc/html/rfc6716#section-3.1), [Section 4.3](https://datatracker.ietf.org/doc/html/rfc6716#section-4.3))
 
