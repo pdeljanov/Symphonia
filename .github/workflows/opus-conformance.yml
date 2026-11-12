@@ -29,12 +29,14 @@ jobs:
         run: cargo fmt -p symphonia-codec-opus -- --check
 
       - name: Run Unit Tests
-        run: cargo test -p symphonia-codec-opus -- --test-threads=1
+        run: cargo test -p symphonia-codec-opus -- --test-threads=4
 
       - name: Run Clippy (-D warnings)
         run: cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
 
       - name: Build Rustdoc (--document-private-items)
+        env:
+          RUSTDOCFLAGS: -D warnings
         run: cargo doc -p symphonia-codec-opus --no-deps --document-private-items
 
   conformance:
@@ -73,21 +75,23 @@ jobs:
           echo "029e3aa88fc342c91e67a21e7bfbc9458661cd5f  materials-98-codec-opus-update-00.patch" | sha1sum -c -
           tar xzf opus-rfc6716.tar.gz && cd opus-rfc6716
           patch -p1 < ../materials-98-codec-opus-update-00.patch
-          make -j"$(nproc)"
+          CFLAGS="-DHAVE_LRINTF=1" make -j"$(nproc)"
           mkdir -p ../ref
           for rate in 8000 12000 16000 24000 48000; do
             for v in 01 02 03 04 05 06 07 08 09 10 11 12; do
-              ./opus_demo -d $rate 1 ../opus_newvectors/testvector$v.bit ../ref/ref_${v}_${rate}_mono.pcm
-              ./opus_demo -d $rate 2 ../opus_newvectors/testvector$v.bit ../ref/ref_${v}_${rate}_stereo.pcm
+              printf '%s %s\n' "$rate" "$v"
             done
-          done
+          done | xargs -n2 -P"$(nproc)" sh -c '
+            ./opus_demo -d "$1" 1 "../opus_newvectors/testvector$2.bit" "../ref/ref_${2}_${1}_mono.pcm"
+            ./opus_demo -d "$1" 2 "../opus_newvectors/testvector$2.bit" "../ref/ref_${2}_${1}_stereo.pcm"
+          ' _
 
       - name: Run Conformance & Reference Sample Comparison
         run: |
           OPUS_TESTVECTORS_DIR=/tmp/opus-ref/opus_newvectors \
           OPUS_REFERENCE_OUTPUT_DIR=/tmp/opus-ref/ref \
             cargo test --release -p symphonia-codec-opus --test rfc6716_conformance \
-            -- --ignored --nocapture | tee /tmp/conformance_output.log
+            -- --test-threads=4 --ignored --nocapture | tee /tmp/conformance_output.log
 
       - name: Publish Conformance Summary Table
         if: always()
