@@ -18,6 +18,15 @@ Opus is a low-latency audio codec standardized by the IETF in [RFC 6716](https:/
 | **Hybrid** | `12..=15` | SWB (24 kHz), FB (48 kHz) | 10, 20 ms | `silk::Decoder` (`0..8 kHz`) + `celt::Decoder` (bands `17..21`) |
 | **CELT-only** | `16..=31` | NB (8 kHz), WB (16 kHz), SWB (24 kHz), FB (48 kHz) | 2.5, 5, 10, 20 ms | `celt::Decoder` (bands `0..end_band`) |
 
+### Accuracy & RFC Conformance
+
+`symphonia-codec-opus` passes all **120 official IETF conformance runs** (`12` [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) test vectors across `8, 12, 16, 24, and 48 kHz` in `mono` and `stereo`) and is calibrated sample-for-sample against `opus_demo -d`, the normative C reference decoder from [RFC 6716 Appendix A](https://datatracker.ietf.org/doc/html/rfc6716#appendix-A) with the [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251) update (see [Section 8](#8-conformance-verification-mechanics--quality) for full per-vector tables):
+
+- **Bitstream & Range Coder (`100%` exact)**: Every checked packet across all 120 runs finishes with the exact 32-bit `final_range` state recorded by the reference encoder (`0` mismatches). Not a single bit or bit-allocation decision diverges.
+- **Speech Layer / SILK (`100.00%` bit-exact, `0` LSB)**: Because SILK uses integer fixed-point arithmetic in both C and Rust, every decoded 16-bit PCM sample on SILK-only streams (`testvector02..04`) is bit-for-bit identical to `opus_demo -d`.
+- **Music & Hybrid Layers / CELT (`99.41%..100.00%` identical, `<= 1` LSB)**: CELT runs in 32-bit IEEE-754 floating point (`f32`). Over `99.4%` of stereo 16-bit PCM samples (`-32768..32767`) match `opus_demo -d` to `0` LSB, and the remaining `< 0.6%` sit on `.5` half-integer rounding boundaries where ~1 ULP compiler `f32` differences (`cos`/`sin`, instruction scheduling, FMA) shift the quantized integer by at most `1` LSB (`1 / 32768`, or `-90.3 dBFS`, below the 16-bit noise floor).
+- **Psychoacoustic Quality (`99.8..100.0 / 100` at 48 kHz stereo)**: On the official `opus_compare` metric ([RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1), where `0` is the compliance threshold and `> 90` is recommended at 48 kHz), stereo decodes score `99.8` to `100.0` across all 12 vectors.
+
 ---
 
 ## 2. Crate Architecture & Module Structure
@@ -499,7 +508,7 @@ For each of the **120 test runs** (`12 vectors x 5 sample rates [8, 12, 16, 24, 
    - `opus_compare` ([RFC 6716 Section 6.1](https://datatracker.ietf.org/doc/html/rfc6716#section-6.1)) windows both the 48 kHz reference (`.dec` or `m.dec`) and the decoded signal (using a `480 / downsample`-sample Hann window and `120 / downsample` hop so 100 Hz DFT bins align across sample rates), applies frequency, temporal, and stereo cross-talk masking across 21 Bark-derived bands (skipping transition bins near Nyquist at reduced rates and attenuating the 8 kHz SILK/CELT crossover bin), and maps the 16th-root weighted spectral error `err` to quality `Q = 100 * (1 - 0.5 * ln(1 + err) / ln(1.13))`.
    - `testvectorNN.dec` carries the CELT 180-degree intensity-stereo phase shift (matched by stereo output), while `testvectorNNm.dec` omits the 180-degree phase shift ([RFC 8251 Section 10](https://datatracker.ietf.org/doc/html/rfc8251#section-10), matched by mono output so phase-inverted bands do not cancel during downmixing).
 6. **Sample-by-Sample Calibration Against `opus_demo -d`**:
-   Every decoded 16-bit PCM sample is compared directly against the output of the patched RFC 6716 Appendix A C reference binary (`opus_demo -d <rate> <channels>`), verifying that the fixed-point SILK pipeline is `100.00%` bit-exact (`0` LSB difference) and the floating-point CELT/Hybrid pipeline stays within `1` LSB of `f32` rounding.
+   Every decoded 16-bit PCM sample is compared directly against the output of the patched RFC 6716 Appendix A C reference binary (`opus_demo -d <rate> <channels>`). Whereas `.dec` and `m.dec` provide only 48 kHz stereo spectra for `opus_compare`, `opus_demo -d` provides sample-level reference PCM at every rate and channel count, verifying that the integer fixed-point SILK pipeline is `100.00%` bit-exact (`0` LSB difference) and that in the floating-point CELT/Hybrid pipeline over `99.4%` of stereo samples match to `0` LSB while the remaining `< 0.6%` on `.5` half-integer rounding boundaries differ by at most `1` LSB (`-90.3 dBFS`).
 
 ### 8.2 Calibration Figures Across All 12 RFC Test Vectors & 5 Sample Rates
 
@@ -507,18 +516,18 @@ For each of the **120 test runs** (`12 vectors x 5 sample rates [8, 12, 16, 24, 
 
 | Vector | Stream Content | Range Checks | Mono `Q` (`m.dec`) | Stereo `Q` (`.dec`) | Ref `opus_demo` Stereo `Q` | Stereo Sample Match vs `opus_demo` | Max Stereo Diff (16-bit LSB) |
 | :--- | :--- | :---: | ---: | ---: | ---: | ---: | ---: |
-| `01` | CELT FB, 100% stereo | 1,472 / 1,472 | 98.2 | 99.9 | 99.8 | 99.81% | 1 LSB |
-| `02` | SILK NB, 49% stereo | 1,249 / 1,249 | 96.2 | 100.0 | 100.0 | 100.00% | 0 LSB |
-| `03` | SILK MB, 48% stereo | 1,056 / 1,056 | 96.7 | 100.0 | 100.0 | 100.00% | 0 LSB |
-| `04` | SILK WB, 49% stereo | 1,329 / 1,329 | 96.5 | 100.0 | 100.0 | 100.00% | 0 LSB |
-| `05` | Hybrid SWB, 49% stereo | 1,357 / 1,357 | 96.3 | 99.9 | 99.8 | 100.00% | 1 LSB |
-| `06` | Hybrid FB, 49% stereo | 1,249 / 1,249 | 96.3 | 99.8 | 99.8 | 100.00% | 1 LSB |
-| `07` | CELT NB..FB, 31 BW switches | 1,316 / 1,316 | 98.1 | 99.8 | 99.6 | 99.82% | 1 LSB |
-| `08` | CELT NB..FB, 29 BW switches | 1,558 / 1,558 | 96.5 | 99.8 | 99.6 | 99.83% | 1 LSB |
-| `09` | CELT NB..FB, 7 BW switches | 1,376 / 1,376 | 98.1 | 99.8 | 99.5 | 99.81% | 1 LSB |
-| `10` | CELT FB + 16% Hybrid, 16 switches | 1,598 / 1,598 | 97.7 | 99.8 | 99.2 | 99.41% | 1 LSB |
-| `11` | CELT FB, 100% stereo | 1,499 / 1,499 | 98.5 | 99.8 | 99.7 | 99.92% | 1 LSB |
-| `12` | SILK NB..WB + 19% Hybrid SWB, mono | 1,372 / 1,372 | 99.9 | 99.9 | 99.8 | 100.00% | 1 LSB |
+| `01` | CELT FB, 100% stereo | 2,146 / 2,146 | 98.2 | 99.9 | 99.8 | 99.81% | 1 LSB |
+| `02` | SILK NB, 49% stereo | 1,184 / 1,184 | 96.2 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `03` | SILK MB, 48% stereo | 997 / 997 | 96.7 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `04` | SILK WB, 49% stereo | 1,264 / 1,264 | 96.5 | 100.0 | 100.0 | 100.00% | 0 LSB |
+| `05` | Hybrid SWB, 49% stereo | 2,036 / 2,036 | 96.3 | 99.9 | 99.8 | 100.00% | 1 LSB |
+| `06` | Hybrid FB, 49% stereo | 1,875 / 1,875 | 96.3 | 99.8 | 99.8 | 100.00% | 1 LSB |
+| `07` | CELT NB..FB, 31 BW switches | 4,185 / 4,185 | 98.1 | 99.8 | 99.6 | 99.82% | 1 LSB |
+| `08` | CELT NB..FB, 29 BW switches | 1,246 / 1,246 | 96.5 | 99.8 | 99.6 | 99.83% | 1 LSB |
+| `09` | CELT NB..FB, 7 BW switches | 1,336 / 1,336 | 98.1 | 99.8 | 99.5 | 99.81% | 1 LSB |
+| `10` | CELT FB + 16% Hybrid, 16 switches | 1,911 / 1,911 | 97.7 | 99.8 | 99.2 | 99.41% | 1 LSB |
+| `11` | CELT FB, 100% stereo | 552 / 552 | 98.5 | 99.8 | 99.7 | 99.92% | 1 LSB |
+| `12` | SILK NB..WB + 19% Hybrid SWB, mono | 1,331 / 1,331 | 99.9 | 99.9 | 99.8 | 100.00% | 1 LSB |
 
 Summary across all 5 output sample rates (120 runs total):
 
@@ -526,7 +535,7 @@ Summary across all 5 output sample rates (120 runs total):
 | :--- | :---: | ---: | ---: | :---: | :---: |
 | **8 kHz** | 24 / 24 runs | `43.4` .. `93.3` | `43.4` .. `93.3` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
 | **12 kHz** | 24 / 24 runs | `65.9` .. `96.0` | `65.9` .. `96.0` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
-| **16 kHz** | 24 / 24 runs | `56.5` .. `96.3` | `56.5` .. `96.4` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.44%`..`100.00%` exact) |
+| **16 kHz** | 24 / 24 runs | `56.5` .. `96.4` | `56.5` .. `96.4` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
 | **24 kHz** | 24 / 24 runs | `68.5` .. `98.1` | `68.5` .. `98.1` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.43%`..`100.00%` exact) |
 | **48 kHz** | 24 / 24 runs | `96.2` .. `100.0` | `96.2` .. `100.0` | `0` LSB (100.00% exact) | `<= 1` LSB (`99.41%`..`100.00%` exact) |
 
