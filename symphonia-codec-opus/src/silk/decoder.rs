@@ -373,7 +373,8 @@ impl Decoder {
         let delayed = 1..1 + frame_length;
         let left_resampler = &mut self.channels[0].core.resampler;
         let written = resample_to_f32(left_resampler, &mid[delayed.clone()], left)?;
-        let Some(right) = right else {
+        let Some(right) = right
+        else {
             return Ok(written);
         };
         if right.len() < written {

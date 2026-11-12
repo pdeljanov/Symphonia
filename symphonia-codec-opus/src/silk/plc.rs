@@ -150,7 +150,8 @@ const UNIT_INV_GAIN_Q30: i32 = 1 << 30;
 /// Uses rounded `32 x 16` products rather than floor-truncated `mul_q16_i16` to avoid
 /// bias that could destabilize high-order synthesis filters.
 pub(crate) fn chirp_bandwidth_expand(coeffs_q12: &mut [i16], mut factor_q16: i32) {
-    let Some((last_coeff, head_coeffs)) = coeffs_q12.split_last_mut() else {
+    let Some((last_coeff, head_coeffs)) = coeffs_q12.split_last_mut()
+    else {
         return;
     };
 

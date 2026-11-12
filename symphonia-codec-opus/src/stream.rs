@@ -324,7 +324,8 @@ impl Transition {
     /// previous frame announced with a [`Redundancy::SilkToCelt`] frame needs no concealment
     /// ([RFC 6716 Section 4.5.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.5.2>)).
     fn between(last: Option<LastFrame>, mode: AudioMode) -> Self {
-        let Some(last) = last else {
+        let Some(last) = last
+        else {
             return Self::None;
         };
         return match (last.config.mode, mode) {
@@ -486,7 +487,8 @@ impl StreamDecoder {
         out.fill(0.0);
         self.range_final = 0;
 
-        let Some(last) = self.last.as_mut() else {
+        let Some(last) = self.last.as_mut()
+        else {
             return Ok(samples);
         };
         // A redundant frame bridges two consecutive decoded frames (RFC 6716 Section 4.5.1):
@@ -597,7 +599,8 @@ impl StreamDecoder {
     ) -> Result<usize> {
         let samples = self.sample_rate.samples_per(config.duration);
         // RFC 6716 Appendix A: a frame of at most one byte has no payload and is concealed.
-        let Some(bytes) = frame.filter(|b| b.len() > 1) else {
+        let Some(bytes) = frame.filter(|b| b.len() > 1)
+        else {
             return self.conceal_frame(config.duration, out);
         };
         let mut out = out.range(..samples);
@@ -844,7 +847,8 @@ impl StreamDecoder {
         out: Planes<'_>,
         samples: usize,
     ) {
-        let Redundancy::CeltToSilk(_) = redundancy else {
+        let Redundancy::CeltToSilk(_) = redundancy
+        else {
             return;
         };
         let bridges_celt = self

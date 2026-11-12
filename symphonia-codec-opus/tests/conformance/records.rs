@@ -22,10 +22,12 @@ pub(crate) fn parse_bit_records(bytes: &[u8]) -> Result<Vec<BitRecord<'_>>, Stri
         if len > MAX_PACKET {
             return Err(format!("record {i}: invalid payload length {len}"));
         }
-        let Some((range_field, tail)) = tail.split_first_chunk::<RECORD_FIELD_BYTES>() else {
+        let Some((range_field, tail)) = tail.split_first_chunk::<RECORD_FIELD_BYTES>()
+        else {
             return Err(format!("record {i}: truncated encoder final range"));
         };
-        let Some((payload, tail)) = tail.split_at_checked(len) else {
+        let Some((payload, tail)) = tail.split_at_checked(len)
+        else {
             return Err(format!("record {i}: ran out of input, expecting {len} bytes"));
         };
         records.push(BitRecord { enc_final_range: u32::from_be_bytes(*range_field), payload });
@@ -37,7 +39,8 @@ pub(crate) fn parse_bit_records(bytes: &[u8]) -> Result<Vec<BitRecord<'_>>, Stri
 /// Reads the vector directory from `OPUS_TESTVECTORS_DIR`; a conformance run without vectors
 /// must fail loudly rather than pass.
 pub(crate) fn vectors_dir() -> PathBuf {
-    let Some(dir) = std::env::var_os(VECTORS_DIR_ENV) else {
+    let Some(dir) = std::env::var_os(VECTORS_DIR_ENV)
+    else {
         panic!(
             "{VECTORS_DIR_ENV} is not set: point it at the unpacked RFC 8251 test vectors \
              (testvector01.bit .. testvector12.bit, testvectorNN.dec, testvectorNNm.dec), see \

@@ -80,7 +80,8 @@ impl OutputRouting<'_> {
         let (first, count) = if is_coupled { (2 * stream_i, 2) } else { mono };
 
         for (ch, &map) in self.channel_mapping.iter().enumerate() {
-            let Some(k) = usize::from(map).checked_sub(first).filter(|k| *k < count) else {
+            let Some(k) = usize::from(map).checked_sub(first).filter(|k| *k < count)
+            else {
                 continue;
             };
             let src = &scratch[k][..total_samples];

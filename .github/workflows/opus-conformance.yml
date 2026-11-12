@@ -23,10 +23,11 @@ jobs:
       - name: Setup Toolchain
         run: |
           rustup install stable && rustup default stable
-          rustup component add clippy rustfmt
+          rustup component add clippy
+          rustup toolchain install nightly --profile minimal --component rustfmt
 
       - name: Check Formatting
-        run: cargo fmt -p symphonia-codec-opus -- --check
+        run: cargo +nightly fmt -p symphonia-codec-opus -- --check
 
       - name: Run Unit Tests
         run: cargo test -p symphonia-codec-opus -- --test-threads=4
