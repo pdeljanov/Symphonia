@@ -253,6 +253,10 @@ pub(crate) const BETA_COEF: [f32; MAX_LM + 1] =
 /// ([RFC 6716 Section 4.3.2.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.1>)).
 pub(crate) const BETA_INTRA: f32 = 4915.0 / 32768.0;
 
+/// Margin subtracted from every band energy after a loss, per block size exponent: short frames
+/// fluctuate most (`1.5` for 2.5 ms, `0.5` for 5 ms, none from 10 ms).
+pub(crate) const LOSS_SAFETY_MARGIN: [f32; MAX_LM + 1] = [1.5, 0.5, 0.0, 0.0];
+
 /// Scale from the 8-bit stored zero-residual probability to the Q15 total of the Laplace decoder.
 const LAPLACE_ZERO_FREQ_SHIFT: u32 = 7;
 
@@ -500,6 +504,12 @@ pub(crate) static E_PROB_MODEL: [[[LaplaceModel; MAX_BANDS]; 2]; MAX_LM + 1] = [
 /// ([RFC 6716 Section 4.3.2.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.1>)).
 pub(crate) const CDF_SMALL_ENERGY: Cdf<'static> = Cdf::new(&[4, 2, 3, 4]);
 
+/// Coarse residuals of the [`CDF_SMALL_ENERGY`] symbols `0`, `1` and `2`
+/// ([RFC 6716 Section 4.3.2.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.2.1>)).
+pub(crate) const SMALL_ENERGY_RESIDUALS: [i32; 3] = [0, -1, 1];
+
+const _: () = assert!(CDF_SMALL_ENERGY.symbols() == SMALL_ENERGY_RESIDUALS.len());
+
 /// Cumulative distribution of the allocation trim (`0..=10`),
 /// PDF `{2, 2, 5, 10, 22, 46, 22, 10, 5, 2, 2}/128`
 /// ([RFC 6716 Section 4.3.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.3>), Table 58).
@@ -560,6 +570,44 @@ pub(crate) const BIT_INTERLEAVE_TABLE: [u8; 16] = [0, 1, 1, 1, 2, 3, 3, 3, 2, 3,
 pub(crate) const BIT_DEINTERLEAVE_TABLE: [u8; 16] = [
     0x00, 0x03, 0x0C, 0x0F, 0x30, 0x33, 0x3C, 0x3F, 0xC0, 0xC3, 0xCC, 0xCF, 0xF0, 0xF3, 0xFC, 0xFF,
 ];
+
+/// Natural-to-sequency Hadamard permutation rows for strides `2, 4, 8, 16` (`2 << level`) used by
+/// the time-frequency change ([RFC 6716 Section 4.3.4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.5>)).
+pub(crate) const HADAMARD_SEQUENCY_ROWS: [&[u8]; 4] = validated_hadamard_rows([
+    &[1, 0],
+    &[3, 0, 2, 1],
+    &[7, 0, 4, 3, 6, 1, 5, 2],
+    &[15, 0, 8, 7, 12, 3, 11, 4, 14, 1, 9, 6, 13, 2, 10, 5],
+]);
+
+/// Verifies at compile time that row `k` has length `2 << k` and is a permutation of `0..(2 << k)`.
+const fn validated_hadamard_rows(rows: [&'static [u8]; 4]) -> [&'static [u8]; 4] {
+    let mut k = 0;
+    while k < rows.len() {
+        let row = rows[k];
+        let expected_len = 2usize << k;
+        assert!(row.len() == expected_len);
+        let mut seen = 0u32;
+        let mut i = 0;
+        while i < expected_len {
+            let val = row[i] as usize;
+            assert!(val < expected_len);
+            seen |= 1u32 << val;
+            i += 1;
+        }
+        assert!(seen == (1u32 << expected_len) - 1);
+        k += 1;
+    }
+    return rows;
+}
+
+/// Base-2 exponential lookup table for fractional Q3 bit resolution in split-angle quantization
+/// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
+pub(crate) const EXP2_TABLE8: [i32; 8] = [16384, 17866, 19483, 21247, 23170, 25267, 27554, 30048];
+
+/// PVQ spreading rotation factor indexed by `(spread as usize) - 1`
+/// ([RFC 6716 Section 4.3.4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.3>)).
+pub(crate) const SPREAD_FACTOR: [usize; 3] = [15, 10, 5];
 
 /// Low-overlap MDCT window of 120 samples (2.5 ms at 48 kHz),
 /// `w[i] = sin(pi/2 * sin^2(pi/2 * (i + 0.5) / 120))`

@@ -217,14 +217,20 @@ fn decode_shell_partition(
         return Ok(());
     }
 
-    let row = (total_pulses as usize) - 1;
-    let cdf: Cdf<'static> = match len {
-        16 => constant::CDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS[row],
-        8 => constant::CDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS[row],
-        4 => constant::CDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS[row],
-        2 => constant::CDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS[row],
-        _ => return Err(Error::InvalidPartitionSize.into()),
-    };
+    static SHELL_SPLIT_CDFS: [&[Cdf<'static>; 16]; 4] = [
+        &constant::CDF_PULSE_COUNT_SPLIT_2_SAMPLE_PARTITIONS,
+        &constant::CDF_PULSE_COUNT_SPLIT_4_SAMPLE_PARTITIONS,
+        &constant::CDF_PULSE_COUNT_SPLIT_8_SAMPLE_PARTITIONS,
+        &constant::CDF_PULSE_COUNT_SPLIT_16_SAMPLE_PARTITIONS,
+    ];
+
+    let table = len
+        .is_power_of_two()
+        .then(|| (len.trailing_zeros() as usize).checked_sub(1))
+        .flatten()
+        .and_then(|level| SHELL_SPLIT_CDFS.get(level))
+        .ok_or(Error::InvalidPartitionSize)?;
+    let cdf = table[usize::from(total_pulses) - 1];
 
     let left_pulses = decoder.decode_symbol(cdf)? as u8;
     let right_pulses = total_pulses - left_pulses;

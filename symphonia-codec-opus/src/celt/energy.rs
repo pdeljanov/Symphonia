@@ -20,8 +20,8 @@ use std::ops::Range;
 
 use crate::celt::BlockSize;
 use crate::celt::constant::{
-    BETA_COEF, BETA_INTRA, CDF_SMALL_ENERGY, E_PROB_MODEL, LaplaceModel, MAX_BANDS, MAX_CHANNELS,
-    MAX_FINE_BITS, MAX_LM, PRED_COEF,
+    BETA_COEF, BETA_INTRA, CDF_SMALL_ENERGY, E_PROB_MODEL, LOSS_SAFETY_MARGIN, LaplaceModel,
+    MAX_BANDS, MAX_CHANNELS, MAX_FINE_BITS, PRED_COEF, SMALL_ENERGY_RESIDUALS,
 };
 use crate::entropy::Decoder;
 use symphonia_core::errors::Result;
@@ -39,9 +39,6 @@ const SMALL_ENERGY_MIN_BITS: i32 = 2;
 
 /// Bits that must remain for a one-bit coarse residual (`1`).
 const ONE_BIT_MIN_BITS: i32 = 1;
-
-/// Coarse residuals of the [`CDF_SMALL_ENERGY`] symbols `0`, `1` and `2`.
-const SMALL_ENERGY_RESIDUALS: [i32; 3] = [0, -1, 1];
 
 /// `-log2` probability of the `-1` value of a one-bit coarse residual (`1`).
 const ONE_BIT_RESIDUAL_LOGP: u32 = 1;
@@ -62,10 +59,6 @@ const BACKGROUND_INCREASE_PER_UNIT: f32 = 0.001;
 
 /// Most lost frames over which a falling band energy is extrapolated after a loss (`10`).
 const MAX_EXTRAPOLATED_LOST_FRAMES: usize = 10;
-
-/// Margin subtracted from every band energy after a loss, per block size exponent: short frames
-/// fluctuate most (`1.5` for 2.5 ms, `0.5` for 5 ms, none from 10 ms).
-const LOSS_SAFETY_MARGIN: [f32; MAX_LM + 1] = [1.5, 0.5, 0.0, 0.0];
 
 /// Weight of the two-frame energy drop in the falling-trend slope (`1/2`, per frame).
 const TWO_FRAME_SLOPE_WEIGHT: f32 = 0.5;

@@ -72,35 +72,103 @@ const NLSF_INTERPOLATION_Q2_SHIFT: u32 = 2;
 /// Number of subframes sharing the interpolated first-half NLSFs (RFC 6716 Section 4.2.7.5.5).
 const NLSF_FIRST_HALF_SUBFRAMES: usize = 2;
 
-// Every stage-1 index selects one row of each stage-1 table, so the lookups cannot fail: these
-// bounds are proven when the crate compiles.
-const _: () = assert!(
-    constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED.symbols()
-        == NLSF_STAGE_ONE_VECTORS
-);
-const _: () = assert!(
-    constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED.symbols()
-        == NLSF_STAGE_ONE_VECTORS
-);
-const _: () = assert!(
-    constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED.symbols()
-        == NLSF_STAGE_ONE_VECTORS
-);
-const _: () = assert!(
-    constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED.symbols()
-        == NLSF_STAGE_ONE_VECTORS
-);
-const _: () = assert!(
-    constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND.len()
-        == NLSF_STAGE_ONE_VECTORS
-        && constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND.len() == NLSF_STAGE_ONE_VECTORS
-        && constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND.len()
-            == NLSF_STAGE_ONE_VECTORS
-        && constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND.len()
-            == NLSF_STAGE_ONE_VECTORS
-        && constant::PREDICTION_WEIGHT_SELECTION_NB_MB.len() == NLSF_STAGE_ONE_VECTORS
-        && constant::PREDICTION_WEIGHT_SELECTION_WB.len() == NLSF_STAGE_ONE_VECTORS
-);
+/// Converts a fixed-width codebook matrix into an array of row slices in `const` context
+/// (MSRV 1.85 compatible).
+const fn slice_rows<T, const COLS: usize, const ROWS: usize>(
+    table: &'static [[T; COLS]; ROWS],
+) -> [&'static [T]; ROWS] {
+    let mut out: [&'static [T]; ROWS] = [&[]; ROWS];
+    let mut i = 0;
+    while i < ROWS {
+        out[i] = &table[i];
+        i += 1;
+    }
+    return out;
+}
+
+/// Compile-time validated codebook tables and parameters for one NLSF bandwidth family
+/// ([RFC 6716 Section 4.2.7.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5>)).
+struct NlsfSpec {
+    order: usize,
+    /// Stage-1 vector index CDFs indexed `[usize::from(voiced)]`.
+    stage_one_cdfs: [Cdf<'static>; 2],
+    /// `32` Q8 stage-1 codebook vectors of length `order`.
+    stage_one_q8: [&'static [u8]; NLSF_STAGE_ONE_VECTORS],
+    /// `32` stage-2 CDF selector rows of length `order`.
+    stage_two_selectors: [&'static [u8]; NLSF_STAGE_ONE_VECTORS],
+    /// `32` backward-prediction weight selector rows of length `order - 1`.
+    prediction_weight_selectors: [&'static [u8]; NLSF_STAGE_ONE_VECTORS],
+    /// Two rows of `order - 1` Q8 backward-prediction weights.
+    prediction_weights: [&'static [u16]; 2],
+    quantization_step_q16: i32,
+    /// Minimum Q15 spacing between consecutive NLSFs (`order + 1` entries).
+    min_spacing_q15: &'static [i32],
+}
+
+impl NlsfSpec {
+    /// Checks every symbol count and row width at compile time so runtime lookups cannot go out
+    /// of bounds.
+    const fn validated(self) -> Self {
+        assert!(self.order > 1 && self.order <= MAX_LPC_ORDER);
+        assert!(self.stage_one_cdfs[0].symbols() == NLSF_STAGE_ONE_VECTORS);
+        assert!(self.stage_one_cdfs[1].symbols() == NLSF_STAGE_ONE_VECTORS);
+        assert!(self.prediction_weights[0].len() == self.order - 1);
+        assert!(self.prediction_weights[1].len() == self.order - 1);
+        assert!(self.min_spacing_q15.len() == self.order + 1);
+        let mut i = 0;
+        while i < NLSF_STAGE_ONE_VECTORS {
+            assert!(self.stage_one_q8[i].len() == self.order);
+            assert!(self.stage_two_selectors[i].len() == self.order);
+            assert!(self.prediction_weight_selectors[i].len() == self.order - 1);
+            i += 1;
+        }
+        return self;
+    }
+}
+
+/// Codebook descriptors indexed by [`NlsfCodebook`].
+static NLSF_SPECS: [NlsfSpec; 2] = [
+    NlsfSpec {
+        order: 10,
+        stage_one_cdfs: [
+            constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED,
+            constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED,
+        ],
+        stage_one_q8: slice_rows(
+            &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND,
+        ),
+        stage_two_selectors: slice_rows(
+            &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND,
+        ),
+        prediction_weight_selectors: slice_rows(&constant::PREDICTION_WEIGHT_SELECTION_NB_MB),
+        prediction_weights: [
+            &constant::PREDICTION_WEIGHTS_NB_MB[0],
+            &constant::PREDICTION_WEIGHTS_NB_MB[1],
+        ],
+        quantization_step_q16: constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB,
+        min_spacing_q15: &constant::MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND,
+    }
+    .validated(),
+    NlsfSpec {
+        order: 16,
+        stage_one_cdfs: [
+            constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
+            constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED,
+        ],
+        stage_one_q8: slice_rows(&constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND),
+        stage_two_selectors: slice_rows(
+            &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND,
+        ),
+        prediction_weight_selectors: slice_rows(&constant::PREDICTION_WEIGHT_SELECTION_WB),
+        prediction_weights: [
+            &constant::PREDICTION_WEIGHTS_WB[0],
+            &constant::PREDICTION_WEIGHTS_WB[1],
+        ],
+        quantization_step_q16: constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB,
+        min_spacing_q15: &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB,
+    }
+    .validated(),
+];
 
 /// The NLSF codebook family of a bandwidth: the 10-coefficient narrowband and mediumband tables
 /// or the 16-coefficient wideband tables
@@ -108,9 +176,9 @@ const _: () = assert!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NlsfCodebook {
     /// Order 10 codebooks shared by narrowband and mediumband frames.
-    NarrowbandMediumband,
+    NarrowbandMediumband = 0,
     /// Order 16 codebooks of wideband frames.
-    Wideband,
+    Wideband = 1,
 }
 
 impl NlsfCodebook {
@@ -122,83 +190,50 @@ impl NlsfCodebook {
         };
     }
 
+    /// Descriptor row of `self` in [`NLSF_SPECS`].
+    #[inline]
+    const fn spec(self) -> &'static NlsfSpec {
+        return &NLSF_SPECS[self as usize];
+    }
+
     /// Number of NLSF coefficients, the LPC order (RFC 6716 Section 4.2.7.5).
     pub(crate) const fn order(self) -> usize {
-        return match self {
-            Self::NarrowbandMediumband => 10,
-            Self::Wideband => 16,
-        };
+        return self.spec().order;
     }
 
     /// First-stage vector index CDF for `signal_type` (RFC 6716 Section 4.2.7.5.1).
     fn stage_one_cdf(self, signal_type: SignalType) -> Cdf<'static> {
-        return match (self, signal_type) {
-            (Self::NarrowbandMediumband, SignalType::Voiced) => {
-                constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_VOICED
-            }
-            (Self::NarrowbandMediumband, _) => {
-                constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_NARROWBAND_OR_MEDIUMBAND_UNVOICED
-            }
-            (Self::Wideband, SignalType::Voiced) => {
-                constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_VOICED
-            }
-            (Self::Wideband, _) => constant::CDF_NORMALIZED_LSF_STAGE_ONE_INDEX_WIDEBAND_UNVOICED,
-        };
+        return self.spec().stage_one_cdfs[usize::from(signal_type == SignalType::Voiced)];
     }
 
     /// First-stage codebook vector `i1` in Q8 (RFC 6716 Section 4.2.7.5.1).
     fn stage_one_vector_q8(self, i1: usize) -> &'static [u8] {
-        return match self {
-            Self::NarrowbandMediumband => {
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_NARROWBAND_OR_MEDIUMBAND[i1]
-            }
-            Self::Wideband => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_ONE_WIDEBAND[i1],
-        };
+        return self.spec().stage_one_q8[i1];
     }
 
     /// Per-coefficient second-stage CDF selectors of first-stage vector `i1`
     /// (RFC 6716 Section 4.2.7.5.2).
     fn stage_two_cdf_selectors(self, i1: usize) -> &'static [u8] {
-        return match self {
-            Self::NarrowbandMediumband => {
-                &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_NARROWBAND_OR_MEDIUMBAND[i1]
-            }
-            Self::Wideband => &constant::CODEBOOK_NORMALIZED_LSF_STAGE_TWO_INDEX_WIDEBAND[i1],
-        };
+        return self.spec().stage_two_selectors[i1];
     }
 
     /// Q8 backward prediction weight of coefficient `i` for first-stage vector `i1`
     /// (RFC 6716 Section 4.2.7.5.2).
     fn prediction_weight_q8(self, i1: usize, i: usize) -> i32 {
-        return match self {
-            Self::NarrowbandMediumband => {
-                let selector = constant::PREDICTION_WEIGHT_SELECTION_NB_MB[i1][i] as usize;
-                constant::PREDICTION_WEIGHTS_NB_MB[selector][i] as i32
-            }
-            Self::Wideband => {
-                let selector = constant::PREDICTION_WEIGHT_SELECTION_WB[i1][i] as usize;
-                constant::PREDICTION_WEIGHTS_WB[selector][i] as i32
-            }
-        };
+        let spec = self.spec();
+        let selector = usize::from(spec.prediction_weight_selectors[i1][i]);
+        return i32::from(spec.prediction_weights[selector][i]);
     }
 
     /// Second-stage quantization step in Q16 (RFC 6716 Section 4.2.7.5.2).
     const fn quantization_step_q16(self) -> i32 {
-        return match self {
-            Self::NarrowbandMediumband => constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_NB_MB,
-            Self::Wideband => constant::LSF_STAGE_TWO_QUANTIZATION_STEP_Q16_WB,
-        };
+        return self.spec().quantization_step_q16;
     }
 
     /// Minimum spacing between consecutive NLSFs in Q15, `order + 1` entries including both
     /// range ends (RFC 6716 Section 4.2.7.5.4).
-    fn min_spacing_q15(self) -> &'static [i32] {
-        return match self {
-            Self::NarrowbandMediumband => {
-                &constant::MINIMUM_SPACING_NORMALIZED_LSF_NARROWBAND_MEDIUMBAND
-            }
-            Self::Wideband => &constant::MINIMUM_SPACING_NORMALIZED_LSF_WB,
-        };
+    const fn min_spacing_q15(self) -> &'static [i32] {
+        return self.spec().min_spacing_q15;
     }
 }
 

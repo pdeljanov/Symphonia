@@ -3,7 +3,7 @@
 //! [Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
 //!
 //! The tables are grouped by the decoding stage that reads them (`header`, `gain`, `lsf`, `ltp`,
-//! `excitation`, `resampler`) and re-exported at this module's root.
+//! `excitation`, `resampler`, `plc`) and re-exported at this module's root.
 
 // The codebooks and filter tables are lookup tables read by index.
 
@@ -12,6 +12,7 @@ pub(crate) use self::gain::*;
 pub(crate) use self::header::*;
 pub(crate) use self::lsf::*;
 pub(crate) use self::ltp::*;
+pub(crate) use self::plc::*;
 
 /// SILK Header, Stereo & Frame Type Constants (RFC 6716 Section 4.2.2-4.2.4, Section 4.2.7.3)
 pub(crate) mod header {
@@ -2483,24 +2484,20 @@ pub(crate) mod resampler {
     /// Fractional downsampler AR2 + FIR coefficients for ratio 1:2 (`16 kHz -> 8 kHz`).
     pub(crate) const RESAMPLER_1_2_COEFS: [i16; 14] =
         [616, -14323, -10, 39, 58, -46, -84, 120, 184, -315, -541, 1284, 5380, 9024];
+}
 
-    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:3.
-    pub(crate) const RESAMPLER_1_3_COEFS: [i16; 20] = [
-        16102, -15162, -13, 0, 20, 26, 5, -31, -43, -4, 65, 90, 7, -157, -248, -44, 593, 1583,
-        2612, 3271,
-    ];
+/// SILK Packet Loss Concealment Attenuation Tables (RFC 6716 Section 4.4)
+pub(crate) mod plc {
+    /// Number of loss-stage attenuation entries (`loss_count == 0` vs `loss_count >= 1`).
+    pub(crate) const NUM_ATTENUATION_STAGES: usize = 2;
 
-    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:4.
-    pub(crate) const RESAMPLER_1_4_COEFS: [i16; 20] = [
-        22500, -15099, 3, -14, -20, -15, 2, 25, 37, 25, -16, -71, -107, -79, 50, 292, 623, 982,
-        1288, 1464,
-    ];
+    /// Harmonic (voiced LTP) attenuation factors in Q15 (`0.99` and `0.95`).
+    pub(crate) const HARMONIC_ATTENUATION_Q15: [i16; NUM_ATTENUATION_STAGES] = [32_440, 31_130];
 
-    /// Fractional downsampler AR2 + FIR coefficients for ratio 1:6.
-    pub(crate) const RESAMPLER_1_6_COEFS: [i16; 20] = [
-        27540, -15257, 17, 12, 8, 1, -10, -22, -30, -32, -22, 3, 44, 100, 168, 243, 317, 381, 429,
-        455,
-    ];
+    /// Random excitation attenuation factors in Q15 indexed `[usize::from(voiced)][stage]`:
+    /// row `0` is unvoiced (`0.99`, `0.90`) and row `1` is voiced (`0.95`, `0.80`).
+    pub(crate) const NOISE_ATTENUATION_Q15: [[i16; NUM_ATTENUATION_STAGES]; 2] =
+        [[32_440, 29_491], [31_130, 26_214]];
 }
 
 #[cfg(test)]
