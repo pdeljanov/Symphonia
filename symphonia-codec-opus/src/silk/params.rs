@@ -302,12 +302,11 @@ impl CodingReferences {
         let base_lag = min_lag + lag_index;
         let contour = decode_pitch_contour(decoder, layout)?;
 
-        let mut pitch_lags = [0u16; MAX_SUBFRAMES];
-        for (pitch_lag, &offset) in pitch_lags.iter_mut().zip(contour.iter()).take(layout.subframes)
-        {
-            *pitch_lag = (base_lag + (offset as i32)).clamp(min_lag, max_lag) as u16;
-        }
-        return Ok(pitch_lags);
+        return Ok(std::array::from_fn(|k| {
+            contour
+                .get(k)
+                .map_or(0, |&offset| (base_lag + i32::from(offset)).clamp(min_lag, max_lag) as u16)
+        }));
     }
 
     /// Decodes the primary pitch lag index, relative to the previous frame when this frame is

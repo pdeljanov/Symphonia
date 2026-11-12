@@ -281,10 +281,7 @@ fn two_equal_frames<'a>(cursor: &mut &'a [u8], framing: Framing) -> Result<Frame
         }
         Framing::SelfDelimited => take_length(cursor)?,
     };
-    let mut frames = Frames::new();
-    frames.push(take_frame(cursor, len)?)?;
-    frames.push(take_frame(cursor, len)?)?;
-    return Ok(frames);
+    return take_equal_frames(cursor, 2, len);
 }
 
 /// Code 2: two frames, the first length coded, the second taking the rest (rule R4)
@@ -359,24 +356,21 @@ fn signaled_frames<'a>(
 
     let frames = match (framing, vbr) {
         (Framing::Undelimited, true) => {
-            let mut payload = &cursor[..payload_len];
+            let (mut payload, rest) =
+                cursor.split_at_checked(payload_len).ok_or(Error::TooShort)?;
             let frames = take_vbr_frames(&mut payload, count, framing)?;
-            *cursor = &cursor[payload_len..];
+            *cursor = rest;
             frames
         }
         (Framing::Undelimited, false) => {
-            let payload = &cursor[..payload_len];
-            *cursor = &cursor[payload_len..];
+            let (payload, rest) = cursor.split_at_checked(payload_len).ok_or(Error::TooShort)?;
+            *cursor = rest;
             split_cbr_payload(payload, count)?
         }
         (Framing::SelfDelimited, true) => take_vbr_frames(cursor, count, framing)?,
         (Framing::SelfDelimited, false) => {
             let len = take_length(cursor)?;
-            let mut frames = Frames::new();
-            for _ in 0..count {
-                frames.push(take_frame(cursor, len)?)?;
-            }
-            frames
+            take_equal_frames(cursor, count, len)?
         }
     };
 
@@ -411,17 +405,24 @@ fn take_vbr_frames<'a>(
 }
 
 /// Splits an undelimited CBR payload into `count` equal frames (rule R6).
-fn split_cbr_payload(payload: &[u8], count: usize) -> Result<Frames<'_>, Error> {
+fn split_cbr_payload(mut payload: &[u8], count: usize) -> Result<Frames<'_>, Error> {
     if payload.len() % count != 0 {
         return Err(Error::UnevenCbrPayload);
     }
     let len = check_frame_length(payload.len() / count)?;
-    let mut frames = Frames::new();
-    let mut cursor = payload;
-    for _ in 0..count {
-        frames.push(take_frame(&mut cursor, len)?)?;
-    }
-    return Ok(frames);
+    return take_equal_frames(&mut payload, count, len);
+}
+
+/// Takes `count` consecutive frames of `len` bytes from `cursor`.
+fn take_equal_frames<'a>(
+    cursor: &mut &'a [u8],
+    count: usize,
+    len: usize,
+) -> Result<Frames<'a>, Error> {
+    return (0..count).try_fold(Frames::new(), |mut frames, _| {
+        frames.push(take_frame(cursor, len)?)?;
+        return Ok(frames);
+    });
 }
 
 /// Reads a one or two byte frame length

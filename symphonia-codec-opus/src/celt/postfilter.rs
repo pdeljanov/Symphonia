@@ -178,7 +178,6 @@ fn filter_in_place(
     debug_assert!(history_offset >= period0 + 2);
     debug_assert!(history_offset >= period1 + 2);
 
-    let old = CombFilterTaps::of(from, 1.0);
     let new = CombFilterTaps::of(to, 1.0);
 
     let mut x1 = signal_buf[history_offset - period1 + 1];
@@ -222,7 +221,6 @@ fn filter_in_place(
         x2 = x1;
         x1 = x0;
     }
-    let _ = old;
     return;
 }
 

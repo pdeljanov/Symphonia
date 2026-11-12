@@ -204,6 +204,17 @@ fn accumulate_shifted_pair_squares(samples: &[i16], initial: i32, shift: u32) ->
     return acc as i32;
 }
 
+/// Scales one subframe of Q14 excitation by `gain_q10` into saturated Q6 PCM and returns its
+/// `(energy, shift)` pair from [`sum_sqr_shift`].
+fn scaled_subframe_energy(exc_q14: &[i32], gain_q10: i32) -> (i32, i32) {
+    let mut scaled = [0i16; MAX_SUBFRAME_SAMPLES];
+    let len = exc_q14.len();
+    scaled[..len].iter_mut().zip(exc_q14).for_each(|(dst, &sample_q14)| {
+        *dst = saturate_i16(mul_q16(sample_q14, gain_q10) >> Q8_SHIFT);
+    });
+    return sum_sqr_shift(&scaled[..len]);
+}
+
 /// Per-channel SILK Packet Loss Concealment (PLC) state (RFC 6716 Section 4.4).
 ///
 /// Tracks voiced pitch lag, simplified single-tap LTP gain, previous LPC synthesis
@@ -485,21 +496,13 @@ impl PlcState {
         subfr_length: usize,
         nb_subfr: usize,
     ) -> usize {
-        let mut scaled_exc = [0i16; 2 * MAX_SUBFRAME_SAMPLES];
-
-        for (i, &gain_q10) in prev_gain_q10.iter().enumerate() {
-            let src_start = (i + nb_subfr - 2) * subfr_length;
-            let dst_start = i * subfr_length;
-            scaled_exc[dst_start..dst_start + subfr_length]
-                .iter_mut()
-                .zip(self.prev_exc_q14[src_start..src_start + subfr_length].iter())
-                .for_each(|(dst, &exc_q14)| {
-                    *dst = saturate_i16(mul_q16(exc_q14, gain_q10) >> Q8_SHIFT);
-                });
-        }
-
-        let (energy1, shift1) = sum_sqr_shift(&scaled_exc[..subfr_length]);
-        let (energy2, shift2) = sum_sqr_shift(&scaled_exc[subfr_length..2 * subfr_length]);
+        let mut chunks = self.prev_exc_q14[..nb_subfr * subfr_length]
+            .chunks_exact(subfr_length)
+            .skip(nb_subfr - 2);
+        let (energy1, shift1) =
+            scaled_subframe_energy(chunks.next().unwrap_or(&[]), prev_gain_q10[0]);
+        let (energy2, shift2) =
+            scaled_subframe_energy(chunks.next().unwrap_or(&[]), prev_gain_q10[1]);
 
         let drop_last_subframe = (energy1 >> shift2) < (energy2 >> shift1);
         let end_subframe = self.nb_subfr.saturating_sub(usize::from(drop_last_subframe));

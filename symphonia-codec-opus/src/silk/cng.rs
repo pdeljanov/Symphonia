@@ -3,11 +3,9 @@
 //! ([RFC 6716 Section 4.2.7.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9>),
 //! [Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 
-use crate::fixed::{
-    mul_add_q16_i16, mul_q16, mul_q16_i16, round_shift, saturate_i16, shl_saturating, sqrt_approx,
-};
+use crate::fixed::{mul_q16, mul_q16_i16, sqrt_approx};
 use crate::silk::excitation::advance_lcg_seed;
-use crate::silk::lpc::nlsf_to_lpc_q12;
+use crate::silk::lpc::{lpc_synthesize_sample_q14, nlsf_to_lpc_q12};
 use crate::silk::plc::{PlcState, Q8_SHIFT, Q16_SHIFT, Q16_TO_Q10_SHIFT};
 use crate::silk::{
     ChannelState, MAX_FRAME_SAMPLES, MAX_LPC_ORDER, MAX_SUBFRAME_SAMPLES, MAX_SUBFRAMES, SignalType,
@@ -237,18 +235,8 @@ impl CngState {
         let a_q12 = nlsf_to_lpc_q12(&self.cng_smth_nlsf_q15[..order])?;
 
         for (i, sample) in frame_pcm[..length].iter_mut().enumerate() {
-            let lpc_pred_q10 = a_q12[..order].iter().enumerate().fold(
-                (order >> 1) as i32,
-                |acc, (tap, &coeff_q12)| {
-                    mul_add_q16_i16(acc, cng_sig_q14[MAX_LPC_ORDER + i - 1 - tap], coeff_q12)
-                },
-            );
-
-            let synth_q14 =
-                cng_sig_q14[MAX_LPC_ORDER + i].saturating_add(shl_saturating(lpc_pred_q10, 4));
-            cng_sig_q14[MAX_LPC_ORDER + i] = synth_q14;
-
-            let cng_sample = saturate_i16(round_shift(mul_q16(synth_q14, gain_q10), Q8_SHIFT));
+            let cng_sample =
+                lpc_synthesize_sample_q14(&mut cng_sig_q14, i, &a_q12[..order], gain_q10);
             *sample = sample.saturating_add(cng_sample);
         }
 

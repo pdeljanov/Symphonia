@@ -248,11 +248,15 @@ impl<'a, 'd> BandSweep<'a, 'd> {
             .find(|&j| j + 1 >= i || m * EBANDS[j + 1] >= fold_bin + n)
             .unwrap_or(i - 1)
             + 1;
-        let (x_mask, y_mask) = (fold_start..fold_end).fold((0u32, 0u32), |(x_mask, y_mask), j| {
-            let x = u32::from(collapse_masks[j * channels]);
-            let y = u32::from(collapse_masks[j * channels + channels - 1]);
-            return (x_mask | x, y_mask | y);
-        });
+        let (x_mask, y_mask) = collapse_masks
+            .chunks_exact(channels)
+            .take(fold_end)
+            .skip(fold_start)
+            .fold((0u32, 0u32), |(x_mask, y_mask), band_masks| {
+                let x = u32::from(band_masks[0]);
+                let y = u32::from(band_masks[channels - 1]);
+                return (x_mask | x, y_mask | y);
+            });
         return FoldSource { lowband: Some(offset), x_mask, y_mask };
     }
 
@@ -326,8 +330,8 @@ pub(crate) fn unquantize_bands(
     let mut history = FoldingHistory { norm: [[0.0_f32; MAX_NORM_BUFFER_SIZE]; MAX_CHANNELS] };
     let mut sweep = BandSweep::new(frame, alloc, dec, *seed);
 
-    for i in start..end {
-        let band_start = m * EBANDS[i];
+    for (i, &eband_start) in EBANDS.iter().enumerate().take(end).skip(start) {
+        let band_start = m * eband_start;
         let n = band_width(i, lm);
         let (tell, bits) = sweep.begin_band(i);
         sweep.select_lowband(i, band_start, norm_offset, n);
@@ -346,8 +350,10 @@ pub(crate) fn unquantize_bands(
         let band = spectra.range(band_start..(band_start + n));
         let (x_cm, y_cm) = sweep.decode_band_shapes(band, lowbands, (n, bits), &fold)?;
 
-        collapse_masks[i * channels] = x_cm as u8;
-        collapse_masks[i * channels + channels - 1] = y_cm as u8;
+        if let Some(band_masks) = collapse_masks.chunks_exact_mut(channels).nth(i) {
+            band_masks[0] = x_cm as u8;
+            band_masks[channels - 1] = y_cm as u8;
+        }
         sweep.end_band(i, tell, bits, n);
     }
 
@@ -398,17 +404,19 @@ pub(crate) fn anti_collapse(
     let blocks = lm.blocks();
     let size = lm.frame_samples();
 
-    for i in start..end {
+    for (i, band_masks) in collapse_masks.chunks_exact(channels).enumerate().take(end).skip(start) {
         let n0 = EBANDS[i + 1] - EBANDS[i];
         let depth = ((1 + pulses[i]) / (n0 as i32)) >> lm.log2();
         let thresh = 0.5_f32 * exp2(-COLLAPSE_DEPTH_DECAY * (depth as f32));
         let sqrt_1 = 1.0_f32 / (lm.scale(n0) as f32).sqrt();
+        let band_start = lm.scale(EBANDS[i]);
+        let band_len = lm.scale(n0);
 
-        for c in 0..channels {
+        for (c, (plane, &mask)) in
+            x.chunks_exact_mut(size).take(channels).zip(band_masks).enumerate()
+        {
             let r = collapse_noise_level(energy, channels, c, i, lm, thresh, sqrt_1);
-            let band_offset = c * size + lm.scale(EBANDS[i]);
-            let band_slice = &mut x[band_offset..(band_offset + lm.scale(n0))];
-            let mask = collapse_masks[i * channels + c];
+            let band_slice = &mut plane[band_start..(band_start + band_len)];
 
             let mut any_collapsed = false;
             for k in (0..blocks).filter(|&k| (mask & (1u8 << k)) == 0) {
@@ -419,7 +427,7 @@ pub(crate) fn anti_collapse(
                 }
             }
             if any_collapsed {
-                renormalise_vector(band_slice, lm.scale(n0), 1.0_f32);
+                renormalise_vector(band_slice, band_len, 1.0_f32);
             }
         }
     }

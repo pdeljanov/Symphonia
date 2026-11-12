@@ -355,11 +355,9 @@ pub(crate) fn tf_decode(
     }
     let adjustments = table[tf_select];
 
-    let mut tf_res = [0i32; MAX_BANDS];
-    tf_res[start..end]
-        .iter_mut()
-        .zip(&tf_changes[start..end])
-        .for_each(|(res, &change)| *res = i32::from(adjustments[change]));
+    let tf_res = std::array::from_fn(|i| {
+        if (start..end).contains(&i) { i32::from(adjustments[tf_changes[i]]) } else { 0 }
+    });
     return Ok(tf_res);
 }
 
@@ -870,11 +868,8 @@ fn split_band_bits(
 
     // Whole fine bits per degree of freedom, rounded, and never more than the shape bits allow.
     let num = (shape + offset + (den << (BITRES - 1))).max(0);
-    let mut fine = (num / den) >> BITRES;
-    if c * fine > (shape >> BITRES) {
-        fine = (shape >> layout.stereo_shift()) >> BITRES;
-    }
-    fine = fine.min(MAX_FINE_BITS);
+    let max_fine = ((shape >> layout.stereo_shift()) >> BITRES).min(MAX_FINE_BITS);
+    let fine = ((num / den) >> BITRES).min(max_fine);
     let priority = fine * (den << BITRES) >= shape + offset;
     let split = BandSplit { shape: shape - ((c * fine) << BITRES), fine, priority, excess };
     return carry_excess_into_fine(split, layout, balance);

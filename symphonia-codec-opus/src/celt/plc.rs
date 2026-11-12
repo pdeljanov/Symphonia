@@ -204,15 +204,11 @@ fn whiten_excitation(
 /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 fn excitation_decay(exc_only: &[f32], exc_length: usize) -> f32 {
     let decay_length = exc_length >> 1;
-    let mut e1 = 1.0_f32;
-    let mut e2 = 1.0_f32;
-    for i in 0..decay_length {
-        let ex1 = exc_only[PITCH_HISTORY_LEN - decay_length + i];
-        e1 += ex1 * ex1;
-        let ex2 = exc_only[PITCH_HISTORY_LEN - 2 * decay_length + i];
-        e2 += ex2 * ex2;
-    }
-    e1 = e1.min(e2);
+    let (earlier, recent) =
+        exc_only[PITCH_HISTORY_LEN - 2 * decay_length..PITCH_HISTORY_LEN].split_at(decay_length);
+    let window_energy = |window: &[f32]| window.iter().fold(1.0_f32, |acc, &x| acc + x * x);
+    let e2 = window_energy(earlier);
+    let e1 = window_energy(recent).min(e2);
     return (e1 / e2).sqrt();
 }
 
@@ -293,11 +289,11 @@ pub(crate) fn fill_noise_spectrum(
     lm: BlockSize,
     mut seed: u32,
 ) -> u32 {
-    for ch in 0..channels {
+    for plane in x_norm.chunks_exact_mut(n).take(channels) {
         for (band, &band_start) in EBANDS.iter().enumerate().take(end).skip(start) {
-            let boffs = ch * n + lm.scale(band_start);
+            let boffs = lm.scale(band_start);
             let blen = band_width(band, lm);
-            let band_slice = &mut x_norm[boffs..(boffs + blen)];
+            let band_slice = &mut plane[boffs..(boffs + blen)];
             for coeff in band_slice.iter_mut() {
                 seed = lcg_next(seed);
                 *coeff = ((seed as i32) >> 20) as f32;
@@ -342,16 +338,8 @@ pub(crate) fn autocorrelation(x: &[f32], ac: &mut [f32], window: Option<&[f32]>)
         None => x,
     };
 
-    let fast_n = n - lag;
-    for k in 0..=lag {
-        let mut d = 0.0f32;
-        for i in k..fast_n + k {
-            d += buf[i] * buf[i - k];
-        }
-        for i in fast_n + k..n {
-            d += buf[i] * buf[i - k];
-        }
-        ac[k] = d;
+    for (k, slot) in ac.iter_mut().enumerate() {
+        *slot = correlation(&buf[k..n], &buf[..n - k]);
     }
     return;
 }

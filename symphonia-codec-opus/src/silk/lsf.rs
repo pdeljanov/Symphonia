@@ -384,18 +384,19 @@ fn reconstruct_nlsf_q15(
     res_q10: &[i16; MAX_LPC_ORDER],
 ) -> [i16; MAX_LPC_ORDER] {
     let cb1_q8 = codebook.stage_one_vector_q8(i1);
-    let mut nlsf_q15 = [0i16; MAX_LPC_ORDER];
-    for (i, (nlsf, &cb1_cur)) in nlsf_q15.iter_mut().zip(cb1_q8.iter()).enumerate() {
-        let cb1_cur = cb1_cur as i32;
-        let cb1_prev = i.checked_sub(1).map_or(0, |j| cb1_q8[j] as i32);
-        let cb1_next = cb1_q8.get(i + 1).map_or(NLSF_CODEBOOK_RANGE_Q8, |&next| next as i32);
-        let w_q9 = inverse_spacing_weight_q9(cb1_prev, cb1_cur, cb1_next);
-
-        let weighted_residual_q15 = ((res_q10[i] as i32) << NLSF_RESIDUAL_Q10_TO_Q24_SHIFT) / w_q9;
-        *nlsf = ((cb1_cur << NLSF_CODEBOOK_Q8_TO_Q15_SHIFT) + weighted_residual_q15)
-            .clamp(0, NLSF_MAX_Q15) as i16;
-    }
-    return nlsf_q15;
+    return std::array::from_fn(|i| {
+        return cb1_q8.get(i).map_or(0, |&cb1_cur| {
+            let cb1_cur = i32::from(cb1_cur);
+            let cb1_prev = i.checked_sub(1).map_or(0, |j| i32::from(cb1_q8[j]));
+            let cb1_next =
+                cb1_q8.get(i + 1).map_or(NLSF_CODEBOOK_RANGE_Q8, |&next| i32::from(next));
+            let w_q9 = inverse_spacing_weight_q9(cb1_prev, cb1_cur, cb1_next);
+            let weighted_residual_q15 =
+                (i32::from(res_q10[i]) << NLSF_RESIDUAL_Q10_TO_Q24_SHIFT) / w_q9;
+            return ((cb1_cur << NLSF_CODEBOOK_Q8_TO_Q15_SHIFT) + weighted_residual_q15)
+                .clamp(0, NLSF_MAX_Q15) as i16;
+        });
+    });
 }
 
 /// Q9 weight of a codebook entry, the square root of the summed inverse distances to its
