@@ -232,10 +232,9 @@ pub(crate) fn decode_frame_type(
     vad_flag: bool,
     is_lbrr_frame: bool,
 ) -> Result<FrameType> {
-    let (cdf, frame_types): (Cdf<'static>, &[FrameType]) = match vad_flag || is_lbrr_frame {
-        true => (constant::CDF_FRAME_TYPE_VAD_ACTIVE, &ACTIVE_FRAME_TYPES),
-        false => (constant::CDF_FRAME_TYPE_VAD_INACTIVE, &INACTIVE_FRAME_TYPES),
-    };
+    let active = (constant::CDF_FRAME_TYPE_VAD_ACTIVE, ACTIVE_FRAME_TYPES.as_slice());
+    let inactive = (constant::CDF_FRAME_TYPE_VAD_INACTIVE, INACTIVE_FRAME_TYPES.as_slice());
+    let (cdf, frame_types) = if vad_flag || is_lbrr_frame { active } else { inactive };
     return Ok(frame_types[decoder.decode_symbol(cdf)? as usize]);
 }
 
@@ -251,10 +250,11 @@ impl CodingReferences {
     ) -> Result<()> {
         let signal_type = frame.frame_type.signal_type;
         for (i, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
-            let independent = i == 0 && coding_mode != CodingMode::Conditional;
-            let log_gain = match independent {
-                true => decode_independent_log_gain(decoder, signal_type, self.last_gain_index)?,
-                false => decode_delta_log_gain(decoder, self.last_gain_index)?,
+            let log_gain = match (i, coding_mode) {
+                (0, CodingMode::Independent) => {
+                    decode_independent_log_gain(decoder, signal_type, self.last_gain_index)?
+                }
+                _ => decode_delta_log_gain(decoder, self.last_gain_index)?,
             };
             self.last_gain_index = log_gain;
             subframe.log_gain = log_gain;
@@ -320,10 +320,10 @@ impl CodingReferences {
     ) -> Result<i32> {
         let relative =
             coding_mode == CodingMode::Conditional && self.prev_signal_type == SignalType::Voiced;
-        let delta_lag_index = match relative {
-            true => decoder.decode_symbol(constant::CDF_RELATIVE_DELTA_PITCH_LAG)? as i32,
-            false => 0,
-        };
+        let delta_lag_index = relative
+            .then(|| decoder.decode_symbol(constant::CDF_RELATIVE_DELTA_PITCH_LAG))
+            .transpose()?
+            .map_or(0, |sym| sym as i32);
 
         let lag_index = match delta_lag_index {
             0 => decode_absolute_lag_index(decoder, bandwidth)?,
@@ -388,10 +388,10 @@ pub(crate) fn gain_q16_from_log_gain(log_gain: i32) -> i32 {
     let frac_q7 = in_log_q7 & LOG2_Q7_FRAC_MASK;
     let frac_correction_q7 = frac_q7
         + ((((frac_q7 * (LOG2_Q7_ONE - frac_q7)) as i64 * LOG2LIN_PARABOLIC_Q16) >> 16) as i32);
-    let fractional_part = match in_log_q7 < LOG2LIN_EXACT_SHIFT_LIMIT_Q7 {
-        true => (integer_part * frac_correction_q7) >> LOG2_Q7_SHIFT,
-        false => (integer_part >> LOG2_Q7_SHIFT) * frac_correction_q7,
-    };
+    let exact = in_log_q7 < LOG2LIN_EXACT_SHIFT_LIMIT_Q7;
+    let (int, corr) = (integer_part, frac_correction_q7);
+    let fractional_part =
+        if exact { (int * corr) >> LOG2_Q7_SHIFT } else { (int >> LOG2_Q7_SHIFT) * corr };
     return integer_part + fractional_part;
 }
 
@@ -494,7 +494,7 @@ const fn silk_band_slot(bandwidth: Bandwidth) -> usize {
 /// Smallest and largest pitch lag in samples at the internal rate of `bandwidth`
 /// ([RFC 6716 Section 4.2.7.6.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>)).
 #[inline]
-pub(crate) const fn pitch_lag_bounds(bandwidth: Bandwidth) -> (i32, i32) {
+const fn pitch_lag_bounds(bandwidth: Bandwidth) -> (i32, i32) {
     let spec = &PITCH_LAG_SPECS[silk_band_slot(bandwidth)];
     return (spec.min_lag, spec.max_lag);
 }

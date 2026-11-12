@@ -60,20 +60,11 @@ impl BandDecoderCtx<'_, '_> {
         let sign = 1.0_f32 - 2.0_f32 * (sign_bit as f32);
         let primary = Partition { bits: mbits, gain: 1.0_f32, ..part };
 
-        let cm = match split.itheta > THETA_HALF_Q14 {
-            true => {
-                let cm = self.quant_band(y, lowband, primary)?;
-                x[0] = -sign * y[1];
-                x[1] = sign * y[0];
-                cm
-            }
-            false => {
-                let cm = self.quant_band(x, lowband, primary)?;
-                y[0] = -sign * x[1];
-                y[1] = sign * x[0];
-                cm
-            }
-        };
+        let (primary_band, secondary_band) =
+            if split.itheta > THETA_HALF_Q14 { (&mut *y, &mut *x) } else { (&mut *x, &mut *y) };
+        let cm = self.quant_band(primary_band, lowband, primary)?;
+        secondary_band[0] = -sign * primary_band[1];
+        secondary_band[1] = sign * primary_band[0];
 
         for (vx, vy) in x[..2].iter_mut().zip(y[..2].iter_mut()) {
             *vx *= mid;

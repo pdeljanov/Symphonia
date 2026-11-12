@@ -214,15 +214,17 @@ impl ResamplerState {
     /// compensation and the filter coefficients of the rate pair
     /// ([RFC 6716 Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
     pub(crate) fn init(&mut self, fs_hz_in: u32, fs_hz_out: u32) -> Result<()> {
-        let input_rate = input_rate_index(fs_hz_in)?;
-        let output_rate = output_rate_index(fs_hz_out)?;
-        let (mode, up2x) = RESAMPLER_MODE_MATRIX[input_rate][output_rate];
+        let in_rate = InputRate::try_from(fs_hz_in)?;
+        let out_rate = OutputRate::try_from(fs_hz_out)?;
+        let (mode, up2x) = RESAMPLER_MODE_MATRIX[in_rate as usize][out_rate as usize];
 
         let input_rate_khz = (fs_hz_in / 1000) as usize;
         *self = Self {
             input_rate_khz,
             output_rate_khz: (fs_hz_out / 1000) as usize,
-            input_delay: usize::from(RESAMPLER_DELAY_MATRIX_DEC[input_rate][output_rate]),
+            input_delay: usize::from(
+                RESAMPLER_DELAY_MATRIX_DEC[in_rate as usize][out_rate as usize],
+            ),
             batch_size: input_rate_khz * RESAMPLER_MAX_BATCH_SIZE_MS,
             inv_ratio_q16: inverse_ratio_q16(fs_hz_in as i32, fs_hz_out as i32, up2x),
             mode,
@@ -342,26 +344,52 @@ impl ResamplerState {
     }
 }
 
-/// Row of the delay matrix for an input rate (RFC 6716 Section 4.2.9).
-fn input_rate_index(fs_hz: u32) -> Result<usize> {
-    return match fs_hz {
-        8_000 => Ok(0),
-        12_000 => Ok(1),
-        16_000 => Ok(2),
-        _ => Err(Error::UnsupportedConfig.into()),
-    };
+/// Validated SILK internal sample rate row (`[8, 12, 16]` kHz) in the resampler matrices
+/// ([RFC 6716 Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
+#[derive(Clone, Copy)]
+enum InputRate {
+    Hz8000 = 0,
+    Hz12000 = 1,
+    Hz16000 = 2,
 }
 
-/// Column of the delay matrix for an output rate (RFC 6716 Section 4.2.9).
-fn output_rate_index(fs_hz: u32) -> Result<usize> {
-    return match fs_hz {
-        8_000 => Ok(0),
-        12_000 => Ok(1),
-        16_000 => Ok(2),
-        24_000 => Ok(3),
-        48_000 => Ok(4),
-        _ => Err(Error::UnsupportedConfig.into()),
-    };
+impl TryFrom<u32> for InputRate {
+    type Error = symphonia_core::errors::Error;
+
+    fn try_from(fs_hz: u32) -> Result<Self> {
+        return match fs_hz {
+            8_000 => Ok(Self::Hz8000),
+            12_000 => Ok(Self::Hz12000),
+            16_000 => Ok(Self::Hz16000),
+            _ => Err(Error::UnsupportedConfig.into()),
+        };
+    }
+}
+
+/// Validated output sample rate column (`[8, 12, 16, 24, 48]` kHz) in the resampler matrices
+/// ([RFC 6716 Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
+#[derive(Clone, Copy)]
+enum OutputRate {
+    Hz8000 = 0,
+    Hz12000 = 1,
+    Hz16000 = 2,
+    Hz24000 = 3,
+    Hz48000 = 4,
+}
+
+impl TryFrom<u32> for OutputRate {
+    type Error = symphonia_core::errors::Error;
+
+    fn try_from(fs_hz: u32) -> Result<Self> {
+        return match fs_hz {
+            8_000 => Ok(Self::Hz8000),
+            12_000 => Ok(Self::Hz12000),
+            16_000 => Ok(Self::Hz16000),
+            24_000 => Ok(Self::Hz24000),
+            48_000 => Ok(Self::Hz48000),
+            _ => Err(Error::UnsupportedConfig.into()),
+        };
+    }
 }
 
 /// Resampling mode and `up2x` shift (`1` when the FIR runs on the 2x allpass-upsampled signal)

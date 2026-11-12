@@ -540,18 +540,24 @@ impl Decoder {
         let n = lm.frame_samples();
         let out_samples = n / self.config.downsample;
 
-        match self.plc.uses_noise(self.config.start_band) {
-            true => self.conceal_noise_based(lm),
-            false => {
-                let cc = self.config.output_channels;
-                self.plc.conceal_pitch_based(&mut self.synthesis.decode_mem, cc, n);
-                self.synthesis.prefilter_and_fold_next = true;
-            }
-        }
+        self.conceal_loss(lm);
         self.plc.record_loss(lm);
 
         self.deemphasize(n, out, mix);
         return Ok(out_samples);
+    }
+
+    /// Synthesizes concealed history for a lost frame of block size `lm` using band-energy noise
+    /// or pitch-based LPC extrapolation (RFC 6716 Section 4.4).
+    fn conceal_loss(&mut self, lm: BlockSize) {
+        if self.plc.uses_noise(self.config.start_band) {
+            self.conceal_noise_based(lm);
+            return;
+        }
+        let cc = self.config.output_channels;
+        self.plc.conceal_pitch_based(&mut self.synthesis.decode_mem, cc, lm.frame_samples());
+        self.synthesis.prefilter_and_fold_next = true;
+        return;
     }
 
     /// Conceals a lost frame with band-energy noise decayed towards the background floor, then
@@ -560,7 +566,7 @@ impl Decoder {
     fn conceal_noise_based(&mut self, lm: BlockSize) {
         let n = lm.frame_samples();
         let Config { output_channels: cc, start_band: start, end_band: end, .. } = self.config;
-        let eff_end = start.max(end.min(MAX_BANDS));
+        let bands = start..start.max(end.min(MAX_BANDS));
 
         self.synthesis.shift_history(cc, n);
         if self.synthesis.prefilter_and_fold_next {
@@ -569,8 +575,8 @@ impl Decoder {
         self.energy.decay_for_concealment(cc, start..end, self.plc.noise_energy_decay());
 
         let mut x_norm = [0.0_f32; MAX_CHANNELS * MAX_FRAME_SIZE];
-        self.rng = fill_noise_spectrum(&mut x_norm, cc, n, (start, eff_end), lm, self.rng);
-        self.synthesize_mdct(&x_norm[..(cc * n)], lm, cc, start..eff_end, false, false);
+        self.rng = fill_noise_spectrum(&mut x_norm, cc, n, bands.clone(), lm, self.rng);
+        self.synthesize_mdct(&x_norm[..(cc * n)], lm, cc, bands, false, false);
 
         let held = self.postfilter.held();
         self.postfilter.apply(&mut self.synthesis.decode_mem[..cc], n, lm, held);
@@ -584,14 +590,10 @@ impl Decoder {
     /// at least `out_samples` samples.
     #[inline]
     fn validate_output_capacity(&self, out_samples: usize, out: &Planes<'_>) -> Result<()> {
-        if out.left.len() < out_samples {
+        let right_ok = self.config.output_channels < 2
+            || out.right.as_deref().is_some_and(|right| right.len() >= out_samples);
+        if out.left.len() < out_samples || !right_ok {
             return Err(Error::BufferTooSmall.into());
-        }
-        if self.config.output_channels == 2 {
-            match out.right.as_deref() {
-                Some(right) if right.len() >= out_samples => {}
-                _ => return Err(Error::BufferTooSmall.into()),
-            }
         }
         return Ok(());
     }

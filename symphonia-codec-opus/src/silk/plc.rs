@@ -381,10 +381,9 @@ impl PlcState {
             .fold((0i32, self.pitch_l_q8), |(max_gain, best_lag_q8), (_, subfr)| {
                 let gain_q14: i32 =
                     subfr.ltp_coeffs.iter().map(|&c| (c as i32) << LTP_COEFF_Q7_TO_Q14_SHIFT).sum();
-                return match gain_q14 > max_gain {
-                    true => (gain_q14, (subfr.pitch_lag as i32) << PITCH_LAG_Q8_SHIFT),
-                    false => (max_gain, best_lag_q8),
-                };
+                let lag_q8 = (subfr.pitch_lag as i32) << PITCH_LAG_Q8_SHIFT;
+                let best = (max_gain, best_lag_q8);
+                return if gain_q14 > max_gain { (gain_q14, lag_q8) } else { best };
             });
 
         self.pitch_l_q8 = selected_lag_q8;
@@ -596,6 +595,22 @@ impl PlcState {
         return;
     }
 
+    /// Pitch prediction (Q12) at `write` from `ltp_state_q14` for a voiced frame, or the
+    /// rounding bias alone for an unvoiced frame (RFC 6716 Section 4.4).
+    fn pitch_prediction_q12(
+        &self,
+        ltp_state_q14: &[i32],
+        write: usize,
+        lag: usize,
+        voiced: bool,
+    ) -> i32 {
+        if !voiced {
+            return PREDICTION_ROUNDING_BIAS_Q12;
+        }
+        let history = &ltp_state_q14[..=write + LTP_HALF_ORDER - lag];
+        return ltp_predict_q13(history, &self.ltp_coef_q14);
+    }
+
     /// Synthesises the concealed excitation of every subframe into `ltp_state_q14` after the
     /// rewhitened history and returns the final pitch lag: each sample is the pitch prediction of
     /// the LTP taps (voiced; an unvoiced frame keeps only the accumulator's rounding bias) plus
@@ -616,13 +631,8 @@ impl PlcState {
 
         for _ in 0..geometry.subframes {
             for _ in 0..geometry.subframe_samples {
-                let prediction_q12 = match shape.voiced {
-                    true => {
-                        let history = &ltp_state_q14[..=write + LTP_HALF_ORDER - lag];
-                        ltp_predict_q13(history, &self.ltp_coef_q14)
-                    }
-                    false => PREDICTION_ROUNDING_BIAS_Q12,
-                };
+                let prediction_q12 =
+                    self.pitch_prediction_q12(ltp_state_q14, write, lag, shape.voiced);
                 rand_seed = advance_lcg_seed(rand_seed);
                 let noise_q14 =
                     noise_window[((rand_seed >> RAND_INDEX_SHIFT) & RAND_BUF_MASK) as usize];

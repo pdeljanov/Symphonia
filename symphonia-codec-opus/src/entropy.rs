@@ -285,21 +285,13 @@ impl<'a> Decoder<'a> {
     /// ([RFC 6716 Section 4.1.3.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.1.3.2>)).
     pub(crate) fn decode_symbol_logp(&mut self, logp: u32) -> Result<u32> {
         let split = self.range >> logp;
-
-        let bit = match self.value < split {
-            true => {
-                self.range = split;
-                1
-            }
-            false => {
-                self.value -= split;
-                self.range -= split;
-                0
-            }
-        };
+        let is_one = self.value < split;
+        if !is_one {
+            self.value -= split;
+        }
+        self.range = if is_one { split } else { self.range - split };
         self.normalize();
-
-        return Ok(bit);
+        return Ok(u32::from(is_one));
     }
 
     /// Reads `bits` (at most 25) raw bits, which bypass the range decoder and are packed from the
@@ -401,10 +393,9 @@ impl<'a> Decoder<'a> {
                 low += (2 * tail_steps as u32) * MIN_PROB;
             }
 
-            match fm < low + zero_freq {
-                true => decoded_value = -decoded_value,
-                false => low += zero_freq,
-            }
+            let negative = fm < low + zero_freq;
+            decoded_value = if negative { -decoded_value } else { decoded_value };
+            low += if negative { 0 } else { zero_freq };
         }
 
         let high = (low + zero_freq).min(TOTAL_FREQ);

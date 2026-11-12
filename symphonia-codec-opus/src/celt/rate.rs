@@ -382,20 +382,18 @@ pub(crate) fn decode_spread_decision(
 /// Each boost symbol costs `dynalloc_logp` bits the first time and one bit afterwards; a boosted
 /// band lowers the first-boost cost of the following bands down to two bits. The trim defaults
 /// to the neutral `5` when fewer than six bits remain.
-pub(crate) fn decode_band_boosts_and_trim(
+fn decode_band_boosts_and_trim(
     range_decoder: &mut Decoder<'_>,
-    start: usize,
-    end: usize,
-    lm: BlockSize,
-    channels: usize,
+    layout: AllocationLayout,
     total_bits: i32,
     cap: &[i32; MAX_BANDS],
 ) -> Result<([i32; MAX_BANDS], i32)> {
+    let AllocationLayout { start, end, lm, .. } = layout;
     let mut offsets = [0i32; MAX_BANDS];
     let mut dynalloc_logp = BOOST_INITIAL_LOGP;
     let mut total_bits_q3 = total_bits << BITRES;
     let mut tell_q3 = range_decoder.tell_frac() as i32;
-    let c = channels as i32;
+    let c = layout.channels_i32();
 
     for band in start..end {
         let width = c * (band_width(band, lm) as i32);
@@ -963,15 +961,14 @@ pub(crate) fn decode_bit_allocation(
     is_transient: bool,
     total_bits: i32,
 ) -> Result<(BandAllocation, i32)> {
-    let AllocationLayout { start, end, channels, lm } = layout;
-    let cap = init_caps(lm, channels);
+    let cap = init_caps(layout.lm, layout.channels);
     let (offsets, alloc_trim) =
-        decode_band_boosts_and_trim(range_decoder, start, end, lm, channels, total_bits, &cap)?;
+        decode_band_boosts_and_trim(range_decoder, layout, total_bits, &cap)?;
 
     let available = (total_bits << BITRES) - (range_decoder.tell_frac() as i32) - 1;
     let reserve_anti_collapse = is_transient
-        && lm.log2() >= ANTI_COLLAPSE_MIN_LM
-        && available >= (((lm.log2() as i32) + 2) << BITRES);
+        && layout.lm.log2() >= ANTI_COLLAPSE_MIN_LM
+        && available >= (((layout.lm.log2() as i32) + 2) << BITRES);
     let anti_collapse_rsv = if reserve_anti_collapse { ONE_BIT_Q3 } else { 0 };
     let budget = AllocationBudget {
         offsets: &offsets,

@@ -5,8 +5,10 @@
 //! static bit-allocation table, the pulse cache, time-frequency selection tables, comb post-filter
 //! tapsets and the 120-sample low-overlap MDCT window of the 48 kHz CELT mode.
 
-// `E_MEANS`, `COMB_FILTER_GAINS` and `CELT_WINDOW` keep the reference digits beyond `f32` precision.
-#![allow(clippy::excessive_precision)]
+#![expect(
+    clippy::excessive_precision,
+    reason = "E_MEANS, COMB_FILTER_GAINS and CELT_WINDOW keep reference digits beyond f32 precision"
+)]
 // `CACHE_BITS` and `CELT_WINDOW` exceed the 256-byte threshold; both are lookup tables read by index.
 
 use crate::celt::BlockSize;
