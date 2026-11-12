@@ -1,0 +1,409 @@
+//! CELT pulse vector decoding
+//! ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+//!
+//! The shape of a band of `N` coefficients carrying `K` pulses is an integer vector `X` with
+//! `|X[0]| + ... + |X[N - 1]| = K`. Its index is decoded as a uniform integer below `V(N, K)`,
+//! the number of such vectors, and unranked one coefficient at a time. RFC 6716 allows any
+//! method equivalent to the recursive definition of `V`; this module counts with the symmetric
+//! auxiliary `U(N, K) = U(K, N)`, which keeps every intermediate value within 32 bits:
+//!
+//! ```text
+//!   V(N, K) = V(N - 1, K) + V(N, K - 1) + V(N - 1, K - 1)    V(N, 0) = 1, V(0, K) = 0 for K > 0
+//!   U(N, K) = V(N - 1, 0) + ... + V(N - 1, K - 1)            V(N, K) = U(N, K) + U(N, K + 1)
+//! ```
+
+// The `U(N, K)` table is a lookup table read by index.
+
+use symphonia_core::errors::Result;
+
+use crate::celt::error::Error;
+use crate::entropy::Decoder;
+
+/// Start of each row of [`PVQ_U_DATA`]: `PVQ_U_DATA[PVQ_U_ROW_START[row] + (col - row)]` is
+/// `U(row, col)` for `row <= 14` and `row <= col`.
+const PVQ_U_ROW_START: [usize; 15] =
+    [0, 177, 353, 528, 702, 875, 1047, 1138, 1186, 1216, 1236, 1251, 1260, 1267, 1271];
+
+/// Upper-triangular values of `U(N, K)` for `N <= 14` and `N <= K <= 176`, the range in which
+/// `V(N, K)` fits in 32 bits
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+#[rustfmt::skip]
+pub(crate) static PVQ_U_DATA: [u32; 1272] = [
+    // N = 0, K = 0..=176
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // N = 1, K = 1..=176
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    // N = 2, K = 2..=176
+    3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41,
+    43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79,
+    81, 83, 85, 87, 89, 91, 93, 95, 97, 99, 101, 103, 105, 107, 109, 111, 113,
+    115, 117, 119, 121, 123, 125, 127, 129, 131, 133, 135, 137, 139, 141, 143,
+    145, 147, 149, 151, 153, 155, 157, 159, 161, 163, 165, 167, 169, 171, 173,
+    175, 177, 179, 181, 183, 185, 187, 189, 191, 193, 195, 197, 199, 201, 203,
+    205, 207, 209, 211, 213, 215, 217, 219, 221, 223, 225, 227, 229, 231, 233,
+    235, 237, 239, 241, 243, 245, 247, 249, 251, 253, 255, 257, 259, 261, 263,
+    265, 267, 269, 271, 273, 275, 277, 279, 281, 283, 285, 287, 289, 291, 293,
+    295, 297, 299, 301, 303, 305, 307, 309, 311, 313, 315, 317, 319, 321, 323,
+    325, 327, 329, 331, 333, 335, 337, 339, 341, 343, 345, 347, 349, 351,
+    // N = 3, K = 3..=176
+    13, 25, 41, 61, 85, 113, 145, 181, 221, 265, 313, 365, 421, 481, 545, 613,
+    685, 761, 841, 925, 1013, 1105, 1201, 1301, 1405, 1513, 1625, 1741, 1861,
+    1985, 2113, 2245, 2381, 2521, 2665, 2813, 2965, 3121, 3281, 3445, 3613, 3785,
+    3961, 4141, 4325, 4513, 4705, 4901, 5101, 5305, 5513, 5725, 5941, 6161, 6385,
+    6613, 6845, 7081, 7321, 7565, 7813, 8065, 8321, 8581, 8845, 9113, 9385, 9661,
+    9941, 10225, 10513, 10805, 11101, 11401, 11705, 12013, 12325, 12641, 12961,
+    13285, 13613, 13945, 14281, 14621, 14965, 15313, 15665, 16021, 16381, 16745,
+    17113, 17485, 17861, 18241, 18625, 19013, 19405, 19801, 20201, 20605, 21013,
+    21425, 21841, 22261, 22685, 23113, 23545, 23981, 24421, 24865, 25313, 25765,
+    26221, 26681, 27145, 27613, 28085, 28561, 29041, 29525, 30013, 30505, 31001,
+    31501, 32005, 32513, 33025, 33541, 34061, 34585, 35113, 35645, 36181, 36721,
+    37265, 37813, 38365, 38921, 39481, 40045, 40613, 41185, 41761, 42341, 42925,
+    43513, 44105, 44701, 45301, 45905, 46513, 47125, 47741, 48361, 48985, 49613,
+    50245, 50881, 51521, 52165, 52813, 53465, 54121, 54781, 55445, 56113, 56785,
+    57461, 58141, 58825, 59513, 60205, 60901, 61601,
+    // N = 4, K = 4..=176
+    63, 129, 231, 377, 575, 833, 1159, 1561, 2047, 2625, 3303, 4089, 4991, 6017,
+    7175, 8473, 9919, 11521, 13287, 15225, 17343, 19649, 22151, 24857, 27775,
+    30913, 34279, 37881, 41727, 45825, 50183, 54809, 59711, 64897, 70375, 76153,
+    82239, 88641, 95367, 102425, 109823, 117569, 125671, 134137, 142975, 152193,
+    161799, 171801, 182207, 193025, 204263, 215929, 228031, 240577, 253575,
+    267033, 280959, 295361, 310247, 325625, 341503, 357889, 374791, 392217,
+    410175, 428673, 447719, 467321, 487487, 508225, 529543, 551449, 573951,
+    597057, 620775, 645113, 670079, 695681, 721927, 748825, 776383, 804609,
+    833511, 863097, 893375, 924353, 956039, 988441, 1021567, 1055425, 1090023,
+    1125369, 1161471, 1198337, 1235975, 1274393, 1313599, 1353601, 1394407,
+    1436025, 1478463, 1521729, 1565831, 1610777, 1656575, 1703233, 1750759,
+    1799161, 1848447, 1898625, 1949703, 2001689, 2054591, 2108417, 2163175,
+    2218873, 2275519, 2333121, 2391687, 2451225, 2511743, 2573249, 2635751,
+    2699257, 2763775, 2829313, 2895879, 2963481, 3032127, 3101825, 3172583,
+    3244409, 3317311, 3391297, 3466375, 3542553, 3619839, 3698241, 3777767,
+    3858425, 3940223, 4023169, 4107271, 4192537, 4278975, 4366593, 4455399,
+    4545401, 4636607, 4729025, 4822663, 4917529, 5013631, 5110977, 5209575,
+    5309433, 5410559, 5512961, 5616647, 5721625, 5827903, 5935489, 6044391,
+    6154617, 6266175, 6379073, 6493319, 6608921, 6725887, 6844225, 6963943,
+    7085049, 7207551,
+    // N = 5, K = 5..=176
+    321, 681, 1289, 2241, 3649, 5641, 8361, 11969, 16641, 22569, 29961, 39041,
+    50049, 63241, 78889, 97281, 118721, 143529, 172041, 204609, 241601, 283401,
+    330409, 383041, 441729, 506921, 579081, 658689, 746241, 842249, 947241,
+    1061761, 1186369, 1321641, 1468169, 1626561, 1797441, 1981449, 2179241,
+    2391489, 2618881, 2862121, 3121929, 3399041, 3694209, 4008201, 4341801,
+    4695809, 5071041, 5468329, 5888521, 6332481, 6801089, 7295241, 7815849,
+    8363841, 8940161, 9545769, 10181641, 10848769, 11548161, 12280841, 13047849,
+    13850241, 14689089, 15565481, 16480521, 17435329, 18431041, 19468809,
+    20549801, 21675201, 22846209, 24064041, 25329929, 26645121, 28010881,
+    29428489, 30899241, 32424449, 34005441, 35643561, 37340169, 39096641,
+    40914369, 42794761, 44739241, 46749249, 48826241, 50971689, 53187081,
+    55473921, 57833729, 60268041, 62778409, 65366401, 68033601, 70781609,
+    73612041, 76526529, 79526721, 82614281, 85790889, 89058241, 92418049,
+    95872041, 99421961, 103069569, 106816641, 110664969, 114616361, 118672641,
+    122835649, 127107241, 131489289, 135983681, 140592321, 145317129, 150160041,
+    155123009, 160208001, 165417001, 170752009, 176215041, 181808129, 187533321,
+    193392681, 199388289, 205522241, 211796649, 218213641, 224775361, 231483969,
+    238341641, 245350569, 252512961, 259831041, 267307049, 274943241, 282741889,
+    290705281, 298835721, 307135529, 315607041, 324252609, 333074601, 342075401,
+    351257409, 360623041, 370174729, 379914921, 389846081, 399970689, 410291241,
+    420810249, 431530241, 442453761, 453583369, 464921641, 476471169, 488234561,
+    500214441, 512413449, 524834241, 537479489, 550351881, 563454121, 576788929,
+    590359041, 604167209, 618216201, 632508801,
+    // N = 6, K = 6..=96
+    1683, 3653, 7183, 13073, 22363, 36365, 56695, 85305, 124515, 177045, 246047,
+    335137, 448427, 590557, 766727, 982729, 1244979, 1560549, 1937199, 2383409,
+    2908411, 3522221, 4235671, 5060441, 6009091, 7095093, 8332863, 9737793,
+    11326283, 13115773, 15124775, 17372905, 19880915, 22670725, 25765455,
+    29189457, 32968347, 37129037, 41699767, 46710137, 52191139, 58175189,
+    64696159, 71789409, 79491819, 87841821, 96879431, 106646281, 117185651,
+    128542501, 140763503, 153897073, 167993403, 183104493, 199284183, 216588185,
+    235074115, 254801525, 275831935, 298228865, 322057867, 347386557, 374284647,
+    402823977, 433078547, 465124549, 499040399, 534906769, 572806619, 612825229,
+    655050231, 699571641, 746481891, 795875861, 847850911, 902506913, 959946283,
+    1020274013, 1083597703, 1150027593, 1219676595, 1292660325, 1369097135,
+    1449108145, 1532817275, 1620351277, 1711839767, 1807415257, 1907213187,
+    2011371957, 2120032959,
+    // N = 7, K = 7..=54
+    8989, 19825, 40081, 75517, 134245, 227305, 369305, 579125, 880685, 1303777,
+    1884961, 2668525, 3707509, 5064793, 6814249, 9041957, 11847485, 15345233,
+    19665841, 24957661, 31388293, 39146185, 48442297, 59511829, 72616013,
+    88043969, 106114625, 127178701, 151620757, 179861305, 212358985, 249612805,
+    292164445, 340600625, 395555537, 457713341, 527810725, 606639529, 695049433,
+    793950709, 904317037, 1027188385, 1163673953, 1314955181, 1482288821,
+    1667010073, 1870535785, 2094367717,
+    // N = 8, K = 8..=37
+    48639, 108545, 224143, 433905, 795455, 1392065, 2340495, 3800305, 5984767,
+    9173505, 13726991, 20103025, 28875327, 40754369, 56610575, 77500017,
+    104692735, 139703809, 184327311, 240673265, 311207743, 398796225, 506750351,
+    638878193, 799538175, 993696769, 1226990095, 1505789553, 1837271615,
+    2229491905,
+    // N = 9, K = 9..=28
+    265729, 598417, 1256465, 2485825, 4673345, 8405905, 14546705, 24331777,
+    39490049, 62390545, 96220561, 145198913, 214828609, 312193553, 446304145,
+    628496897, 872893441, 1196924561, 1621925137, 2173806145,
+    // N = 10, K = 10..=24
+    1462563, 3317445, 7059735, 14218905, 27298155, 50250765, 89129247, 152951073,
+    254831667, 413442773, 654862247, 1014889769, 1541911931, 2300409629,
+    3375210671,
+    // N = 11, K = 11..=19
+    8097453, 18474633, 39753273, 81270333, 158819253, 298199265, 540279585,
+    948062325, 1616336765,
+    // N = 12, K = 12..=18
+    45046719, 103274625, 224298231, 464387817, 921406335, 1759885185,
+    3248227095,
+    // N = 13, K = 13..=16
+    251595969, 579168825, 1267854873, 2653649025,
+    // N = 14, K = 14
+    1409933619,
+];
+
+/// The counting function `U(n, k) = U(k, n)`: for `n > 0` and `k > 0`, the number of
+/// `n`-dimensional pulse codewords whose first coordinate is negative, which equals
+/// `V(n - 1, 0) + ... + V(n - 1, k - 1)`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+#[inline]
+pub(crate) const fn pvq_count_u(n: usize, k: usize) -> u32 {
+    let (row, col) = if n < k { (n, k) } else { (k, n) };
+    return match row {
+        0 => (col == 0) as u32,
+        1 => 1,
+        2 => (2 * col - 1) as u32,
+        _ => PVQ_U_DATA[PVQ_U_ROW_START[row] + (col - row)],
+    };
+}
+
+/// The number of codewords `V(n, k) = U(n, k) + U(n, k + 1)`: the `n`-dimensional integer
+/// vectors `y` with `|y[0]| + ... + |y[n - 1]| = k`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+#[inline]
+pub(crate) const fn pvq_count_v(n: usize, k: usize) -> u32 {
+    return pvq_count_u(n, k).wrapping_add(pvq_count_u(n, k + 1));
+}
+
+/// Unpacks the codeword index `index` (below `V(n, k)`) into the `n`-dimensional pulse vector
+/// `y[..n]` and returns its squared norm `y[0]^2 + ... + y[n - 1]^2`
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+pub(crate) fn decode_pulse_vector(n: usize, k: usize, mut index: u32, y: &mut [i32]) -> f32 {
+    debug_assert!(n >= 1 && y.len() >= n);
+    let mut rem_pulses = k;
+    let mut energy = 0.0f32;
+
+    for (dim, out_pulse) in (1..=n).rev().zip(y[..n].iter_mut()) {
+        // Codewords with y_j >= 0 occupy [0, U(dim, rem_pulses + 1)), and codewords
+        // with y_j < 0 occupy [U(dim, rem_pulses + 1), V(dim, rem_pulses)).
+        let neg_threshold = pvq_count_u(dim, rem_pulses + 1);
+        let is_negative = index >= neg_threshold;
+        if is_negative {
+            index -= neg_threshold;
+        }
+
+        // Find the largest number of remaining pulses `next_pulses` in `0..=rem_pulses`
+        // whose cumulative offset U(dim, next_pulses) does not exceed `index`.
+        let next_pulses = match dim {
+            1 => 0,
+            2 => ((index + 1) >> 1) as usize,
+            _ => (0..=rem_pulses).rev().find(|&m| pvq_count_u(dim, m) <= index).unwrap_or(0),
+        };
+
+        index -= pvq_count_u(dim, next_pulses);
+        let magnitude = (rem_pulses - next_pulses) as i32;
+        let signed_pulse = if is_negative { -magnitude } else { magnitude };
+        *out_pulse = signed_pulse;
+        energy += (signed_pulse as f32) * (signed_pulse as f32);
+        rem_pulses = next_pulses;
+    }
+
+    return energy;
+}
+
+/// Decodes a `k`-pulse codeword in `n` dimensions from `dec` into `y[..n]` and returns its
+/// squared norm
+/// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+pub(crate) fn decode_pulses(
+    y: &mut [i32],
+    n: usize,
+    k: usize,
+    dec: &mut Decoder<'_>,
+) -> Result<f32> {
+    if n == 0 || k == 0 || y.len() < n {
+        return Err(Error::InvalidPvqParameters.into());
+    }
+    let codebook_size = pvq_count_v(n, k);
+    let index = dec.decode_uint(codebook_size)?;
+    return Ok(decode_pulse_vector(n, k, index, &mut y[..n]));
+}
+
+#[cfg(test)]
+mod tests {
+    // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
+    // normative (RFC 6716 Section 4.3.4.2) and is verified against the RFC 8251 test vectors by
+    // `tests/rfc6716_conformance.rs`.
+    use super::*;
+
+    /// Packs the `n`-dimensional pulse vector `y[..n]` with `k = |y[0]| + ... + |y[n - 1]|`
+    /// pulses into its codeword index (below `V(n, k)`) and the codebook size `V(n, k)`
+    /// (inverse of [`decode_pulse_vector`], RFC 6716 Section 4.3.4.2).
+    pub(crate) fn icwrs(n: usize, y: &[i32]) -> (u32, u32) {
+        debug_assert!(n >= 1 && y.len() >= n);
+        let mut index = 0u32;
+        let mut cum_pulses = 0usize;
+
+        for (dim, &pulse) in (1..=n).zip(y[..n].iter().rev()) {
+            index = index.wrapping_add(pvq_count_u(dim, cum_pulses));
+            cum_pulses += pulse.unsigned_abs() as usize;
+            if pulse < 0 {
+                index = index.wrapping_add(pvq_count_u(dim, cum_pulses + 1));
+            }
+        }
+
+        let codebook_size = pvq_count_v(n, cum_pulses);
+        return (index, codebook_size);
+    }
+
+    #[test]
+    fn test_pvq_codebook_sizes_and_roundtrips() {
+        // Verify V(N, K) and exact decode_pulse_vector <-> icwrs roundtrip across CELT partition dimensions.
+        let ns =
+            [2, 3, 4, 6, 8, 9, 11, 12, 16, 18, 22, 24, 32, 36, 44, 48, 64, 72, 88, 96, 144, 176];
+        let ks = [1, 2, 3, 4, 5, 7, 8, 12, 14, 20, 32, 64, 128];
+        let max_col_for_row = [176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 16, 14];
+        let mut y = [0i32; 176];
+
+        for &n in &ns {
+            for &k in &ks {
+                let min_nk = n.min(k + 1);
+                let max_nk = n.max(k + 1);
+                if min_nk > 14 || max_nk > max_col_for_row[min_nk] {
+                    continue;
+                }
+                let v64 = (pvq_count_u(n, k) as u64) + (pvq_count_u(n, k + 1) as u64);
+                if v64 > (u32::MAX as u64) {
+                    continue;
+                }
+                let v = pvq_count_v(n, k);
+                let samples = [0, 1.min(v - 1), v / 3, v / 2, v.saturating_sub(2), v - 1];
+                for &codeword in &samples {
+                    let yy = decode_pulse_vector(n, k, codeword, &mut y[..n]);
+                    let l1_norm: usize = y[..n].iter().map(|&p| p.unsigned_abs() as usize).sum();
+                    let l2_sq: f32 = y[..n].iter().map(|&p| (p * p) as f32).sum();
+                    assert_eq!(
+                        l1_norm, k,
+                        "L1 norm mismatch for n={n}, k={k}, codeword={codeword}"
+                    );
+                    assert_eq!(
+                        yy, l2_sq,
+                        "L2 energy mismatch for n={n}, k={k}, codeword={codeword}"
+                    );
+
+                    let (encoded_codeword, encoded_v) = icwrs(n, &y[..n]);
+                    assert_eq!(encoded_v, v);
+                    assert_eq!(
+                        encoded_codeword, codeword,
+                        "Roundtrip mismatch for n={n}, k={k}, codeword={codeword}"
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    #[test]
+    fn decode_pulse_vector_matches_recorded_values() {
+        let mut y = [0i32; 176];
+
+        macro_rules! assert_decode_pulse_vector {
+            ($n:expr, $k:expr, $codeword:expr, $expected_v:expr, $expected_yy:expr, $expected_y:expr) => {
+                assert_eq!(pvq_count_v($n, $k), $expected_v);
+                assert_eq!(decode_pulse_vector($n, $k, $codeword, &mut y[..$n]), $expected_yy);
+                assert_eq!(&y[..$n], $expected_y);
+            };
+        }
+
+        assert_decode_pulse_vector!(2, 1, 3, 4, 1.0, &[-1, 0]);
+        assert_decode_pulse_vector!(2, 128, 345, 512, 8992.0, &[-84, -44]);
+        assert_decode_pulse_vector!(3, 5, 67, 102, 11.0, &[-3, 1, 1]);
+        assert_decode_pulse_vector!(6, 20, 1_234_567, 1_749_456, 86.0, &[-4, 6, 5, 2, -2, 1]);
+        assert_decode_pulse_vector!(
+            11,
+            10,
+            424_242,
+            11_414_898,
+            18.0,
+            &[3, -1, -2, -1, 0, 0, 0, 0, 1, -1, 1]
+        );
+        assert_decode_pulse_vector!(
+            14,
+            13,
+            123_456_789,
+            1_989_102_444,
+            29.0,
+            &[2, 0, 3, -1, -1, 3, 0, 0, 0, 0, -2, 0, 0, -1]
+        );
+        assert_decode_pulse_vector!(
+            16,
+            8,
+            999_999,
+            30_316_544,
+            10.0,
+            &[2, 0, 0, -1, -1, 0, -1, 0, 0, 1, 0, 0, -1, 0, -1, 0]
+        );
+
+        // (n=176, k=3, codeword=5000000) -> v=7269152, yy=3, nonzeros at 49 (-1), 50 (-1), 94 (+1)
+        assert_eq!(pvq_count_v(176, 3), 7_269_152);
+        assert_eq!(decode_pulse_vector(176, 3, 5_000_000, &mut y[..176]), 3.0);
+        assert_eq!(y[49], -1);
+        assert_eq!(y[50], -1);
+        assert_eq!(y[94], 1);
+        return;
+    }
+
+    #[test]
+    fn decode_pulses_from_a_recorded_bitstream() {
+        // Range-coded pulse vectors:
+        // y1 (n=8, k=10): [2, -1, 0, 3, -2, 0, 1, -1]
+        // y2 (n=16, k=7): [0, -1, 0, 0, 2, 0, -1, 0, 0, 1, 0, 0, -1, 0, 0, 1]
+        // y3 (n=3, k=44): [-15, 22, -7]
+        let packet: [u8; 16] = [
+            0x27, 0x5b, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0xf1,
+            0x8d, 0x02,
+        ];
+        let mut dec = Decoder::new(&packet);
+
+        let mut d1 = [0i32; 8];
+        let mut d2 = [0i32; 16];
+        let mut d3 = [0i32; 3];
+
+        let e1 = decode_pulses(&mut d1, 8, 10, &mut dec).expect("decode y1");
+        let e2 = decode_pulses(&mut d2, 16, 7, &mut dec).expect("decode y2");
+        let e3 = decode_pulses(&mut d3, 3, 44, &mut dec).expect("decode y3");
+
+        assert_eq!(e1, 20.0);
+        assert_eq!(d1, [2, -1, 0, 3, -2, 0, 1, -1]);
+
+        assert_eq!(e2, 9.0);
+        assert_eq!(d2, [0, -1, 0, 0, 2, 0, -1, 0, 0, 1, 0, 0, -1, 0, 0, 1]);
+
+        assert_eq!(e3, 758.0);
+        assert_eq!(d3, [-15, 22, -7]);
+        return;
+    }
+
+    /// A codeword needs at least one dimension and one pulse, and room for its dimensions
+    /// ([RFC 6716 Section 4.3.4.2](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.2>)).
+    #[test]
+    fn decode_pulses_rejects_empty_codebooks() {
+        let mut dec = Decoder::new(&[0x55; 8]);
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 4], 0, 1, &mut dec)));
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 4], 4, 0, &mut dec)));
+        assert!(Error::InvalidPvqParameters.matches(&decode_pulses(&mut [0; 2], 4, 1, &mut dec)));
+    }
+}

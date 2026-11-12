@@ -1,7 +1,10 @@
 [package]
 name = "symphonia-codec-opus"
 description = "Pure Opus decoder (a part of project Symphonia)."
-authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+authors = [
+    "Philip Deljanov <philip.deljanov@gmail.com>",
+    "Yevhen Bilyk, <jiztastamablastamarang@gmail.com>",
+]
 readme = "README.md"
 categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["audio", "codec", "decoder", "opus"]
@@ -13,9 +16,13 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--document-private-items"]
+
 [dependencies]
 log = { workspace = true }
 symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+thiserror = "1"
 
 [lints]
 workspace = true

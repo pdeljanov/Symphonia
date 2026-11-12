@@ -1,0 +1,112 @@
+name: Opus Conformance
+
+on:
+  push:
+    branches:
+      - opus-decoder
+    paths:
+      - "symphonia-codec-opus/**"
+      - ".github/workflows/opus-conformance.yml"
+  pull_request:
+    paths:
+      - "symphonia-codec-opus/**"
+      - ".github/workflows/opus-conformance.yml"
+  workflow_dispatch: {}
+
+jobs:
+  gate:
+    name: Verification Gate (Tests, Clippy, Rustdoc, Fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Toolchain
+        run: |
+          rustup install stable && rustup default stable
+          rustup component add clippy
+          rustup toolchain install nightly --profile minimal --component rustfmt
+
+      - name: Check Formatting
+        run: cargo +nightly fmt -p symphonia-codec-opus -- --check
+
+      - name: Run Unit Tests
+        run: cargo test -p symphonia-codec-opus -- --test-threads=4
+
+      - name: Run Clippy (-D warnings)
+        run: cargo clippy -p symphonia-codec-opus --all-targets --no-deps -- -D warnings
+
+      - name: Build Rustdoc (--document-private-items)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p symphonia-codec-opus --no-deps --document-private-items
+
+  conformance:
+    name: RFC 6716 / RFC 8251 Conformance & Reference Comparison
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Toolchain
+        run: rustup install stable && rustup default stable
+
+      - name: Cache RFC 8251 Vectors & Reference Decoder Outputs
+        id: cache-opus-ref
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/opus-ref/opus_newvectors
+            /tmp/opus-ref/ref
+          key: opus-rfc8251-vectors-and-ref-v1
+
+      - name: Download Vectors & Build Patched RFC 6716 Reference Decoder
+        if: steps.cache-opus-ref.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/opus-ref && cd /tmp/opus-ref
+          curl -LO https://www.rfc-editor.org/rfc/rfc8251.txt
+          curl -LO https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-newvectors-00.tar.gz
+          tar xzf materials-98-codec-opus-newvectors-00.tar.gz
+          grep -E '^   [0-9a-f]{40}  testvector[0-9]{2}m?\.(bit|dec)$' rfc8251.txt \
+            | sed 's/^   //' > opus_newvectors/expected.sha1
+          (cd opus_newvectors && sha1sum -c expected.sha1)
+
+          curl -LO https://www.rfc-editor.org/rfc/rfc6716.txt
+          grep '^   ###' rfc6716.txt | sed -e 's/...###//' | base64 --decode > opus-rfc6716.tar.gz
+          echo "86a927223e73d2476646a1b933fcd3fffb6ecc8c  opus-rfc6716.tar.gz" | sha1sum -c -
+          curl -LO https://www.ietf.org/proceedings/98/slides/materials-98-codec-opus-update-00.patch
+          echo "029e3aa88fc342c91e67a21e7bfbc9458661cd5f  materials-98-codec-opus-update-00.patch" | sha1sum -c -
+          tar xzf opus-rfc6716.tar.gz && cd opus-rfc6716
+          patch -p1 < ../materials-98-codec-opus-update-00.patch
+          CFLAGS="-DHAVE_LRINTF=1" make -j"$(nproc)"
+          mkdir -p ../ref
+          for rate in 8000 12000 16000 24000 48000; do
+            for v in 01 02 03 04 05 06 07 08 09 10 11 12; do
+              printf '%s %s\n' "$rate" "$v"
+            done
+          done | xargs -n2 -P"$(nproc)" sh -c '
+            ./opus_demo -d "$1" 1 "../opus_newvectors/testvector$2.bit" "../ref/ref_${2}_${1}_mono.pcm"
+            ./opus_demo -d "$1" 2 "../opus_newvectors/testvector$2.bit" "../ref/ref_${2}_${1}_stereo.pcm"
+          ' _
+
+      - name: Run Conformance & Reference Sample Comparison
+        run: |
+          OPUS_TESTVECTORS_DIR=/tmp/opus-ref/opus_newvectors \
+          OPUS_REFERENCE_OUTPUT_DIR=/tmp/opus-ref/ref \
+            cargo test --release -p symphonia-codec-opus --test rfc6716_conformance \
+            -- --test-threads=4 --ignored --nocapture | tee /tmp/conformance_output.log
+
+      - name: Publish Conformance Summary Table
+        if: always()
+        run: |
+          {
+            echo "## RFC 6716 / RFC 8251 Conformance & Reference Decoder Summary"
+            echo ""
+            echo "### 1. Conformance Runs (\`final_range\` & \`opus_compare\`)"
+            echo "\`\`\`text"
+            grep "^testvector.*=>" /tmp/conformance_output.log | sort
+            echo "\`\`\`"
+            echo ""
+            echo "### 2. Sample-by-Sample Comparison vs. \`opus_demo -d\`"
+            echo "\`\`\`text"
+            grep "^testvector.*max |diff|" /tmp/conformance_output.log
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
