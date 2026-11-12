@@ -58,7 +58,8 @@ impl StreamLayout {
     /// Family 0, the RTP mapping: one stream decoding straight to 1 or 2 output channels
     /// ([RFC 7845 Section 5.1.1.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.1>)).
     fn rtp(sample_rate: SampleRate, num_output_channels: usize) -> Result<Self> {
-        let Some(layout) = Layout::from_channels(num_output_channels) else {
+        let Some(layout) = Layout::from_channels(num_output_channels)
+        else {
             return unsupported_error("opus: more than 2 channels need an OpusHead mapping");
         };
         let channel_mapping = match layout {
@@ -89,7 +90,8 @@ impl StreamLayout {
         sample_rate: SampleRate,
         num_output_channels: usize,
     ) -> Result<Self> {
-        let Some(id) = id else {
+        let Some(id) = id
+        else {
             return Self::rtp(sample_rate, num_output_channels);
         };
         if usize::from(id.channel_count) != num_output_channels {

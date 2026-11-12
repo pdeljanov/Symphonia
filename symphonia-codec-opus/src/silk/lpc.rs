@@ -277,7 +277,8 @@ fn expand_until_fits_i16(a_qin: &mut [i32], shift: u32) -> bool {
 ///
 /// <https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.7>
 pub(crate) fn bandwidth_expand_q16(ar: &mut [i32], mut chirp_q16: i32) {
-    let Some((last_coeff, head_coeffs)) = ar.split_last_mut() else {
+    let Some((last_coeff, head_coeffs)) = ar.split_last_mut()
+    else {
         return;
     };
 
@@ -316,7 +317,8 @@ pub(crate) fn inverse_prediction_gain_q30(a_q12: &[i16]) -> i32 {
 
     let mut inv_gain_q30 = UNIT_INV_GAIN_Q30;
     for i in (1..order).rev() {
-        let Some(step) = ReflectionStep::new(a_qa[i], inv_gain_q30) else {
+        let Some(step) = ReflectionStep::new(a_qa[i], inv_gain_q30)
+        else {
             return 0;
         };
         inv_gain_q30 = step.inv_gain_q30;
@@ -373,10 +375,12 @@ impl ReflectionStep {
             let tmp1 = a_qa[j];
             let tmp2 = a_qa[i - j - 1];
 
-            let Some(low) = self.remove_reflection(tmp1, tmp2, rc_mult2, mult2_q) else {
+            let Some(low) = self.remove_reflection(tmp1, tmp2, rc_mult2, mult2_q)
+            else {
                 return false;
             };
-            let Some(high) = self.remove_reflection(tmp2, tmp1, rc_mult2, mult2_q) else {
+            let Some(high) = self.remove_reflection(tmp2, tmp1, rc_mult2, mult2_q)
+            else {
                 return false;
             };
             a_qa[j] = low;

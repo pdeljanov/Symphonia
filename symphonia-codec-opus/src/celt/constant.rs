@@ -794,7 +794,10 @@ mod tests {
     #[test]
     fn pulse_cache_and_alloc_vector_invariants() {
         for rows in ALLOC_VECTORS.windows(2) {
-            let [lower, upper] = rows else { unreachable!() };
+            let [lower, upper] = rows
+            else {
+                unreachable!()
+            };
             for band in 0..MAX_BANDS {
                 assert!(
                     upper[band] >= lower[band],

@@ -75,7 +75,8 @@ conformance_tests! {
 #[test]
 #[ignore = "needs OPUS_TESTVECTORS_DIR and OPUS_REFERENCE_OUTPUT_DIR"]
 fn rfc8251_reference_decoder_sample_comparison() {
-    let Some(ref_dir_os) = std::env::var_os(REFERENCE_OUTPUT_DIR_ENV) else {
+    let Some(ref_dir_os) = std::env::var_os(REFERENCE_OUTPUT_DIR_ENV)
+    else {
         println!(
             "{REFERENCE_OUTPUT_DIR_ENV} is not set; skipping sample-by-sample reference comparison"
         );

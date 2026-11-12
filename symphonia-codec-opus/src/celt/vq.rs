@@ -625,7 +625,8 @@ impl<'a, 'd> BandDecoderCtx<'a, 'd> {
             return 0;
         }
 
-        let Some(lb) = lowband else {
+        let Some(lb) = lowband
+        else {
             for dst in &mut x[..n] {
                 self.seed = lcg_next(self.seed);
                 *dst = ((self.seed as i32) >> LCG_NOISE_SHIFT) as f32;

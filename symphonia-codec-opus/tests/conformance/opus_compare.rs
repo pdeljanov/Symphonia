@@ -300,7 +300,8 @@ fn band_energy(
                     p[ch] += power;
                 }
             }
-            let Some(out) = bands_out.as_deref_mut() else {
+            let Some(out) = bands_out.as_deref_mut()
+            else {
                 continue;
             };
             let width = (BANDS[band + 1] - BANDS[band]) as f32;
