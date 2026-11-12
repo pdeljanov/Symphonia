@@ -29,11 +29,10 @@ struct MdctTables {
 fn mdct_tables() -> &'static MdctTables {
     static TABLES: OnceLock<MdctTables> = OnceLock::new();
     return TABLES.get_or_init(|| {
-        let mut fft_twiddles = [Complex32::default(); MDCT_MAX_N4];
-        for (k, tw) in fft_twiddles.iter_mut().enumerate() {
+        let fft_twiddles = std::array::from_fn(|k| {
             let phase = (-2.0 * std::f64::consts::PI * (k as f64)) / (MDCT_MAX_N4 as f64);
-            *tw = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-        }
+            Complex32::new(phase.cos() as f32, phase.sin() as f32)
+        });
 
         let mut bitrev = [[0u16; MDCT_MAX_N4]; 4];
         let mut trig = [[0.0f32; 2 * MDCT_MAX_N4]; 4];

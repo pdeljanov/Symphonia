@@ -621,7 +621,7 @@ impl Decoder {
         };
         let band_e = &self.energy.current;
         let denormalise = |ch: usize, freq: &mut [f32]| {
-            let x = &x_norm[(ch * n)..((ch + 1) * n)];
+            let x = x_norm.chunks_exact(n).nth(ch).unwrap_or(&[]);
             denormalise_bands(x, freq, &band_e[ch], &layout);
         };
         let mut freq = [[0.0_f32; MAX_FRAME_SIZE]; MAX_CHANNELS];

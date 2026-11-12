@@ -97,6 +97,15 @@ pub(crate) fn lpc_analysis_filter(out: &mut [i16], input: &[i16], a_q12: &[i16])
     }
 }
 
+/// Per-subframe context shared across voiced LTP synthesis and rewhitening.
+#[derive(Clone, Copy)]
+struct LtpSynthesisCtx {
+    k: usize,
+    lpc_order: usize,
+    interpolated: bool,
+    ltp_scale_q14: i16,
+}
+
 impl ChannelState {
     /// Synthesizes `frame.output_pcm` from `frame.exc_q14` through LTP rewhitening, LTP
     /// synthesis and LPC synthesis, and updates the synthesis history
@@ -117,33 +126,53 @@ impl ChannelState {
         let mut lpc_state_q14 = [0i32; MAX_LPC_ORDER + MAX_SUBFRAME_SAMPLES];
         lpc_state_q14[..MAX_LPC_ORDER].copy_from_slice(&self.lpc_state_q14);
         let voiced = frame.frame_type.signal_type == SignalType::Voiced;
+        let Frame {
+            subframes: ref frame_subframes,
+            exc_q14: ref frame_exc_q14,
+            output_pcm: ref mut frame_output_pcm,
+            lsf_interpolation_index,
+            ltp_scale_q14,
+            ..
+        } = *frame;
+        let interpolated = lsf_interpolation_index.unwrap_or(4) < 4;
 
-        for k in 0..subframes {
-            let range = k * subframe_samples..(k + 1) * subframe_samples;
-            let gain_q16 = frame.subframes[k].gain_q16;
+        for (k, ((subframe, exc_chunk), out_chunk)) in frame_subframes[..subframes]
+            .iter()
+            .zip(frame_exc_q14[..frame_length].chunks_exact(subframe_samples))
+            .zip(frame_output_pcm[..frame_length].chunks_exact_mut(subframe_samples))
+            .enumerate()
+        {
+            let gain_q16 = subframe.gain_q16;
             let gain_adj_q16 =
                 self.rescale_lpc_state(gain_q16, &mut lpc_state_q14[..MAX_LPC_ORDER]);
 
             let residual_q14 = &mut lpc_state_q14[MAX_LPC_ORDER..MAX_LPC_ORDER + subframe_samples];
             match voiced {
                 true => {
+                    let ctx = LtpSynthesisCtx { k, lpc_order, interpolated, ltp_scale_q14 };
                     self.ltp_synthesis_subframe(
-                        frame,
-                        k,
+                        ctx,
+                        subframe,
                         gain_adj_q16,
+                        exc_chunk,
                         &mut ltp_state_q15,
                         residual_q14,
                     );
                 }
-                false => residual_q14.copy_from_slice(&frame.exc_q14[range.clone()]),
+                false => residual_q14.copy_from_slice(exc_chunk),
             }
 
             lpc_synthesize_q14(
                 &mut lpc_state_q14[..MAX_LPC_ORDER + subframe_samples],
-                &frame.subframes[k].lpc_coeffs_q12[..lpc_order],
+                &subframe.lpc_coeffs_q12[..lpc_order],
                 gain_q16 >> GAIN_Q16_TO_Q10_SHIFT,
-                &mut frame.output_pcm[range],
+                out_chunk,
             );
+            if voiced && interpolated && subframes > 2 && k < 2 {
+                let dst_start = self.ltp_mem_length + k * subframe_samples;
+                self.output_history[dst_start..dst_start + subframe_samples]
+                    .copy_from_slice(out_chunk);
+            }
             lpc_state_q14.copy_within(subframe_samples..subframe_samples + MAX_LPC_ORDER, 0);
         }
 
@@ -169,28 +198,32 @@ impl ChannelState {
         return gain_adj_q16;
     }
 
-    /// LTP synthesis of subframe `k`: brings the LTP state up to date with the output history
+    /// LTP synthesis of subframe `ctx.k`: brings the LTP state up to date with the output history
     /// (rewhitened on the first subframe and on the third when the NLSFs are interpolated,
     /// rescaled on a gain change otherwise) and writes the Q14 residual, excitation plus
     /// pitch prediction, into `residual_q14`
     /// ([RFC 6716 Section 4.2.7.9.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.1>)).
     fn ltp_synthesis_subframe(
         &mut self,
-        frame: &Frame,
-        k: usize,
+        ctx: LtpSynthesisCtx,
+        subframe: &crate::silk::Subframe,
         gain_adj_q16: i32,
+        excitation_q14: &[i32],
         ltp_state_q15: &mut [i32],
         residual_q14: &mut [i32],
     ) {
         let subframe_samples = residual_q14.len();
-        let subframe = &frame.subframes[k];
         let lag = subframe.pitch_lag as usize;
-        let state_end = self.ltp_mem_length + k * subframe_samples;
-        let interpolated = frame.lsf_interpolation_index.unwrap_or(4) < 4;
-        let rewhiten = k == 0 || (k == 2 && interpolated);
+        let state_end = self.ltp_mem_length + ctx.k * subframe_samples;
+        let rewhiten = ctx.k == 0 || (ctx.k == 2 && ctx.interpolated);
 
         match (rewhiten, gain_adj_q16 != UNIT_GAIN_Q16) {
-            (true, _) => self.rewhiten_ltp_state(frame, k, &mut ltp_state_q15[..state_end]),
+            (true, _) => self.rewhiten_ltp_state(
+                ctx,
+                subframe,
+                subframe_samples,
+                &mut ltp_state_q15[..state_end],
+            ),
             (false, true) => ltp_state_q15[state_end - (lag + LTP_HALF_ORDER)..state_end]
                 .iter_mut()
                 .for_each(|state| *state = mul_q16(gain_adj_q16, *state)),
@@ -199,40 +232,37 @@ impl ChannelState {
 
         let b_q14: [i16; LTP_ORDER] =
             std::array::from_fn(|j| (subframe.ltp_coeffs[j] as i16) << LTP_COEFF_Q7_TO_Q14_SHIFT);
-        let excitation_q14 = &frame.exc_q14[k * subframe_samples..(k + 1) * subframe_samples];
         predict_ltp_subframe(ltp_state_q15, state_end, lag, &b_q14, excitation_q14, residual_q14);
     }
 
-    /// Rewhitens the output history preceding subframe `k` through the subframe LPC analysis
+    /// Rewhitens the output history preceding subframe `ctx.k` through the subframe LPC analysis
     /// filter and scales it by the inverse subframe gain (and, on the first subframe, by the
     /// LTP scaling parameter) into the tail of `ltp_state_q15`
     /// ([RFC 6716 Section 4.2.7.9.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.9.1>)).
-    fn rewhiten_ltp_state(&mut self, frame: &Frame, k: usize, ltp_state_q15: &mut [i32]) {
-        let subframe = &frame.subframes[k];
-        let subframe_samples = frame.sample_count / frame.num_subframes;
+    fn rewhiten_ltp_state(
+        &mut self,
+        ctx: LtpSynthesisCtx,
+        subframe: &crate::silk::Subframe,
+        subframe_samples: usize,
+        ltp_state_q15: &mut [i32],
+    ) {
         let lag = subframe.pitch_lag as usize;
-        let lpc_order = frame.lpc_order;
         let ltp_mem_length = self.ltp_mem_length;
         let state_end = ltp_state_q15.len();
 
-        if k == 2 {
-            self.output_history[ltp_mem_length..ltp_mem_length + 2 * subframe_samples]
-                .copy_from_slice(&frame.output_pcm[..2 * subframe_samples]);
-        }
-
-        let start = ltp_mem_length - lag - lpc_order - LTP_HALF_ORDER;
-        let history_start = start + k * subframe_samples;
+        let start = ltp_mem_length - lag - ctx.lpc_order - LTP_HALF_ORDER;
+        let history_start = start + ctx.k * subframe_samples;
         let mut whitened = [0i16; MAX_LTP_MEM_SAMPLES];
         lpc_analysis_filter(
             &mut whitened[start..ltp_mem_length],
             &self.output_history[history_start..history_start + (ltp_mem_length - start)],
-            &subframe.lpc_coeffs_q12[..lpc_order],
+            &subframe.lpc_coeffs_q12[..ctx.lpc_order],
         );
 
         let mut inv_gain_q31 = reciprocal_q(subframe.gain_q16, INV_GAIN_RECIPROCAL_Q);
-        if k == 0 {
+        if ctx.k == 0 {
             inv_gain_q31 =
-                mul_q16_i16(inv_gain_q31, frame.ltp_scale_q14) << LTP_SCALE_Q14_RESTORE_SHIFT;
+                mul_q16_i16(inv_gain_q31, ctx.ltp_scale_q14) << LTP_SCALE_Q14_RESTORE_SHIFT;
         }
         let scaled = lag + LTP_HALF_ORDER;
         ltp_state_q15[state_end - scaled..]
@@ -290,16 +320,19 @@ pub(crate) fn unmix_mid_side_to_left_right(
     let delta1_q13 =
         round_shift(((weights.w1_q13 - prev1_q13) as i16 as i32) * (denom_q16 as i16 as i32), 16);
 
-    let interp_end = interp_samples.min(frame_length);
+    let target_q13 = (weights.w0_q13, weights.w1_q13);
     let (mut pred0_q13, mut pred1_q13) = (prev0_q13, prev1_q13);
-    for i in 0..interp_end {
-        pred0_q13 += delta0_q13;
-        pred1_q13 += delta1_q13;
-        side[i + 1] = predict_side_sample(&mid[i..i + 3], side[i + 1], pred0_q13, pred1_q13);
-    }
-    for i in interp_end..frame_length {
-        side[i + 1] =
-            predict_side_sample(&mid[i..i + 3], side[i + 1], weights.w0_q13, weights.w1_q13);
+    for (i, (mid_window, side_out)) in mid[..frame_length + STEREO_HISTORY_SAMPLES]
+        .windows(3)
+        .zip(&mut side[1..=frame_length])
+        .enumerate()
+    {
+        if i < interp_samples {
+            pred0_q13 += delta0_q13;
+            pred1_q13 += delta1_q13;
+        }
+        let (w0, w1) = if i < interp_samples { (pred0_q13, pred1_q13) } else { target_q13 };
+        *side_out = predict_side_sample(mid_window, *side_out, w0, w1);
     }
     stereo_state.prediction_prev_q13 = [weights.w0_q13, weights.w1_q13];
 
