@@ -147,10 +147,56 @@ impl OutputFormat {
     }
 }
 
-/// The `OpusDecoder` struct implements the Symphonia [`AudioDecoder`] trait.
+/// Pure-Rust Symphonia [`AudioDecoder`] for the Opus audio codec
+/// ([RFC 6716](<https://datatracker.ietf.org/doc/html/rfc6716>),
+/// [RFC 7845](<https://datatracker.ietf.org/doc/html/rfc7845>),
+/// [RFC 8251](<https://datatracker.ietf.org/doc/html/rfc8251>)).
 ///
-/// It owns the top-level codec parameters, the multi-stream `StreamDecoder` instances, the
-/// `OpusHead` channel mapping and gain state, and the output [`AudioBuffer<f32>`].
+/// `OpusDecoder` decodes SILK-only, Hybrid, and CELT-only packets across all 32 TOC configurations
+/// (`2.5 ms` to `60 ms` frames, up to `120 ms` per packet) into planar 32-bit floating-point
+/// (`f32`) audio buffers.
+///
+/// # Configuration from [`AudioCodecParameters`]
+///
+/// - **Container streams with `OpusHead` (`params.extra_data`)**: Ogg Opus, Matroska / WebM, and
+///   ISO/MP4 streams supply an `OpusHead` identification header in `params.extra_data`. The
+///   decoder validates the header and configures the output channel count, channel mapping family
+///   (`0` for mono/stereo RTP or `1` for `1..=8` channel Vorbis surround), [`Self::pre_skip`], and
+///   Q7.8 dB [`Self::output_gain`].
+/// - **Headerless / RTP streams (`params.extra_data == None`)**: When no `extra_data` is present,
+///   `params.channels` must describe `1` (mono) or `2` (stereo) channels, which are decoded using
+///   Mapping Family `0` with `pre_skip = 0` and `0.0 dB` unity gain.
+/// - **Output sample rate (`params.sample_rate`)**: Opus decodes natively at `48_000` Hz and also
+///   supports direct output at `24_000`, `16_000`, `12_000`, or `8_000` Hz. If `params.sample_rate`
+///   is `None` or specifies a non-Opus container rate (such as `44_100` Hz), decoding automatically
+///   falls back to `48_000` Hz per [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)
+///   and updates [`AudioDecoder::codec_params`] accordingly.
+///
+/// # Examples
+///
+/// ```rust
+/// use symphonia_codec_opus::OpusDecoder;
+/// use symphonia_core::audio::{Audio, Channels, Position};
+/// use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
+/// use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+/// use symphonia_core::packet::PacketRef;
+/// use symphonia_core::units::{Duration, Timestamp};
+///
+/// let mut params = AudioCodecParameters::new();
+/// params
+///     .for_codec(CODEC_ID_OPUS)
+///     .with_sample_rate(48_000)
+///     .with_channels(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT));
+///
+/// let mut decoder = OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap();
+///
+/// // Decode a 20 ms Fullband stereo CELT silence packet (960 samples per channel at 48 kHz):
+/// let frame = [0xFC, 0xFF, 0xFE];
+/// let packet = PacketRef::new(0, Timestamp::from(0u32), Duration::from(960u64), &frame);
+/// let out = decoder.decode_ref(&packet).unwrap();
+/// assert_eq!(out.frames(), 960);
+/// assert_eq!(out.spec().rate(), 48_000);
+/// ```
 pub struct OpusDecoder {
     params: AudioCodecParameters,
     sample_rate: SampleRate,
@@ -181,6 +227,19 @@ impl OpusDecoder {
     }
 
     /// Creates a new [`OpusDecoder`] from `params` and `_options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`Error::Unsupported`](symphonia_core::errors::Error::Unsupported) if `params.codec` is
+    ///   not [`CODEC_ID_OPUS`], if no channel count can be resolved from either `params.channels`
+    ///   or `params.extra_data`, if more than 2 channels are requested without an `OpusHead`
+    ///   mapping table, or if the `OpusHead` requests an unsupported channel mapping family
+    ///   (`2..=255`).
+    /// - [`Error::DecodeError`](symphonia_core::errors::Error::DecodeError) if `params.extra_data`
+    ///   is present and violates [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)
+    ///   (invalid `OpusHead` magic, version `> 15`, invalid stream/coupled counts, out-of-range
+    ///   mapping index, or channel count mismatch with `params.channels`).
     pub fn try_new(params: &AudioCodecParameters, _options: &AudioDecoderOptions) -> Result<Self> {
         if params.codec != CODEC_ID_OPUS {
             return unsupported_error("opus: invalid codec");
@@ -217,36 +276,78 @@ impl OpusDecoder {
         });
     }
 
-    /// Returns the `pre_skip` sample count parsed from the `OpusHead` identification header.
+    /// Returns the `pre_skip` sample count (at 48 kHz) parsed from the `OpusHead` identification
+    /// header, or `0` for headerless streams.
     ///
-    /// `pre_skip`, [`output_gain`](Self::output_gain) and [`final_range`](Self::final_range) are
-    /// the decoder's diagnostics beyond the [`AudioDecoder`] trait: they expose what the decoder
-    /// read from the header and the range coder so that tests and tools can check it. Playback
-    /// does not need them; the demuxers apply the pre-skip as the track delay.
+    /// Per [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>),
+    /// `pre_skip` indicates how many 48 kHz samples should be discarded from the start of playback
+    /// to account for encoder lookahead (scale by `sample_rate / 48_000` when decoding at reduced
+    /// rates). Symphonia's Ogg and Matroska demuxers already expose this delay on the track's
+    /// `CodecParameters` for gapless trimming, so normal Symphonia playback does not need to trim
+    /// `pre_skip` manually.
     #[inline]
     pub fn pre_skip(&self) -> u16 {
         return self.pre_skip;
     }
 
-    /// Returns the Q7.8 dB `output_gain` parsed from the `OpusHead` identification header.
+    /// Returns the signed Q7.8 fixed-point `output_gain` (in `1 / 256` dB steps) parsed from the
+    /// `OpusHead` identification header, or `0` (`0.0 dB`) for headerless streams.
+    ///
+    /// [`OpusDecoder`] **automatically applies** this gain (`10^(output_gain / (20 * 256))`)
+    /// to every decoded and concealed sample written to the output buffer
+    /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>));
+    /// callers should not apply it a second time unless inspecting header metadata.
     #[inline]
     pub fn output_gain(&self) -> i16 {
         return self.output_gain.q7_8_db();
     }
 
-    /// Returns the final range decoder state of the last decoded packet, XOR-combined across
-    /// elementary streams
-    /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)); zero
-    /// after a lost or concealed packet. The conformance test compares it with the encoder's
-    /// final range for every packet.
+    /// Returns the 32-bit final range decoder state of the last decoded packet, XOR-combined
+    /// across elementary streams
+    /// ([RFC 6716 Section 6](<https://datatracker.ietf.org/doc/html/rfc6716#section-6>)), or `0`
+    /// after a lost, empty, or DTX-concealed packet.
+    ///
+    /// Conformance suites compare `final_range()` against the encoder's recorded `enc_final_range`
+    /// on every packet to verify bit-exact entropy consumption across SILK and CELT.
     pub fn final_range(&self) -> u32 {
         return self.streams.iter().fold(0, |range, stream| range ^ stream.final_range());
     }
 
-    /// Conceals a lost packet across all elementary streams with the duration of the last
-    /// decoded frame
+    /// Conceals one lost packet across all elementary streams using the duration of the most
+    /// recently decoded frame (or `20 ms` if no packet has been decoded yet)
     /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)) and
-    /// renders the result into the output buffer.
+    /// returns a reference to the synthesized output buffer.
+    ///
+    /// Passing an empty slice (`&[]`) to [`AudioDecoder::decode_ref`] delegates to this method as
+    /// well. Calling `decode_lost_packet` directly is convenient when a real-time RTP or container
+    /// reader detects a sequence-number or timestamp gap without constructing a dummy packet.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use symphonia_codec_opus::OpusDecoder;
+    /// use symphonia_core::audio::{Audio, Channels, Position};
+    /// use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
+    /// use symphonia_core::codecs::audio::well_known::CODEC_ID_OPUS;
+    /// use symphonia_core::packet::PacketRef;
+    /// use symphonia_core::units::{Duration, Timestamp};
+    ///
+    /// let mut params = AudioCodecParameters::new();
+    /// params
+    ///     .for_codec(CODEC_ID_OPUS)
+    ///     .with_sample_rate(48_000)
+    ///     .with_channels(Channels::Positioned(Position::FRONT_CENTER));
+    ///
+    /// let mut decoder = OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).unwrap();
+    ///
+    /// // Decode a 10 ms mono CELT frame (480 samples at 48 kHz), then conceal a lost packet:
+    /// let active = PacketRef::new(0, Timestamp::from(0u32), Duration::from(480u64), &[0xF0, 0xFF, 0xFE]);
+    /// decoder.decode_ref(&active).unwrap();
+    ///
+    /// let concealed = decoder.decode_lost_packet().unwrap();
+    /// assert_eq!(concealed.frames(), 480); // Matches the 10 ms duration of the prior frame
+    /// assert_eq!(decoder.final_range(), 0);
+    /// ```
     pub fn decode_lost_packet(&mut self) -> Result<GenericAudioBufferRef<'_>> {
         let duration = self
             .streams
