@@ -52,6 +52,7 @@
 
 #![forbid(unsafe_code)]
 #![allow(clippy::needless_return)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod celt;
 mod decoder;

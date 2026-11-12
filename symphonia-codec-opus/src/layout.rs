@@ -17,10 +17,7 @@ pub(crate) enum Layout {
 impl Layout {
     /// The layout the TOC stereo flag, or a coupled stream, selects.
     pub(crate) const fn from_stereo_flag(stereo: bool) -> Self {
-        return match stereo {
-            true => Self::Stereo,
-            false => Self::Mono,
-        };
+        return if stereo { Self::Stereo } else { Self::Mono };
     }
 
     /// The layout of `channels` channels, `None` beyond two.

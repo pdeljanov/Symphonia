@@ -180,16 +180,7 @@ impl BandEnergyHistory {
         if channels == 1 {
             self.current[1] = self.current[0];
         }
-        match is_transient {
-            true => {
-                let previous = self.previous.as_flattened_mut().iter_mut();
-                previous.zip(self.current.as_flattened()).for_each(|(e, &now)| *e = e.min(now));
-            }
-            false => {
-                self.two_back = self.previous;
-                self.previous = self.current;
-            }
-        }
+        self.advance_history(is_transient);
 
         let elapsed_units = (loss_duration + lm.blocks()).min(MAX_BACKGROUND_INCREASE_UNITS);
         let max_increase = (elapsed_units as f32) * BACKGROUND_INCREASE_PER_UNIT;
@@ -201,6 +192,22 @@ impl BandEnergyHistory {
         self.current.iter_mut().for_each(|row| fill_outside(row, &bands, 0.0));
         let older = self.previous.iter_mut().chain(self.two_back.iter_mut());
         older.for_each(|row| fill_outside(row, &bands, INITIAL_LOG_ENERGY));
+        return;
+    }
+
+    /// Rolls `previous` and `two_back` forward after a steady frame, or clamps `previous` to
+    /// `current` after a transient frame so pre-echo cannot inflate later energy predictions.
+    fn advance_history(&mut self, is_transient: bool) {
+        if !is_transient {
+            self.two_back = self.previous;
+            self.previous = self.current;
+            return;
+        }
+        self.previous
+            .as_flattened_mut()
+            .iter_mut()
+            .zip(self.current.as_flattened())
+            .for_each(|(e, &now)| *e = e.min(now));
         return;
     }
 }

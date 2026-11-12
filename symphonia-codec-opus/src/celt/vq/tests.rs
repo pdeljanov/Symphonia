@@ -1,6 +1,9 @@
 //! Tests of [`crate::celt::vq`].
 
-#![allow(clippy::excessive_precision)] // recorded values keep the 9 significant digits of the dump
+#![expect(
+    clippy::excessive_precision,
+    reason = "recorded values keep the 9 significant digits of the dump"
+)]
 
 // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
 // normative (RFC 6716 Section 4.3.4) and is verified against the RFC 8251 test vectors by
@@ -25,7 +28,10 @@ fn spreading_rotation_forward(x: &mut [f32], blocks: usize, pulses: usize, sprea
 }
 
 #[test]
-#[allow(clippy::approx_constant)] // the literal is the value being proven equal to the constant
+#[expect(
+    clippy::approx_constant,
+    reason = "the literal is the value being proven equal to the constant"
+)]
 fn std_consts_are_bit_identical_to_reference_literals() {
     assert_eq!(std::f64::consts::LN_2.to_bits(), 0.6931471805599453094_f64.to_bits());
     assert_eq!(std::f64::consts::FRAC_PI_2.to_bits(), (0.5_f64 * std::f64::consts::PI).to_bits());

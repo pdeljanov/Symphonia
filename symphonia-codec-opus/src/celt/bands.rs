@@ -435,7 +435,10 @@ pub(crate) fn anti_collapse(
 }
 
 #[cfg(test)]
-#[allow(clippy::excessive_precision)] // recorded values keep the 9 significant digits of the dump
+#[expect(
+    clippy::excessive_precision,
+    reason = "recorded values keep the 9 significant digits of the dump"
+)]
 mod tests {
     // Fixtures: packets and expected values recorded from libopus 1.6.1. The behaviour they pin is
     // normative (RFC 6716 Section 4.3.4) and is verified against the RFC 8251 test vectors by

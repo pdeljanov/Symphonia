@@ -174,7 +174,7 @@ static NLSF_SPECS: [NlsfSpec; 2] = [
 /// or the 16-coefficient wideband tables
 /// ([RFC 6716 Section 4.2.7.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5>)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NlsfCodebook {
+enum NlsfCodebook {
     /// Order 10 codebooks shared by narrowband and mediumband frames.
     NarrowbandMediumband = 0,
     /// Order 16 codebooks of wideband frames.
@@ -183,7 +183,7 @@ pub(crate) enum NlsfCodebook {
 
 impl NlsfCodebook {
     /// Codebook family used at `bandwidth`.
-    pub(crate) const fn for_bandwidth(bandwidth: Bandwidth) -> Self {
+    const fn for_bandwidth(bandwidth: Bandwidth) -> Self {
         return match bandwidth {
             Bandwidth::Narrowband | Bandwidth::MediumBand => Self::NarrowbandMediumband,
             Bandwidth::Wideband | Bandwidth::SuperWideband | Bandwidth::Fullband => Self::Wideband,
@@ -197,7 +197,7 @@ impl NlsfCodebook {
     }
 
     /// Number of NLSF coefficients, the LPC order (RFC 6716 Section 4.2.7.5).
-    pub(crate) const fn order(self) -> usize {
+    const fn order(self) -> usize {
         return self.spec().order;
     }
 
@@ -259,19 +259,18 @@ impl CodingReferences {
 
         let w_q2 = self.decode_interpolation_weight(decoder, frame, layout)?;
         let interpolate = w_q2 < NLSF_INTERPOLATION_FULL_Q2 && frame.num_subframes == 4;
-        let (nlsf0_q15, a0_q12) = match interpolate {
-            true => {
+        let (nlsf0_q15, a0_q12) = interpolate
+            .then(|| {
                 let nlsf0_q15 = interpolate_nlsf_q15(&self.prev_nlsf_q15, &nlsf_q15, order, w_q2);
-                (nlsf0_q15, nlsf_to_lpc_q12(&nlsf0_q15[..order])?)
-            }
-            false => (nlsf_q15, a1_q12),
-        };
+                return nlsf_to_lpc_q12(&nlsf0_q15[..order]).map(|a0_q12| (nlsf0_q15, a0_q12));
+            })
+            .transpose()?
+            .unwrap_or((nlsf_q15, a1_q12));
 
         for (k, subframe) in frame.active_subframes_mut().iter_mut().enumerate() {
-            (subframe.nlsf_q15, subframe.lpc_coeffs_q12) = match k < NLSF_FIRST_HALF_SUBFRAMES {
-                true => (nlsf0_q15, a0_q12),
-                false => (nlsf_q15, a1_q12),
-            };
+            let first_half = k < NLSF_FIRST_HALF_SUBFRAMES;
+            (subframe.nlsf_q15, subframe.lpc_coeffs_q12) =
+                if first_half { (nlsf0_q15, a0_q12) } else { (nlsf_q15, a1_q12) };
         }
 
         self.prev_nlsf_q15 = nlsf_q15;
@@ -415,7 +414,7 @@ fn inverse_spacing_weight_q9(prev_q8: i32, cur_q8: i32, next_q8: i32) -> i32 {
 /// Enforces the minimum spacing between consecutive NLSFs, first by moving the closest pair
 /// apart for up to 20 rounds, then by sorting and clamping
 /// ([RFC 6716 Section 4.2.7.5.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.5.4>)).
-pub(crate) fn stabilize_nlsf(nlsf_q15: &mut [i16], codebook: NlsfCodebook) -> Result<()> {
+fn stabilize_nlsf(nlsf_q15: &mut [i16], codebook: NlsfCodebook) -> Result<()> {
     let order = nlsf_q15.len();
     let min_delta = codebook.min_spacing_q15();
     if order == 0 || min_delta.len() < order + 1 {

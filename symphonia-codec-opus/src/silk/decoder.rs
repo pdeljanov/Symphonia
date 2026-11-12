@@ -262,19 +262,19 @@ impl Decoder {
         let is_lbrr = plan.kind == FrameKind::Lbrr;
         let decode_mid = !is_lbrr || plan.mid_active;
 
-        let (stereo_weights, mid_only) = match plan.is_stereo && decode_mid {
-            true => {
+        let (stereo_weights, mid_only) = (plan.is_stereo && decode_mid)
+            .then(|| -> Result<_> {
                 let weights = decode_stereo_prediction_weights(range_decoder)?;
-                (Some(weights), decode_mid_only_flag(range_decoder, plan.side_active)?)
-            }
-            false => (None, false),
-        };
+                return Ok((weights, decode_mid_only_flag(range_decoder, plan.side_active)?));
+            })
+            .transpose()?
+            .map_or((None, false), |(weights, mid_only)| (Some(weights), mid_only));
 
         let layout = self.layout;
-        let mut mid = match decode_mid {
-            true => self.decode_single_silk_frame(range_decoder, 0, &plan, plan.mid_coding)?,
-            false => Frame::for_layout(&layout),
-        };
+        let mut mid = decode_mid
+            .then(|| self.decode_single_silk_frame(range_decoder, 0, &plan, plan.mid_coding))
+            .transpose()?
+            .unwrap_or_else(|| Frame::for_layout(&layout));
         mid.stereo_weights = stereo_weights;
         mid.mid_only = mid_only;
 
@@ -285,16 +285,14 @@ impl Decoder {
         if decode_side && !is_lbrr && self.prev_decode_only_middle {
             self.channels[1].reset_after_mid_only();
         }
-        let side = match decode_side {
-            true => {
-                let mut side =
-                    self.decode_single_silk_frame(range_decoder, 1, &plan, plan.side_coding)?;
+        let side = decode_side
+            .then(|| self.decode_single_silk_frame(range_decoder, 1, &plan, plan.side_coding))
+            .transpose()?
+            .map(|mut side| {
                 side.stereo_weights = stereo_weights;
                 side.mid_only = mid_only;
-                Some(side)
-            }
-            false => None,
-        };
+                return side;
+            });
 
         if plan.is_stereo && !is_lbrr {
             self.prev_decode_only_middle = mid_only;

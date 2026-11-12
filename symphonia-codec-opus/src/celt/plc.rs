@@ -1,6 +1,8 @@
 //! CELT packet loss concealment helpers: LPC analysis, FIR/IIR filtering, and pitch search
 //! ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 
+use std::ops::Range;
+
 use crate::celt::constant::{CELT_WINDOW, EBANDS, band_width};
 use crate::celt::postfilter::ChannelHistory;
 use crate::celt::vq::renormalise_vector;
@@ -131,16 +133,14 @@ impl PlcState {
         channels: usize,
         n: usize,
     ) {
-        let (pitch_index, fade) = match self.last_frame_periodic_plc {
-            false => {
-                let ch_refs =
-                    [&decode_mem[0][..DECODE_BUFFER_SIZE], &decode_mem[1][..DECODE_BUFFER_SIZE]];
-                let found_pitch = estimate_pitch_period(&ch_refs[..channels]);
-                self.last_pitch_index = found_pitch;
-                (found_pitch, FIRST_PERIODIC_FADE)
-            }
-            true => (self.last_pitch_index, LATER_PERIODIC_FADE),
-        };
+        if !self.last_frame_periodic_plc {
+            let ch_refs =
+                [&decode_mem[0][..DECODE_BUFFER_SIZE], &decode_mem[1][..DECODE_BUFFER_SIZE]];
+            self.last_pitch_index = estimate_pitch_period(&ch_refs[..channels]);
+        }
+        let pitch_index = self.last_pitch_index;
+        let fade =
+            if self.last_frame_periodic_plc { LATER_PERIODIC_FADE } else { FIRST_PERIODIC_FADE };
 
         for (channel, lpc) in decode_mem.iter_mut().zip(self.lpc.iter_mut()).take(channels) {
             let mut exc_buf = [0.0_f32; PITCH_HISTORY_LEN + LPC_ORDER];
@@ -261,36 +261,38 @@ fn synthesize_extrapolation(
     iir_filter(&iir_in[..extrapolation_len], lpc, extrap_slice, &mut lpc_mem);
 
     let s2 = extrap_slice.iter().fold(0.0_f32, |acc, &sample| acc + sample * sample);
-    match (s1 <= MAX_SYNTHESIS_GAIN_RATIO * s2 || s2.is_nan(), s1 < s2) {
-        (true, _) => extrap_slice.fill(0.0_f32),
-        (false, true) => {
-            let ratio = ((s1 + 1.0_f32) / (s2 + 1.0_f32)).sqrt();
-            for (sample, &w) in extrap_slice[..OVERLAP].iter_mut().zip(CELT_WINDOW.iter()) {
-                let tmp_g = 1.0_f32 - w * (1.0_f32 - ratio);
-                *sample *= tmp_g;
-            }
-            for sample in extrap_slice[OVERLAP..extrapolation_len].iter_mut() {
-                *sample *= ratio;
-            }
-        }
-        (false, false) => {}
+    if s1 <= MAX_SYNTHESIS_GAIN_RATIO * s2 || s2.is_nan() {
+        extrap_slice.fill(0.0_f32);
+        return;
+    }
+    if s1 >= s2 {
+        return;
+    }
+
+    let ratio = ((s1 + 1.0_f32) / (s2 + 1.0_f32)).sqrt();
+    for (sample, &w) in extrap_slice[..OVERLAP].iter_mut().zip(CELT_WINDOW.iter()) {
+        let tmp_g = 1.0_f32 - w * (1.0_f32 - ratio);
+        *sample *= tmp_g;
+    }
+    for sample in extrap_slice[OVERLAP..extrapolation_len].iter_mut() {
+        *sample *= ratio;
     }
     return;
 }
 
-/// Fills bands `start..end` of the first `channels` channels of `x_norm` (`n` bins per channel)
-/// with unit-norm pseudo-random noise from the spreading LCG starting at `seed`. Returns the
-/// generator state ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
+/// Fills `bands` of the first `channels` channels of `x_norm` (`n` bins per channel) with
+/// unit-norm pseudo-random noise from the spreading LCG starting at `seed`. Returns the generator
+/// state ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
 pub(crate) fn fill_noise_spectrum(
     x_norm: &mut [f32],
     channels: usize,
     n: usize,
-    (start, end): (usize, usize),
+    bands: Range<usize>,
     lm: BlockSize,
     mut seed: u32,
 ) -> u32 {
     for plane in x_norm.chunks_exact_mut(n).take(channels) {
-        for (band, &band_start) in EBANDS.iter().enumerate().take(end).skip(start) {
+        for (band, &band_start) in EBANDS.iter().enumerate().take(bands.end).skip(bands.start) {
             let boffs = lm.scale(band_start);
             let blen = band_width(band, lm);
             let band_slice = &mut plane[boffs..(boffs + blen)];
@@ -652,7 +654,10 @@ pub(crate) fn estimate_pitch_period(history: &[&[f32]]) -> usize {
 }
 
 #[cfg(test)]
-#[allow(clippy::excessive_precision)] // recorded values keep the 9 significant digits of the dump
+#[expect(
+    clippy::excessive_precision,
+    reason = "recorded values keep the 9 significant digits of the dump"
+)]
 mod tests {
     // Regression pins: expected values recorded from libopus 1.6.1 for concealment, which
     // RFC 6716 Section 4.4 leaves to the implementation; a change here is a design decision, not

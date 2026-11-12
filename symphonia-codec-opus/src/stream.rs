@@ -282,13 +282,12 @@ impl<'a> FramePayload<'a> {
             return Ok(Self::without_redundancy(bytes));
         }
         let at_start = range_decoder.decode_symbol_logp(REDUNDANCY_POSITION_LOGP)? != 0;
-        let redundant_len = match explicit {
-            true => {
-                (range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX)? as usize)
-                    + HYBRID_REDUNDANCY_MIN_BYTES
-            }
-            false => bytes.len().saturating_sub(whole_bytes(range_decoder.tell())),
-        };
+        let explicit_len = explicit
+            .then(|| range_decoder.decode_uint(HYBRID_REDUNDANCY_LEN_RADIX))
+            .transpose()?
+            .map(|len| (len as usize) + HYBRID_REDUNDANCY_MIN_BYTES);
+        let redundant_len = explicit_len
+            .unwrap_or_else(|| bytes.len().saturating_sub(whole_bytes(range_decoder.tell())));
 
         let active_len = bytes.len().saturating_sub(redundant_len);
         if bits_in(active_len) < range_decoder.tell() {
@@ -298,10 +297,8 @@ impl<'a> FramePayload<'a> {
 
         let active = &bytes[..active_len];
         let redundant = &bytes[active_len..(active_len + redundant_len)];
-        let redundancy = match at_start {
-            true => Redundancy::CeltToSilk(redundant),
-            false => Redundancy::SilkToCelt(redundant),
-        };
+        let wrap = if at_start { Redundancy::CeltToSilk } else { Redundancy::SilkToCelt };
+        let redundancy = wrap(redundant);
         return Ok(Self { active, redundancy });
     }
 }
