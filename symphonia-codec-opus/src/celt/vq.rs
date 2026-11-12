@@ -16,8 +16,9 @@
 //! refill the blocks that collapsed ([Section 4.3.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.5>)).
 
 use crate::celt::constant::{
-    BIT_DEINTERLEAVE_TABLE, BIT_INTERLEAVE_TABLE, BITRES, EBANDS, LOGN, MAX_BANDS, QTHETA_OFFSET,
-    QTHETA_OFFSET_TWOPHASE, Spread,
+    BIT_DEINTERLEAVE_TABLE, BIT_INTERLEAVE_TABLE, BITRES, EBANDS, EXP2_TABLE8,
+    HADAMARD_SEQUENCY_ROWS, LOGN, MAX_BANDS, QTHETA_OFFSET, QTHETA_OFFSET_TWOPHASE, SPREAD_FACTOR,
+    Spread,
 };
 use crate::celt::cwrs::decode_pulses;
 use crate::celt::error::Error;
@@ -39,22 +40,6 @@ pub(super) const MAX_NORM_BUFFER_SIZE: usize = 8 * EBANDS[MAX_BANDS - 1];
 /// Small positive floor added to squared norms before the reciprocal square root used by band
 /// renormalisation ([RFC 6716 Section 4.3.4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.3>)).
 const NORM_EPSILON: f32 = 1e-15_f32;
-
-/// Natural-to-sequency Hadamard permutation table for strides `2, 4, 8, 16` used by the
-/// time-frequency change ([RFC 6716 Section 4.3.4.5](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.5>)).
-const HADAMARD_ORDERY_TABLE: [usize; 30] = [
-    1, 0, // stride = 2 (offset 0)
-    3, 0, 2, 1, // stride = 4 (offset 2)
-    7, 0, 4, 3, 6, 1, 5, 2, // stride = 8 (offset 6)
-    15, 0, 8, 7, 12, 3, 11, 4, 14, 1, 9, 6, 13, 2, 10, 5, // stride = 16 (offset 14)
-];
-
-/// Base-2 exponential lookup table for fractional Q3 bit resolution in [`compute_qn`]
-/// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
-const EXP2_TABLE8: [i32; 8] = [16384, 17866, 19483, 21247, 23170, 25267, 27554, 30048];
-
-/// PVQ spreading rotation factor indexed by `(spread as usize) - 1` ([RFC 6716 Section 4.3.4.3](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.3>)).
-const SPREAD_FACTOR: [usize; 3] = [15, 10, 5];
 
 /// Split angle `theta = pi / 2` in Q14 (`16384`): all energy in the side (or second) half
 /// ([RFC 6716 Section 4.3.4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.4.4>)).
@@ -334,7 +319,10 @@ impl HadamardOrder {
     fn row(self, i: usize, stride: usize) -> usize {
         return match self {
             Self::Natural => i,
-            Self::Sequency => HADAMARD_ORDERY_TABLE[stride - 2 + i],
+            Self::Sequency => {
+                let level = (stride.trailing_zeros() as usize) - 1;
+                usize::from(HADAMARD_SEQUENCY_ROWS[level][i])
+            }
         };
     }
 }

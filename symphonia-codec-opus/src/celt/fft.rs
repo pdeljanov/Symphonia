@@ -53,12 +53,36 @@ const RADIX5_TWIDDLE_A: usize = MDCT_MAX_N4 / 5;
 /// Twiddle table slot holding `exp(-j * 4 * pi / 5)` for the radix-5 butterfly.
 const RADIX5_TWIDDLE_B: usize = 2 * MDCT_MAX_N4 / 5;
 
-/// Mixed-radix `(radix, span)` stage lists for `n4 = 480 >> shift`, outermost stage first.
-/// `span` is the number of points each butterfly of that stage is applied to within a group.
-const STAGES_SHIFT0: [(usize, usize); 5] = [(5, 96), (3, 32), (4, 8), (2, 4), (4, 1)];
-const STAGES_SHIFT1: [(usize, usize); 4] = [(5, 48), (3, 16), (4, 4), (4, 1)];
-const STAGES_SHIFT2: [(usize, usize); 4] = [(5, 24), (3, 8), (2, 4), (4, 1)];
-const STAGES_SHIFT3: [(usize, usize); 3] = [(5, 12), (3, 4), (4, 1)];
+/// Mixed-radix `(radix, span)` stage lists for `n4 = 480 >> shift` (`shift in 0..=3`),
+/// outermost stage first; `span` is the number of points each butterfly of that stage covers.
+static STAGES_BY_SHIFT: [&[(usize, usize)]; 4] = validated_stage_lists([
+    &[(5, 96), (3, 32), (4, 8), (2, 4), (4, 1)],
+    &[(5, 48), (3, 16), (4, 4), (4, 1)],
+    &[(5, 24), (3, 8), (2, 4), (4, 1)],
+    &[(5, 12), (3, 4), (4, 1)],
+]);
+
+/// Verifies at compile time that every stage list factors `MDCT_MAX_N4 >> shift` and that each
+/// stage's `span` equals the product of the remaining inner radices.
+const fn validated_stage_lists(
+    lists: [&'static [(usize, usize)]; 4],
+) -> [&'static [(usize, usize)]; 4] {
+    let mut shift = 0;
+    while shift < lists.len() {
+        let stages = lists[shift];
+        let mut expected_points = 1usize;
+        let mut k = stages.len();
+        while k > 0 {
+            k -= 1;
+            let (radix, span) = stages[k];
+            assert!(span == expected_points);
+            expected_points *= radix;
+        }
+        assert!(expected_points == (MDCT_MAX_N4 >> shift));
+        shift += 1;
+    }
+    return lists;
+}
 
 /// Mixed-radix factorization of one quarter-length inverse MDCT FFT
 /// ([RFC 6716 Section 4.3.7](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.3.7>)).
@@ -78,13 +102,8 @@ impl MixedRadixPlan {
     /// Returns the plan of the `n4 = 480 >> shift` point FFT for `shift in 0..=3`.
     #[inline]
     pub(super) const fn for_shift(shift: usize) -> Self {
-        let stages: &'static [(usize, usize)] = match shift {
-            0 => &STAGES_SHIFT0,
-            1 => &STAGES_SHIFT1,
-            2 => &STAGES_SHIFT2,
-            _ => &STAGES_SHIFT3,
-        };
-        return Self { shift, stages };
+        let clamped = if shift < STAGES_BY_SHIFT.len() { shift } else { STAGES_BY_SHIFT.len() - 1 };
+        return Self { shift, stages: STAGES_BY_SHIFT[clamped] };
     }
 
     /// Number of complex points transformed by this plan (`480 >> shift`).

@@ -396,15 +396,108 @@ pub(crate) fn gain_q16_from_log_gain(log_gain: i32) -> i32 {
     return integer_part + fractional_part;
 }
 
+/// Per-bandwidth pitch lag bounds and low-part range-coder parameters
+/// ([RFC 6716 Section 4.2.7.6.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>)).
+struct PitchLagSpec {
+    min_lag: i32,
+    max_lag: i32,
+    low_cdf: Cdf<'static>,
+    low_part_count: i32,
+}
+
+impl PitchLagSpec {
+    const fn new(min_lag: i32, max_lag: i32, low_cdf: Cdf<'static>, low_part_count: i32) -> Self {
+        assert!(min_lag > 0 && min_lag < max_lag);
+        assert!(low_part_count > 0 && low_cdf.symbols() == (low_part_count as usize));
+        return Self { min_lag, max_lag, low_cdf, low_part_count };
+    }
+}
+
+/// Pitch lag descriptors for narrowband (`0`), mediumband (`1`) and wideband (`2`).
+static PITCH_LAG_SPECS: [PitchLagSpec; 3] = [
+    PitchLagSpec::new(16, 144, constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND, 4),
+    PitchLagSpec::new(24, 216, constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND, 6),
+    PitchLagSpec::new(32, 288, constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND, 8),
+];
+
+/// Per-subframe pitch contour codebook rows for 10 ms (2 subframes) or 20 ms (4 subframes) frames.
+#[derive(Clone, Copy)]
+enum ContourTable {
+    Ms10(&'static [[i8; 2]]),
+    Ms20(&'static [[i8; 4]]),
+}
+
+impl ContourTable {
+    const fn len(self) -> usize {
+        return match self {
+            Self::Ms10(rows) => rows.len(),
+            Self::Ms20(rows) => rows.len(),
+        };
+    }
+
+    #[inline]
+    fn row(self, i: usize) -> &'static [i8] {
+        return match self {
+            Self::Ms10(rows) => &rows[i],
+            Self::Ms20(rows) => &rows[i],
+        };
+    }
+}
+
+/// Pitch contour CDF and per-subframe offset codebook for one `(bandwidth, duration)` slot
+/// ([RFC 6716 Section 4.2.7.6.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>)).
+struct PitchContourSpec {
+    cdf: Cdf<'static>,
+    table: ContourTable,
+}
+
+impl PitchContourSpec {
+    const fn new(cdf: Cdf<'static>, table: ContourTable) -> Self {
+        assert!(cdf.symbols() == table.len());
+        return Self { cdf, table };
+    }
+}
+
+/// Pitch contour codebooks indexed `[usize::from(bandwidth != Narrowband)][usize::from(duration != Ms10)]`.
+static PITCH_CONTOUR_CODEBOOKS: [[PitchContourSpec; 2]; 2] = [
+    [
+        PitchContourSpec::new(
+            constant::CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS,
+            ContourTable::Ms10(&constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS),
+        ),
+        PitchContourSpec::new(
+            constant::CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS,
+            ContourTable::Ms20(&constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS),
+        ),
+    ],
+    [
+        PitchContourSpec::new(
+            constant::CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS,
+            ContourTable::Ms10(&constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS),
+        ),
+        PitchContourSpec::new(
+            constant::CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS,
+            ContourTable::Ms20(&constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS),
+        ),
+    ],
+];
+
+/// Slot (`0..=2`) of `bandwidth` in [`PITCH_LAG_SPECS`].
+#[inline]
+const fn silk_band_slot(bandwidth: Bandwidth) -> usize {
+    return match bandwidth {
+        Bandwidth::Narrowband => 0,
+        Bandwidth::MediumBand => 1,
+        Bandwidth::Wideband | Bandwidth::SuperWideband | Bandwidth::Fullband => 2,
+    };
+}
+
 /// Smallest and largest pitch lag in samples at the internal rate of `bandwidth`
 /// ([RFC 6716 Section 4.2.7.6.1](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.7.6.1>)).
 #[inline]
 pub(crate) const fn pitch_lag_bounds(bandwidth: Bandwidth) -> (i32, i32) {
-    return match bandwidth {
-        Bandwidth::Narrowband => (16, 144),
-        Bandwidth::MediumBand => (24, 216),
-        Bandwidth::Wideband | Bandwidth::SuperWideband | Bandwidth::Fullband => (32, 288),
-    };
+    let spec = &PITCH_LAG_SPECS[silk_band_slot(bandwidth)];
+    return (spec.min_lag, spec.max_lag);
 }
 
 /// Decodes an absolute primary pitch lag index from its high part and its bandwidth dependent
@@ -414,15 +507,9 @@ fn decode_absolute_lag_index(
     bandwidth: Bandwidth,
 ) -> Result<i32> {
     let high_part = decoder.decode_symbol(constant::CDF_PRIMARY_PITCH_LAG_HIGH_PART)? as i32;
-    let (low_cdf, low_part_count): (Cdf<'static>, i32) = match bandwidth {
-        Bandwidth::Narrowband => (constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_NARROWBAND, 4),
-        Bandwidth::MediumBand => (constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_MEDIUMBAND, 6),
-        Bandwidth::Wideband | Bandwidth::SuperWideband | Bandwidth::Fullband => {
-            (constant::CDF_PRIMARY_PITCH_LAG_LOW_PART_WIDEBAND, 8)
-        }
-    };
-    let low_part = decoder.decode_symbol(low_cdf)? as i32;
-    return Ok(high_part * low_part_count + low_part);
+    let spec = &PITCH_LAG_SPECS[silk_band_slot(bandwidth)];
+    let low_part = decoder.decode_symbol(spec.low_cdf)? as i32;
+    return Ok(high_part * spec.low_part_count + low_part);
 }
 
 /// Decodes the subframe pitch contour, the per-subframe offsets from the primary lag, from the
@@ -432,27 +519,11 @@ fn decode_pitch_contour(
     decoder: &mut entropy::Decoder<'_>,
     layout: &SilkLayout,
 ) -> Result<&'static [i8]> {
-    let contour: &'static [i8] = match (layout.bandwidth, layout.frame_duration) {
-        (Bandwidth::Narrowband, FrameDuration::Ms10) => {
-            let i = decoder.decode_symbol(constant::CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_10_MS)?;
-            &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NB_10MS[i as usize]
-        }
-        (Bandwidth::Narrowband, _) => {
-            let i = decoder.decode_symbol(constant::CDF_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20_MS)?;
-            &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_NARROWBAND_20MS[i as usize]
-        }
-        (_, FrameDuration::Ms10) => {
-            let i = decoder
-                .decode_symbol(constant::CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_10_MS)?;
-            &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_10MS[i as usize]
-        }
-        _ => {
-            let i = decoder
-                .decode_symbol(constant::CDF_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_OR_WIDEBAND_20_MS)?;
-            &constant::CODEBOOK_SUBFRAME_PITCH_CONTOUR_MEDIUMBAND_WIDEBAND_20MS[i as usize]
-        }
-    };
-    return Ok(contour);
+    let wide = usize::from(layout.bandwidth != Bandwidth::Narrowband);
+    let long = usize::from(layout.frame_duration != FrameDuration::Ms10);
+    let spec = &PITCH_CONTOUR_CODEBOOKS[wide][long];
+    let row = decoder.decode_symbol(spec.cdf)? as usize;
+    return Ok(spec.table.row(row));
 }
 
 /// Decodes the periodicity index and one 5-tap LTP filter per subframe

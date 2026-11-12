@@ -37,6 +37,9 @@
 use crate::fixed::{
     mul_add_q16_i16, mul_q16, mul_q16_i16, reciprocal_q, round_shift, saturate_i16, sqrt_approx,
 };
+use crate::silk::constant::{
+    HARMONIC_ATTENUATION_Q15, NOISE_ATTENUATION_Q15, NUM_ATTENUATION_STAGES,
+};
 use crate::silk::excitation::advance_lcg_seed;
 use crate::silk::lpc::{inverse_prediction_gain_q30, lpc_synthesize_q14, ltp_predict_q13};
 use crate::silk::synthesis::lpc_analysis_filter;
@@ -44,9 +47,6 @@ use crate::silk::{
     ChannelState, Frame, LTP_ORDER, MAX_FRAME_SAMPLES, MAX_LPC_ORDER, MAX_LTP_MEM_SAMPLES,
     MAX_SUBFRAME_SAMPLES, MAX_SUBFRAMES, SignalType, SilkLayout,
 };
-
-/// Number of loss-stage attenuation entries (`loss_count == 0` vs `loss_count >= 1`).
-const NUM_ATTENUATION_STAGES: usize = 2;
 
 /// Unit gain (`1.0`) in Q16 fixed-point representation (`65_536`).
 const UNIT_GAIN_Q16: i32 = 1 << 16;
@@ -89,15 +89,6 @@ const GLUE_SQRT_Q12_TO_Q16_SHIFT: u32 = 4;
 
 /// Bit shift applied to the per-sample linear fade-in slope in `glue_frames` (`2`).
 const GLUE_SLOPE_Q16_SHIFT: u32 = 2;
-
-/// Harmonic (voiced LTP) attenuation factors in Q15 (`0.99` and `0.95`).
-const HARMONIC_ATTENUATION_Q15: [i16; NUM_ATTENUATION_STAGES] = [32_440, 31_130];
-
-/// Random excitation attenuation factors in Q15 for voiced concealment (`0.95` and `0.80`).
-const VOICED_NOISE_ATTENUATION_Q15: [i16; NUM_ATTENUATION_STAGES] = [31_130, 26_214];
-
-/// Random excitation attenuation factors in Q15 for unvoiced concealment (`0.99` and `0.90`).
-const UNVOICED_NOISE_ATTENUATION_Q15: [i16; NUM_ATTENUATION_STAGES] = [32_440, 29_491];
 
 /// LPC chirp bandwidth expansion factor applied per lost frame (`0.99` in Q16).
 const PLC_BWE_CHIRP_Q16: i32 = 64_881;
@@ -521,10 +512,8 @@ impl PlcState {
     /// ([RFC 6716 Section 4.4](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.4>)).
     fn excitation_shape(&self, voiced: bool, lpc_order: usize) -> ExcitationShape {
         let stage = self.loss_count.min(NUM_ATTENUATION_STAGES - 1);
-        let base_noise_attenuation_q15 = match voiced {
-            true => VOICED_NOISE_ATTENUATION_Q15[stage] as i32,
-            false => UNVOICED_NOISE_ATTENUATION_Q15[stage] as i32,
-        };
+        let base_noise_attenuation_q15 =
+            i32::from(NOISE_ATTENUATION_Q15[usize::from(voiced)][stage]);
         let (rand_scale_q14, noise_attenuation_q15) = self
             .compute_initial_noise_scale_and_attenuation(
                 voiced,
@@ -534,7 +523,7 @@ impl PlcState {
         return ExcitationShape {
             voiced,
             rand_scale_q14,
-            harmonic_attenuation_q15: HARMONIC_ATTENUATION_Q15[stage] as i32,
+            harmonic_attenuation_q15: i32::from(HARMONIC_ATTENUATION_Q15[stage]),
             noise_attenuation_q15,
         };
     }

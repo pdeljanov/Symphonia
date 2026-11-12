@@ -487,9 +487,9 @@ pub(crate) fn decimate_and_whiten_history(x: &[&[f32]], x_lp: &mut [f32]) {
     autocorrelation(x_lp, &mut ac, None);
 
     // Lag windowing and bandwidth expansion (`lpc_bw = 0.9^k` and `0.8` first-difference blend)
-    ac[0] *= 1.0001;
+    ac[0] *= LPC_NOISE_FLOOR;
     for (i, ac_slot) in ac.iter_mut().enumerate().skip(1) {
-        let frac = 0.008 * (i as f32);
+        let frac = LPC_LAG_WINDOW * (i as f32);
         *ac_slot -= *ac_slot * frac * frac;
     }
 

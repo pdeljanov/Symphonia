@@ -11,8 +11,7 @@ use symphonia_core::errors::Result;
 
 use crate::fixed::{mul_add_q16_i16, mul_q16, mul_q16_i16, round_shift, saturate_i16};
 use crate::silk::constant::resampler::{
-    RESAMPLER_1_2_COEFS, RESAMPLER_1_3_COEFS, RESAMPLER_1_4_COEFS, RESAMPLER_1_6_COEFS,
-    RESAMPLER_2_3_COEFS, RESAMPLER_3_4_COEFS, RESAMPLER_DELAY_MATRIX_DEC,
+    RESAMPLER_1_2_COEFS, RESAMPLER_2_3_COEFS, RESAMPLER_3_4_COEFS, RESAMPLER_DELAY_MATRIX_DEC,
     RESAMPLER_DOWN_ORDER_FIR0, RESAMPLER_DOWN_ORDER_FIR1, RESAMPLER_DOWN_ORDER_FIR2,
     RESAMPLER_FRAC_FIR_12, RESAMPLER_MAX_BATCH_SIZE_MS, RESAMPLER_ORDER_FIR_12, RESAMPLER_UP2_HQ_0,
     RESAMPLER_UP2_HQ_1,
@@ -217,13 +216,13 @@ impl ResamplerState {
     pub(crate) fn init(&mut self, fs_hz_in: u32, fs_hz_out: u32) -> Result<()> {
         let input_rate = input_rate_index(fs_hz_in)?;
         let output_rate = output_rate_index(fs_hz_out)?;
-        let (mode, up2x) = select_mode(fs_hz_in, fs_hz_out)?;
+        let (mode, up2x) = RESAMPLER_MODE_MATRIX[input_rate][output_rate];
 
         let input_rate_khz = (fs_hz_in / 1000) as usize;
         *self = Self {
             input_rate_khz,
             output_rate_khz: (fs_hz_out / 1000) as usize,
-            input_delay: RESAMPLER_DELAY_MATRIX_DEC[input_rate][output_rate] as usize,
+            input_delay: usize::from(RESAMPLER_DELAY_MATRIX_DEC[input_rate][output_rate]),
             batch_size: input_rate_khz * RESAMPLER_MAX_BATCH_SIZE_MS,
             inv_ratio_q16: inverse_ratio_q16(fs_hz_in as i32, fs_hz_out as i32, up2x),
             mode,
@@ -365,40 +364,39 @@ fn output_rate_index(fs_hz: u32) -> Result<usize> {
     };
 }
 
-/// Selects the resampling mode of a rate pair and whether the FIR stage runs on the 2x
-/// upsampled signal (RFC 6716 Section 4.2.9).
-fn select_mode(fs_hz_in: u32, fs_hz_out: u32) -> Result<(ResamplerMode, u32)> {
-    let down = |filter: DownFilter| (ResamplerMode::Down(filter), 0);
-    let (mode, up2x) = match (fs_hz_in, fs_hz_out) {
-        (in_hz, out_hz) if out_hz == in_hz => (ResamplerMode::Copy, 0),
-        (in_hz, out_hz) if out_hz == in_hz * 2 => (ResamplerMode::Up2Hq, 0),
-        (in_hz, out_hz) if out_hz > in_hz => (ResamplerMode::IirFir, 1),
-        (in_hz, out_hz) if out_hz * 4 == in_hz * 3 => {
-            down(DownFilter::Interpolated { fractions: 3, coefs: &RESAMPLER_3_4_COEFS })
-        }
-        (in_hz, out_hz) if out_hz * 3 == in_hz * 2 => {
-            down(DownFilter::Interpolated { fractions: 2, coefs: &RESAMPLER_2_3_COEFS })
-        }
-        (in_hz, out_hz) if out_hz * 2 == in_hz => down(DownFilter::Symmetric {
+/// Resampling mode and `up2x` shift (`1` when the FIR runs on the 2x allpass-upsampled signal)
+/// for every `(input_rate, output_rate)` pair (`[8, 12, 16]` kHz by `[8, 12, 16, 24, 48]` kHz),
+/// paired with [`RESAMPLER_DELAY_MATRIX_DEC`]
+/// ([RFC 6716 Section 4.2.9](<https://datatracker.ietf.org/doc/html/rfc6716#section-4.2.9>)).
+static RESAMPLER_MODE_MATRIX: [[(ResamplerMode, u32); 5]; 3] = {
+    const DOWN_2_3: (ResamplerMode, u32) = (
+        ResamplerMode::Down(DownFilter::Interpolated { fractions: 2, coefs: &RESAMPLER_2_3_COEFS }),
+        0,
+    );
+    const DOWN_3_4: (ResamplerMode, u32) = (
+        ResamplerMode::Down(DownFilter::Interpolated { fractions: 3, coefs: &RESAMPLER_3_4_COEFS }),
+        0,
+    );
+    const DOWN_1_2: (ResamplerMode, u32) = (
+        ResamplerMode::Down(DownFilter::Symmetric {
             order: RESAMPLER_DOWN_ORDER_FIR1,
             coefs: &RESAMPLER_1_2_COEFS,
         }),
-        (in_hz, out_hz) if out_hz * 3 == in_hz => down(DownFilter::Symmetric {
-            order: RESAMPLER_DOWN_ORDER_FIR2,
-            coefs: &RESAMPLER_1_3_COEFS,
-        }),
-        (in_hz, out_hz) if out_hz * 4 == in_hz => down(DownFilter::Symmetric {
-            order: RESAMPLER_DOWN_ORDER_FIR2,
-            coefs: &RESAMPLER_1_4_COEFS,
-        }),
-        (in_hz, out_hz) if out_hz * 6 == in_hz => down(DownFilter::Symmetric {
-            order: RESAMPLER_DOWN_ORDER_FIR2,
-            coefs: &RESAMPLER_1_6_COEFS,
-        }),
-        _ => return Err(Error::UnsupportedConfig.into()),
-    };
-    return Ok((mode, up2x));
-}
+        0,
+    );
+    const COPY: (ResamplerMode, u32) = (ResamplerMode::Copy, 0);
+    const UP2: (ResamplerMode, u32) = (ResamplerMode::Up2Hq, 0);
+    const IIR_FIR: (ResamplerMode, u32) = (ResamplerMode::IirFir, 1);
+
+    [
+        // 8 kHz -> [8, 12, 16, 24, 48] kHz
+        [COPY, IIR_FIR, UP2, IIR_FIR, IIR_FIR],
+        // 12 kHz -> [8, 12, 16, 24, 48] kHz
+        [DOWN_2_3, COPY, IIR_FIR, UP2, IIR_FIR],
+        // 16 kHz -> [8, 12, 16, 24, 48] kHz
+        [DOWN_1_2, DOWN_3_4, COPY, IIR_FIR, IIR_FIR],
+    ]
+};
 
 /// Q16 ratio of (possibly 2x upsampled) input rate to output rate, rounded up until it covers
 /// the output rate (RFC 6716 Section 4.2.9).

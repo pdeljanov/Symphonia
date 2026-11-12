@@ -205,53 +205,47 @@ impl IdentificationHeader {
     pub(crate) fn channels(&self) -> Channels {
         use ChannelMapping::{Rtp, Vorbis};
 
-        let positions = match (&self.channel_mapping, self.channel_count) {
-            (Rtp | Vorbis(_), 1) => Position::FRONT_LEFT,
-            (Rtp | Vorbis(_), 2) => Position::FRONT_LEFT | Position::FRONT_RIGHT,
-            (Vorbis(_), 3) => Position::FRONT_LEFT | Position::FRONT_CENTER | Position::FRONT_RIGHT,
-            (Vorbis(_), 4) => {
-                Position::FRONT_LEFT
-                    | Position::FRONT_RIGHT
-                    | Position::REAR_LEFT
-                    | Position::REAR_RIGHT
-            }
-            (Vorbis(_), 5) => {
-                Position::FRONT_LEFT
-                    | Position::FRONT_CENTER
-                    | Position::FRONT_RIGHT
-                    | Position::REAR_LEFT
-                    | Position::REAR_RIGHT
-            }
-            (Vorbis(_), 6) => {
-                Position::FRONT_LEFT
-                    | Position::FRONT_CENTER
-                    | Position::FRONT_RIGHT
-                    | Position::REAR_LEFT
-                    | Position::REAR_RIGHT
-                    | Position::LFE1
-            }
-            (Vorbis(_), 7) => {
-                Position::FRONT_LEFT
-                    | Position::FRONT_CENTER
-                    | Position::FRONT_RIGHT
-                    | Position::SIDE_LEFT
-                    | Position::SIDE_RIGHT
-                    | Position::REAR_CENTER
-                    | Position::LFE1
-            }
-            (Vorbis(_), 8) => {
-                Position::FRONT_LEFT
-                    | Position::FRONT_CENTER
-                    | Position::FRONT_RIGHT
-                    | Position::SIDE_LEFT
-                    | Position::SIDE_RIGHT
-                    | Position::REAR_LEFT
-                    | Position::REAR_RIGHT
-                    | Position::LFE1
-            }
-            _ => return Channels::Discrete(u16::from(self.channel_count)),
+        const VORBIS_POSITIONS: [Position; 8] = [
+            Position::FRONT_LEFT,
+            Position::FRONT_LEFT.union(Position::FRONT_RIGHT),
+            Position::FRONT_LEFT.union(Position::FRONT_CENTER).union(Position::FRONT_RIGHT),
+            Position::FRONT_LEFT
+                .union(Position::FRONT_RIGHT)
+                .union(Position::REAR_LEFT)
+                .union(Position::REAR_RIGHT),
+            Position::FRONT_LEFT
+                .union(Position::FRONT_CENTER)
+                .union(Position::FRONT_RIGHT)
+                .union(Position::REAR_LEFT)
+                .union(Position::REAR_RIGHT),
+            Position::FRONT_LEFT
+                .union(Position::FRONT_CENTER)
+                .union(Position::FRONT_RIGHT)
+                .union(Position::REAR_LEFT)
+                .union(Position::REAR_RIGHT)
+                .union(Position::LFE1),
+            Position::FRONT_LEFT
+                .union(Position::FRONT_CENTER)
+                .union(Position::FRONT_RIGHT)
+                .union(Position::SIDE_LEFT)
+                .union(Position::SIDE_RIGHT)
+                .union(Position::REAR_CENTER)
+                .union(Position::LFE1),
+            Position::FRONT_LEFT
+                .union(Position::FRONT_CENTER)
+                .union(Position::FRONT_RIGHT)
+                .union(Position::SIDE_LEFT)
+                .union(Position::SIDE_RIGHT)
+                .union(Position::REAR_LEFT)
+                .union(Position::REAR_RIGHT)
+                .union(Position::LFE1),
+        ];
+
+        let count = usize::from(self.channel_count);
+        return match (&self.channel_mapping, count) {
+            (Rtp, 1..=2) | (Vorbis(_), 1..=8) => Channels::Positioned(VORBIS_POSITIONS[count - 1]),
+            _ => Channels::Discrete(u16::from(self.channel_count)),
         };
-        return Channels::Positioned(positions);
     }
 
     /// Reads the 8-byte magic signature and rejects anything other than `OpusHead`.
