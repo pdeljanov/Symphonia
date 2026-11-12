@@ -16,6 +16,9 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--document-private-items"]
+
 [dependencies]
 log = { workspace = true }
 symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
