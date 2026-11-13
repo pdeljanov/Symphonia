@@ -95,16 +95,17 @@ impl WaveFormatChunk {
             }
         };
 
-        // Block align is redundant for this format, but ideally it should be set correctly. Log if
-        // it's incorrect. Computed as a u32 since a malformed header may declare up to 65535
-        // channels.
-        let expected_block_align = u32::from(num_channels) * u32::from(bits_per_sample / 8);
+        // Map the channel count first so that invalid (e.g., excessively large) channel counts are
+        // rejected before they are used below.
+        let channels = map_wave_channel_count(num_channels)?;
 
-        if u32::from(block_align) != expected_block_align {
+        // Block align is redundant for this format, but ideally it should be set correctly. Log if
+        // it's incorrect.
+        let expected_block_align = num_channels * (bits_per_sample / 8);
+
+        if block_align != expected_block_align {
             info!("fmt_pcm expected block align of {}, got {}", expected_block_align, block_align);
         }
-
-        let channels = map_wave_channel_count(num_channels)?;
 
         Ok(FormatData::Pcm(FormatPcm {
             bits_per_sample,
