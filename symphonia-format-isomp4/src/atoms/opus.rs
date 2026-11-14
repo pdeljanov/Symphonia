@@ -26,7 +26,8 @@ const OPUS_MAGIC_LEN: usize = OPUS_MAGIC.len();
 /// ([Encapsulation of Opus in ISO Base Media File Format, Section 4.3.2](<https://opus-codec.org/docs/opus_in_isobmff.html#4.3.2>)),
 /// whereas the `OpusHead` identification header that the extra data imitates is little-endian
 /// ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
-/// The fields are byte-swapped so the extra data is a genuine `OpusHead` for every consumer.
+/// These fields are byte-swapped so `OpusHead` readers decode them correctly. All single-byte
+/// fields, including the version and the channel mapping table, are copied as-is.
 const OPUS_DOPS_BIG_ENDIAN_FIELDS: [core::ops::Range<usize>; 3] = [
     OPUS_MAGIC_LEN + 2..OPUS_MAGIC_LEN + 4,
     OPUS_MAGIC_LEN + 4..OPUS_MAGIC_LEN + 8,
