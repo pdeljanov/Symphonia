@@ -216,6 +216,10 @@ pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &
 
 /// Applies the anti-aliasing filter to sub-bands that are not part of short blocks.
 pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) {
+    if channel.rzero == 0 {
+        return;
+    }
+
     // The maximum number of sub-bands to anti-alias depends on block type.
     let sb_limit = match channel.block_type {
         // Short blocks are never anti-aliased.
@@ -223,21 +227,24 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
         // Mixed blocks have a long block span the first 36 samples (2 sub-bands). Therefore, only
         // anti-alias these two sub-bands.
         BlockType::Short { is_mixed: true } => 2,
-        // All other block types require all 32 sub-bands to be anti-aliased.
+        // All other block types allow anti-aliasing across all 32 sub-bands.
         _ => 32,
     };
 
     // Amortize the lazy_static fetch over the entire anti-aliasing operation.
     let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
 
-    // The sub-band that intersects the start of the rzero partition. All sub-bands after this one
-    // are zeroed and do-not need anti-aliasing.
-    let sb_rzero = channel.rzero / 18;
+    // The number of potentially non-zero sub-bands. All sub-bands from this index onwards are
+    // zeroed.
+    let sb_rzero = channel.rzero.div_ceil(18);
 
-    // The anti-aliasing filter must be applied up-to the last non-zero sub-band. After
+    // The anti-aliasing filter must be applied up-to the last non-zero long sub-band. After
     // anti-aliasing, the first zeroed sub-band may have non-zero values "smeared" into it.
-    // Therefore, the rzero must be updated.
-    channel.rzero = 18 * sb_limit.min(sb_rzero + 2).min(32);
+    let antialias_end = 18 * sb_limit.min(sb_rzero + 1);
+
+    // Extend rzero to cover possible smearing without discarding non-zero short sub-bands
+    // beyond the first two long sub-bands of a mixed block.
+    channel.rzero = channel.rzero.max(antialias_end);
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
@@ -264,7 +271,7 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
     //
     // Note that all butterfly calculations only involve two samples, and all iterations are
     // independant of each other. This lends itself well for SIMD processing.
-    for sb in (18..channel.rzero).step_by(18) {
+    for sb in (18..antialias_end).step_by(18) {
         for i in 0..8 {
             let li = sb - 1 - i;
             let ui = sb + i;
@@ -486,9 +493,149 @@ pub fn frequency_inversion(samples: &mut [f32; 576]) {
 
 #[cfg(test)]
 mod tests {
-    use super::IMDCT_WINDOWS;
-    use super::imdct12_win;
+    use super::{BlockType, GranuleChannel, IMDCT_WINDOWS, antialias, imdct12_win};
     use std::f64;
+
+    fn antialias_inputs(rzero: usize) -> [(&'static str, [f32; 576]); 3] {
+        let mut signed = [0.0; 576];
+        for (i, sample) in signed[..rzero].iter_mut().enumerate() {
+            *sample = ((37 * i + 11) % 101) as f32 / 50.0 - 1.0;
+        }
+        let mut impulse = [0.0; 576];
+        if rzero > 0 {
+            impulse[rzero - 1] = if rzero % 2 == 0 { -1.0 } else { 1.0 };
+        }
+
+        [("signed", signed), ("impulse", impulse), ("zero", [0.0; 576])]
+    }
+
+    #[test]
+    fn antialias_bounds() {
+        for rzero in 0..=576 {
+            for (pattern, samples) in antialias_inputs(rzero) {
+                for block_type in [
+                    BlockType::Long,
+                    BlockType::Start,
+                    BlockType::End,
+                    BlockType::Short { is_mixed: false },
+                    BlockType::Short { is_mixed: true },
+                ] {
+                    let context =
+                        format!("block_type={block_type:?}, rzero={rzero}, input={pattern}");
+                    let mut channel = GranuleChannel { block_type, rzero, ..Default::default() };
+                    let mut actual = samples;
+                    antialias(&mut channel, &mut actual);
+
+                    assert!(
+                        (rzero..=576).contains(&channel.rzero),
+                        "{context}: invalid output rzero {}",
+                        channel.rzero
+                    );
+                    assert!(
+                        actual[channel.rzero..].iter().all(|&sample| sample == 0.0),
+                        "{context}: non-zero samples beyond rzero"
+                    );
+
+                    if rzero == 0 {
+                        assert_eq!(channel.rzero, 0, "{context}");
+                    }
+                    else {
+                        // A butterfly can extend the potentially non-zero prefix by at most
+                        // one sub-band.
+                        let input_bands = rzero.div_ceil(18);
+                        let output_bands = channel.rzero.div_ceil(18);
+                        assert!(output_bands <= input_bands + 1, "{context}: excessive rzero");
+                    }
+                }
+            }
+        }
+    }
+
+    // Only long sub-bands should be anti-aliased.
+    #[test]
+    fn antialias_short_bands() {
+        for rzero in 0..=576 {
+            for (pattern, samples) in antialias_inputs(rzero) {
+                for is_mixed in [false, true] {
+                    let block_type = BlockType::Short { is_mixed };
+                    let context =
+                        format!("block_type={block_type:?}, rzero={rzero}, input={pattern}");
+                    let mut channel = GranuleChannel { block_type, rzero, ..Default::default() };
+                    let mut actual = samples;
+                    antialias(&mut channel, &mut actual);
+
+                    if is_mixed {
+                        assert_eq!(&actual[36..], &samples[36..], "{context}");
+                    }
+                    else {
+                        assert_eq!(actual, samples, "{context}");
+                        assert_eq!(channel.rzero, rzero, "{context}");
+                    }
+                }
+            }
+        }
+    }
+
+    // An impulse must smear non-zero values into the next zeroed sub-band.
+    #[test]
+    fn antialias_long_boundaries() {
+        for boundary in [18, 36, 558] {
+            for block_type in [BlockType::Long, BlockType::Start, BlockType::End] {
+                let context = format!("block_type={block_type:?}, boundary={boundary}");
+                let mut channel =
+                    GranuleChannel { block_type, rzero: boundary, ..Default::default() };
+
+                let mut actual = [0.0; 576];
+                actual[boundary - 1] = 1.0;
+
+                antialias(&mut channel, &mut actual);
+
+                // For the first butterfly coefficient, c = -0.6:
+                // cs = 1 / sqrt(1 + c*c), ca = c * cs.
+                let mut expected = [0.0; 576];
+                expected[boundary - 1] = 0.857_492_9;
+                expected[boundary] = -0.514_495_8;
+
+                for (i, (&actual, &expected)) in actual.iter().zip(&expected).enumerate() {
+                    assert!(
+                        (actual - expected).abs() < 1e-6,
+                        "{context}: sample {i}: expected {expected}, got {actual}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn antialias_mixed_block() {
+        let mut channel = GranuleChannel {
+            block_type: BlockType::Short { is_mixed: true },
+            rzero: 54,
+            ..Default::default()
+        };
+
+        let mut actual = [0.0; 576];
+        actual[17] = 1.0; // Boundary between the two long sub-bands.
+        actual[35] = 1.0; // Boundary between long and short sub-bands.
+        actual[53] = 1.0; // Non-zero short-band content.
+
+        // Only the boundary between the two long sub-bands is anti-aliased.
+        // For c = -0.6: cs = 1 / sqrt(1 + c*c), ca = c * cs.
+        let mut expected = actual;
+        expected[17] = 0.857_492_9;
+        expected[18] = -0.514_495_8;
+
+        antialias(&mut channel, &mut actual);
+
+        assert_eq!(channel.rzero, 54);
+
+        for (i, (&actual, &expected)) in actual.iter().zip(&expected).enumerate() {
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "sample {i}: expected {expected}, got {actual}"
+            );
+        }
+    }
 
     fn imdct12_analytical(x: &[f32; 6]) -> [f32; 12] {
         const PI_24: f64 = f64::consts::PI / 24.0;
