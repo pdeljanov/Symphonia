@@ -89,80 +89,91 @@ impl SubframeSample for i64 {
     }
 }
 
-fn decorrelate_left_side(left: &[i32], side: &mut [i32]) {
-    for (s, l) in side.iter_mut().zip(left) {
-        *s = *l - *s;
+/// Decoded Side (Difference) channel samples, paired with the output plane when out-of-place.
+enum Side<'a> {
+    I32(&'a mut [i32]),
+    I64(&'a [i64], &'a mut [i32]),
+}
+
+fn decorrelate_left_side(left: &[i32], side: Side<'_>) {
+    match side {
+        Side::I32(side) => {
+            for (s, l) in side.iter_mut().zip(left) {
+                *s = *l - *s;
+            }
+        }
+        Side::I64(side, out) => {
+            for ((o, &l), &s) in out.iter_mut().zip(left).zip(side) {
+                *o = i64::from(l).wrapping_sub(s) as i32;
+            }
+        }
     }
 }
 
-fn decorrelate_mid_side(mid: &mut [i32], side: &mut [i32]) {
-    for (m, s) in mid.iter_mut().zip(side) {
-        // Mid (M) is given as M = L/2 + R/2, while Side (S) is given as S = L - R.
-        //
-        // To calculate the individual channels, the following equations can be used:
-        //      - L = S/2 + M
-        //      - R = M - S/2
-        //
-        // Ideally, this would work, but since samples are represented as integers, division yields
-        // the floor of the divided value. Therefore, the channel restoration equations actually
-        // yield:
-        //      - L = floor(S/2) + M
-        //      - R = M - floor(S/2)
-        //
-        // This will produce incorrect samples whenever the sample S is odd. For example:
-        //      - 2/2 = 1
-        //      - 3/2 = 1 (should be 2 if rounded!)
-        //
-        // To get the proper rounding behaviour, the solution is to add one to the result if S is
-        // odd:
-        //      - L = floor(S/2) + M + (S%2) = M + (S%2) + floor(S/2)
-        //      - R = M - floor(S/2) + (S%2) = M + (S%2) - floor(S/2)
-        //
-        // Further, to prevent loss of accuracy, instead of dividing S/2 and adding or subtracting
-        // it from M, multiply M*2, then add or subtract S, and then divide the whole result by 2.
-        // This gives one extra bit of precision for the intermediate computations.
-        //
-        // Conveniently, since M should be doubled, the LSB will always be 0. This allows S%2 to
-        // be added simply by bitwise ORing S&1 to M<<1.
-        //
-        // Therefore the final equations yield:
-        //      - L = (2*M + (S%2) + S) / 2
-        //      - R = (2*M + (S%2) - S) / 2
-        let mid = (*m << 1) | (*s & 1);
-        let side = *s;
-        *m = (mid + side) >> 1;
-        *s = (mid - side) >> 1;
+fn decorrelate_mid_side(mid: &mut [i32], side: Side<'_>) {
+    // Mid (M) is given as M = L/2 + R/2, while Side (S) is given as S = L - R.
+    //
+    // To calculate the individual channels, the following equations can be used:
+    //      - L = S/2 + M
+    //      - R = M - S/2
+    //
+    // Ideally, this would work, but since samples are represented as integers, division yields
+    // the floor of the divided value. Therefore, the channel restoration equations actually
+    // yield:
+    //      - L = floor(S/2) + M
+    //      - R = M - floor(S/2)
+    //
+    // This will produce incorrect samples whenever the sample S is odd. For example:
+    //      - 2/2 = 1
+    //      - 3/2 = 1 (should be 2 if rounded!)
+    //
+    // To get the proper rounding behaviour, the solution is to add one to the result if S is
+    // odd:
+    //      - L = floor(S/2) + M + (S%2) = M + (S%2) + floor(S/2)
+    //      - R = M - floor(S/2) + (S%2) = M + (S%2) - floor(S/2)
+    //
+    // Further, to prevent loss of accuracy, instead of dividing S/2 and adding or subtracting
+    // it from M, multiply M*2, then add or subtract S, and then divide the whole result by 2.
+    // This gives one extra bit of precision for the intermediate computations.
+    //
+    // Conveniently, since M should be doubled, the LSB will always be 0. This allows S%2 to
+    // be added simply by bitwise ORing S&1 to M<<1.
+    //
+    // Therefore the final equations yield:
+    //      - L = (2*M + (S%2) + S) / 2
+    //      - R = (2*M + (S%2) - S) / 2
+    match side {
+        Side::I32(side) => {
+            for (m, s) in mid.iter_mut().zip(side) {
+                let mid = (*m << 1) | (*s & 1);
+                let side = *s;
+                *m = (mid + side) >> 1;
+                *s = (mid - side) >> 1;
+            }
+        }
+        Side::I64(side, out) => {
+            for ((m, o), &s) in mid.iter_mut().zip(out.iter_mut()).zip(side) {
+                // For 32-bit streams, the intermediate values require up-to 34 bits.
+                let mid = (i64::from(*m) << 1) | (s & 1);
+                *m = (mid.wrapping_add(s) >> 1) as i32;
+                *o = (mid.wrapping_sub(s) >> 1) as i32;
+            }
+        }
     }
 }
 
-fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
-    for (s, r) in side.iter_mut().zip(right) {
-        *s += *r;
-    }
-}
-
-// The following functions restore the Left and Right channels when the Side channel was decoded
-// into `i64` samples (i.e., 32-bit streams). The channel that would otherwise replace the Side
-// channel in-place is written to `out`.
-
-fn decorrelate_left_side_wide(left: &[i32], side: &[i64], out: &mut [i32]) {
-    for ((o, &l), &s) in out.iter_mut().zip(left).zip(side) {
-        *o = i64::from(l).wrapping_sub(s) as i32;
-    }
-}
-
-fn decorrelate_mid_side_wide(mid: &mut [i32], side: &[i64], out: &mut [i32]) {
-    for ((m, o), &s) in mid.iter_mut().zip(out.iter_mut()).zip(side) {
-        // See `decorrelate_mid_side`. The intermediate values require up-to 34 bits.
-        let mid = (i64::from(*m) << 1) | (s & 1);
-        *m = (mid.wrapping_add(s) >> 1) as i32;
-        *o = (mid.wrapping_sub(s) >> 1) as i32;
-    }
-}
-
-fn decorrelate_right_side_wide(right: &[i32], side: &[i64], out: &mut [i32]) {
-    for ((o, &r), &s) in out.iter_mut().zip(right).zip(side) {
-        *o = s.wrapping_add(i64::from(r)) as i32;
+fn decorrelate_right_side(right: &[i32], side: Side<'_>) {
+    match side {
+        Side::I32(side) => {
+            for (s, r) in side.iter_mut().zip(right) {
+                *s += *r;
+            }
+        }
+        Side::I64(side, out) => {
+            for ((o, &r), &s) in out.iter_mut().zip(right).zip(side) {
+                *o = s.wrapping_add(i64::from(r)) as i32;
+            }
+        }
     }
 }
 
@@ -279,8 +290,7 @@ impl FlacDecoder {
                     }
                 }
                 // For Left/Side, Mid/Side, and Right/Side channel configurations, the Side
-                // (Difference) channel requires an extra bit per sample. For 32-bit streams, the
-                // Side channel therefore can't be decoded in-place and is decoded into `side_buf`.
+                // (Difference) channel requires an extra bit per sample.
                 ChannelAssignment::LeftSide => {
                     let (left, side) = self
                         .buf
@@ -288,16 +298,9 @@ impl FlacDecoder {
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
 
-                    if bits_per_sample < u32::BITS {
-                        read_subframe(&mut bs, bits_per_sample + 1, side)?;
-                        decorrelate_left_side(left, side);
-                    }
-                    else {
-                        let wide = side_buf(&mut self.side_buf, side.len());
-                        read_subframe(&mut bs, bits_per_sample + 1, wide)?;
-                        decorrelate_left_side_wide(left, wide, side);
-                    }
+                    decorrelate_left_side(left, side);
                 }
                 ChannelAssignment::MidSide => {
                     let (mid, side) = self
@@ -306,16 +309,9 @@ impl FlacDecoder {
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
 
-                    if bits_per_sample < u32::BITS {
-                        read_subframe(&mut bs, bits_per_sample + 1, side)?;
-                        decorrelate_mid_side(mid, side);
-                    }
-                    else {
-                        let wide = side_buf(&mut self.side_buf, side.len());
-                        read_subframe(&mut bs, bits_per_sample + 1, wide)?;
-                        decorrelate_mid_side_wide(mid, wide, side);
-                    }
+                    decorrelate_mid_side(mid, side);
                 }
                 ChannelAssignment::RightSide => {
                     let (side, right) = self
@@ -323,17 +319,10 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    if bits_per_sample < u32::BITS {
-                        read_subframe(&mut bs, bits_per_sample + 1, side)?;
-                        read_subframe(&mut bs, bits_per_sample, right)?;
-                        decorrelate_right_side(right, side);
-                    }
-                    else {
-                        let wide = side_buf(&mut self.side_buf, side.len());
-                        read_subframe(&mut bs, bits_per_sample + 1, wide)?;
-                        read_subframe(&mut bs, bits_per_sample, right)?;
-                        decorrelate_right_side_wide(right, wide, side);
-                    }
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
+                    read_subframe(&mut bs, bits_per_sample, right)?;
+
+                    decorrelate_right_side(right, side);
                 }
             }
         }
@@ -355,12 +344,26 @@ impl FlacDecoder {
     }
 }
 
-/// Get a slice of `len` samples from the Side channel buffer, growing it if required.
-fn side_buf(buf: &mut Vec<i64>, len: usize) -> &mut [i64] {
-    if buf.len() < len {
-        buf.resize(len, 0);
+/// Read a Side (Difference) subframe into `out` if it fits in `i32` samples, or into `buf_i64`
+/// otherwise (i.e., 33-bit Side subframes in 32-bit streams).
+fn read_side<'a, B: ReadBitsLtr>(
+    bs: &mut B,
+    frame_bps: u32,
+    out: &'a mut [i32],
+    buf_i64: &'a mut Vec<i64>,
+) -> Result<Side<'a>> {
+    if frame_bps <= i32::BITS {
+        read_subframe(bs, frame_bps, out)?;
+        Ok(Side::I32(out))
     }
-    &mut buf[..len]
+    else {
+        if buf_i64.len() < out.len() {
+            buf_i64.resize(out.len(), 0);
+        }
+        let side = &mut buf_i64[..out.len()];
+        read_subframe(bs, frame_bps, side)?;
+        Ok(Side::I64(side, out))
+    }
 }
 
 impl AudioDecoder for FlacDecoder {
@@ -1076,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_wide_decorrelation() {
+    fn verify_i64_decorrelation() {
         let values = [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];
 
         for &l in &values {
@@ -1085,16 +1088,16 @@ mod tests {
                 let mid = (i64::from(l) + i64::from(r)) >> 1;
 
                 let mut out = [0];
-                decorrelate_left_side_wide(&[l], &side, &mut out);
+                decorrelate_left_side(&[l], Side::I64(&side, &mut out));
                 assert_eq!(out, [r], "left/side l={l} r={r}");
 
                 let mut out = [0];
-                decorrelate_right_side_wide(&[r], &side, &mut out);
+                decorrelate_right_side(&[r], Side::I64(&side, &mut out));
                 assert_eq!(out, [l], "right/side l={l} r={r}");
 
                 let mut mid = [mid as i32];
                 let mut out = [0];
-                decorrelate_mid_side_wide(&mut mid, &side, &mut out);
+                decorrelate_mid_side(&mut mid, Side::I64(&side, &mut out));
                 assert_eq!((mid, out), ([l], [r]), "mid/side l={l} r={r}");
             }
         }
