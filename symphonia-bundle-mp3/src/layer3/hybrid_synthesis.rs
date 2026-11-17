@@ -227,21 +227,21 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
         // Mixed blocks have a long block span the first 36 samples (2 sub-bands). Therefore, only
         // anti-alias these two sub-bands.
         BlockType::Short { is_mixed: true } => 2,
-        // All other block types require all 32 sub-bands to be anti-aliased.
+        // All other block types allow anti-aliasing across all 32 sub-bands.
         _ => 32,
     };
 
     // Amortize the lazy_static fetch over the entire anti-aliasing operation.
     let (cs, ca): &([f32; 8], [f32; 8]) = &ANTIALIAS_CS_CA;
 
-    // The sub-band that intersects the start of the rzero partition. All sub-bands after this one
-    // are zeroed and do-not need anti-aliasing.
-    let sb_rzero = channel.rzero / 18;
+    // The number of potentially non-zero sub-bands. All sub-bands from this index onwards are
+    // zeroed.
+    let sb_rzero = channel.rzero.div_ceil(18);
 
     // The anti-aliasing filter must be applied up-to the last non-zero sub-band. After
     // anti-aliasing, the first zeroed sub-band may have non-zero values "smeared" into it.
     // Therefore, the rzero must be updated.
-    channel.rzero = 18 * sb_limit.min(sb_rzero + 2);
+    channel.rzero = 18 * sb_limit.min(sb_rzero + 1);
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
