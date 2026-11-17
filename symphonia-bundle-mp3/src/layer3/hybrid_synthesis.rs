@@ -237,7 +237,7 @@ pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) 
     // The anti-aliasing filter must be applied up-to the last non-zero sub-band. After
     // anti-aliasing, the first zeroed sub-band may have non-zero values "smeared" into it.
     // Therefore, the rzero must be updated.
-    channel.rzero = 18 * sb_limit.min(sb_rzero + 2).min(32);
+    channel.rzero = 18 * sb_limit.min(sb_rzero + 2);
 
     // Anti-aliasing is performed using 8 butterfly calculations at the boundaries of ADJACENT
     // sub-bands. For each calculation, there are two samples: lower and upper. For each iteration,
