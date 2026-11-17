@@ -216,6 +216,10 @@ pub(super) fn reorder(header: &FrameHeader, channel: &mut GranuleChannel, buf: &
 
 /// Applies the anti-aliasing filter to sub-bands that are not part of short blocks.
 pub(super) fn antialias(channel: &mut GranuleChannel, samples: &mut [f32; 576]) {
+    if channel.rzero == 0 {
+        return;
+    }
+
     // The maximum number of sub-bands to anti-alias depends on block type.
     let sb_limit = match channel.block_type {
         // Short blocks are never anti-aliased.
