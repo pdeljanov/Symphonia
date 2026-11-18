@@ -502,6 +502,11 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
                 return Ok(None);
             }
         }
+        else if self.len == Some(self.reader.pos()) {
+            // An element of unknown size, such as the Segment of a live WebM stream, ends at the end
+            // of the document.
+            return Ok(None);
+        }
 
         // Get the current depth in the EBML document.
         let depth = self.depth();
