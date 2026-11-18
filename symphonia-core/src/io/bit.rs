@@ -878,6 +878,8 @@ impl<'a> BitReaderLtr<'a> {
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
+        debug_assert!(self.n_bits_left <= u64::BITS);
+
         let free_bytes = ((u64::BITS - self.n_bits_left) / u8::BITS) as usize;
         // Clamp to the input length to keep the slices below in bounds.
         let bytes_to_append = min(self.buf.len(), free_bytes);
@@ -1335,6 +1337,8 @@ impl<'a> BitReaderRtl<'a> {
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
+        debug_assert!(self.n_bits_left <= u64::BITS);
+
         let free_bytes = ((u64::BITS - self.n_bits_left) / u8::BITS) as usize;
         // Clamp to the input length to keep the slices below in bounds.
         let bytes_to_append = min(self.buf.len(), free_bytes);
