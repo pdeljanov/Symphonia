@@ -677,6 +677,23 @@ pub trait ReadBitsLtr: private::FetchBitsLtr {
         debug_assert!(k < u32::BITS);
 
         let bits = self.get_bits();
+
+        // On 32-bit targets, first try decoding from the upper 32 bits of the cache, where most
+        // codes fit. This avoids multi-word 64-bit arithmetic. On 64-bit targets, it's slower.
+        if cfg!(target_pointer_width = "32") {
+            let upper = (bits >> 32) as u32;
+            let len = upper.leading_zeros() + 1 + k;
+
+            if len <= u32::BITS && len <= self.num_bits_left() {
+                // The top `len` bits are the unary terminator, which has the value 1 << k,
+                // followed by the remainder. Both shifts are less than 32 bits since
+                // 1 <= len <= 32 and k < 32.
+                let code = upper >> (u32::BITS - len);
+                self.consume_bits(len);
+                return Ok(((len - 1 - k) << k) | (code ^ (1 << k)));
+            }
+        }
+
         let num_zeros = bits.leading_zeros();
 
         // Fast path: the whole code is in the cache.
@@ -1639,6 +1656,16 @@ mod tests {
         let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xfe]);
 
         assert_eq!(bs.read_rice(30).unwrap(), (1 << 30) - 1);
+
+        // Boundary tests: a 32-bit code (1 followed by a 31-bit remainder), and a 33-bit code
+        // (0 1 followed by a 31-bit remainder).
+        let mut bs = BitReaderLtr::new(&[0xff, 0xff, 0xff, 0xff]);
+
+        assert_eq!(bs.read_rice(31).unwrap(), (1 << 31) - 1);
+
+        let mut bs = BitReaderLtr::new(&[0b0111_1111, 0xff, 0xff, 0xff, 0b1000_0000]);
+
+        assert_eq!(bs.read_rice(31).unwrap(), u32::MAX);
 
         // Error tests.
         let mut bs = BitReaderLtr::new(&[]);
