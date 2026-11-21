@@ -934,6 +934,15 @@ impl private::FetchBitsLtr for BitReaderLtr<'_> {
     }
 
     fn fetch_bits(&mut self) -> io::Result<()> {
+        // Fast path: read a whole word. This avoids a variable-length copy, which may otherwise be
+        // a call to memcpy.
+        if let Some((word, rest)) = self.buf.split_first_chunk::<8>() {
+            self.bits = u64::from_be_bytes(*word);
+            self.n_bits_left = u64::BITS;
+            self.buf = rest;
+            return Ok(());
+        }
+
         let read_len = min(self.buf.len(), std::mem::size_of::<u64>());
 
         if read_len == 0 {
