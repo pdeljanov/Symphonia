@@ -179,4 +179,19 @@ impl ChannelPair {
             );
         }
     }
+
+    /// Synthesize channel `ch_index` (0, or 1 for a channel pair) of the element to `dst`.
+    pub fn synth_channel_to_buf(
+        &mut self,
+        dsp: &mut dsp::Dsp,
+        rate_idx: usize,
+        ch_index: usize,
+        dst: &mut [f32],
+    ) {
+        match ch_index {
+            0 => self.ics0.synth_channel(dsp, rate_idx, dst),
+            1 => self.ics1.synth_channel(dsp, rate_idx, dst),
+            _ => {}
+        }
+    }
 }
