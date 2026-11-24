@@ -7,7 +7,6 @@ categories = ["multimedia", "multimedia::audio", "multimedia::encoding", "multim
 keywords = ["audio", "codec", "decoder", "multimedia", "media"]
 # Common package metadata located in workspace Cargo.toml.
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true

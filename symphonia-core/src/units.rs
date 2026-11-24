@@ -1118,8 +1118,6 @@ impl fmt::Display for TimeBase {
 
 #[cfg(test)]
 mod tests {
-    use std::i64;
-
     use super::{Duration, Time, TimeBase, Timestamp};
 
     #[test]

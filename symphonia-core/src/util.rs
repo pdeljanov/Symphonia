@@ -277,7 +277,6 @@ pub mod clamp {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::{i8, i16, i32, i64, u8, u16, u32, u64};
 
         #[test]
         fn verify_clamp() {

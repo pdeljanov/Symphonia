@@ -350,7 +350,7 @@ impl PacketInfo {
 
         // Atleast one block must be present per packet.
         let max_blocks_per_packet = match NonZero::new(
-            frames_per_block.max(MAX_FRAMES_PER_PACKET).get() / frames_per_block.get(),
+            frames_per_block.max(MAX_FRAMES_PER_PACKET).get() / frames_per_block,
         ) {
             Some(value) => value,
             _ => return decode_error("riff: max blocks per packet is 0"),

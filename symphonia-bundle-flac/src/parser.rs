@@ -639,11 +639,7 @@ fn strict_frame_header_check(
         ChannelAssignment::RightSide => 2,
     };
 
-    if num_frame_channels != stream_info.channels.count() as u32 {
-        return false;
-    }
-
-    true
+    num_frame_channels == stream_info.channels.count() as u32
 }
 
 #[inline(always)]

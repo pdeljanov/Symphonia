@@ -24,6 +24,11 @@ mod no_simd;
 )))]
 pub use no_simd::*;
 
+// WORKAROUND: When SIMD is enabled, lazy_static becomes an unused dependency since it is only used
+// in the no-SIMD FFT implementation.
+#[cfg(any(feature = "opt-simd-sse", feature = "opt-simd-avx", feature = "opt-simd-neon"))]
+use lazy_static as _;
+
 /// The maximum supported FFT size.
 pub const MAX_SIZE: usize = 1 << 16;
 

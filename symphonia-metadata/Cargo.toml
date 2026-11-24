@@ -7,7 +7,6 @@ categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
 keywords = ["multimedia", "media", "metadata", "id3v1", "id3v2"]
 # Common package metadata located in workspace Cargo.toml.
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true

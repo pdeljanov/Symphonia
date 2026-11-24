@@ -6,7 +6,6 @@ publish = false
 default-run = "symphonia-play"
 # Common package metadata located in workspace Cargo.toml.
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true

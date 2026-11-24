@@ -91,12 +91,12 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
 
         // When window switching is used, there are only two regions, therefore there are only
         // two table selectors.
-        for i in 0..2 {
-            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
+        for select in &mut channel.table_select[0..2] {
+            *select = bs.read_bits_leq32(5)? as u8;
         }
 
-        for i in 0..3 {
-            channel.subblock_gain[i] = bs.read_bits_leq32(3)? as u8;
+        for gain in &mut channel.subblock_gain[0..3] {
+            *gain = bs.read_bits_leq32(3)? as u8;
         }
 
         // When using window switching, the boundaries of region[0..3] are set implicitly according
@@ -150,8 +150,8 @@ fn read_granule_channel_side_info<B: ReadBitsLtr>(
         // If window switching is not used, the block type is always Long.
         channel.block_type = BlockType::Long;
 
-        for i in 0..3 {
-            channel.table_select[i] = bs.read_bits_leq32(5)? as u8;
+        for select in &mut channel.table_select[0..3] {
+            *select = bs.read_bits_leq32(5)? as u8;
         }
 
         // When window switching is not used, only LONG scale-factor bands are used for each region.
@@ -263,8 +263,8 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
         let n_sfb = if is_mixed { 8 + 3 * 3 } else { 6 * 3 };
 
         if slen1 > 0 {
-            for sfb in 0..n_sfb {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen1)? as u8;
+            for sf in &mut channel.scalefacs[0..n_sfb] {
+                *sf = bs.read_bits_leq32(slen1)? as u8;
             }
             bits_read += n_sfb * slen1 as usize;
         }
@@ -273,8 +273,8 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
         // 11..17 (scalefacs[17..35]) if the block is mixed, or bands 6..12 (scalefacs[18..36]) if
         // not. Each band has a window of 3 with each scale factor being slen2 bits long.
         if slen2 > 0 {
-            for sfb in n_sfb..(n_sfb + (6 * 3)) {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen2)? as u8;
+            for sf in &mut channel.scalefacs[n_sfb..n_sfb + (6 * 3)] {
+                *sf = bs.read_bits_leq32(slen2)? as u8;
             }
             bits_read += 6 * 3 * slen2 as usize;
         }
@@ -305,9 +305,8 @@ pub(super) fn read_scale_factors_mpeg1<B: ReadBitsLtr>(
             // Otherwise, read the scale factors from the bitstream. Since scale factors are already
             // zeroed out by default, don't do anything if slen is 0.
             else if slen > 0 {
-                for sfb in *start..*end {
-                    frame_data.granules[gr].channels[ch].scalefacs[sfb] =
-                        bs.read_bits_leq32(slen)? as u8;
+                for sf in &mut frame_data.granules[gr].channels[ch].scalefacs[*start..*end] {
+                    *sf = bs.read_bits_leq32(slen)? as u8;
                 }
                 bits_read += slen as usize * (end - start);
             }
@@ -414,8 +413,8 @@ pub(super) fn read_scale_factors_mpeg2<B: ReadBitsLtr>(
         // slen == 0, but n_sfb > 0, then the those scale factors should be set to 0. Since all
         // scalefacs are preinitialized to 0, this process may be skipped.
         if slen > 0 {
-            for sfb in start..(start + n_sfb) {
-                channel.scalefacs[sfb] = bs.read_bits_leq32(slen)? as u8;
+            for sf in &mut channel.scalefacs[start..start + n_sfb] {
+                *sf = bs.read_bits_leq32(slen)? as u8;
             }
             bits_read += slen * n_sfb as u32;
         }

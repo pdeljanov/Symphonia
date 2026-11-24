@@ -5,7 +5,6 @@ authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
 publish = false
 # Common package metadata located in workspace Cargo.toml.
 edition.workspace = true
-homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true

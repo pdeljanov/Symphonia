@@ -657,7 +657,7 @@ fn verify_rice_signed_to_i32() {
     assert_eq!(rice_signed_to_i32(9), -5);
     assert_eq!(rice_signed_to_i32(10), 5);
 
-    assert_eq!(rice_signed_to_i32(u32::max_value()), -2_147_483_648);
+    assert_eq!(rice_signed_to_i32(u32::MAX), -2_147_483_648);
 }
 
 fn fixed_predict(order: u32, buf: &mut [i32]) {
