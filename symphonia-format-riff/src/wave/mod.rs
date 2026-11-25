@@ -22,9 +22,11 @@ use symphonia_core::support_format;
 use log::{debug, error};
 
 use crate::common::{
-    ByteOrder, ChunksReader, PacketInfo, append_data_params, append_format_params, next_packet,
+    ByteOrder, ChunksReader, FormatData, PacketInfo, append_data_params, append_format_params,
+    next_packet,
 };
 mod chunks;
+mod mpeg;
 use chunks::*;
 
 /// WAVE is actually a RIFF stream, with a "RIFF" ASCII stream marker.
@@ -56,6 +58,11 @@ pub struct WavReader<'s> {
     packet_info: PacketInfo,
     data_start_pos: u64,
     data_end_pos: Option<u64>,
+    /// True when the data chunk holds an MPEG audio elementary stream (`WAVE_FORMAT_MPEGLAYER3`),
+    /// which is packetized frame-by-frame rather than by the block-based `packet_info`.
+    is_mpeg: bool,
+    /// Running presentation timestamp (in samples) for the next MPEG packet.
+    mpeg_ts: u64,
 }
 
 impl<'s> WavReader<'s> {
@@ -97,6 +104,7 @@ impl<'s> WavReader<'s> {
         let mut metadata: MetadataLog = Default::default();
         let mut packet_info = None;
         let mut fact = None;
+        let mut is_mpeg = false;
 
         loop {
             let chunk = riff_chunks.next(&mut mss)?;
@@ -111,6 +119,9 @@ impl<'s> WavReader<'s> {
             match chunk {
                 RiffWaveChunks::Format(fmt) => {
                     let format = fmt.parse(&mut mss)?;
+
+                    // MPEG audio in WAV is framed from the elementary stream, not by fixed blocks.
+                    is_mpeg = matches!(format.format_data, FormatData::Mpeg(_));
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
@@ -141,8 +152,27 @@ impl<'s> WavReader<'s> {
                     let data = dat.parse(&mut mss)?;
 
                     // Record the bounds of the data chunk.
-                    let data_start_pos = mss.pos();
+                    let mut data_start_pos = mss.pos();
                     let data_end_pos = data.len.map(|len| data_start_pos + u64::from(len));
+
+                    // For MPEG audio the elementary stream is authoritative for the exact codec
+                    // (Layer I/II/III) and sample rate, so refine the codec parameters from the
+                    // first confirmed frame. Rewind only that frame, so leading padding need not
+                    // fit in the lookback buffer (including on forward-only sources).
+                    if is_mpeg {
+                        if let Some((first, frame)) =
+                            mpeg::read_frame(&mut mss, data_end_pos.unwrap_or(u64::MAX))?
+                        {
+                            codec_params
+                                .for_codec(first.codec)
+                                .with_sample_rate(first.sample_rate)
+                                .with_max_frames_per_packet(first.samples_per_frame);
+                            data_start_pos = mss.pos() - frame.len() as u64;
+                            if mss.seek_buffered(data_start_pos) != data_start_pos {
+                                return seek_error(SeekErrorKind::Unseekable);
+                            }
+                        }
+                    }
 
                     // Create the track.
                     let mut track = Track::new(0);
@@ -159,9 +189,13 @@ impl<'s> WavReader<'s> {
                         append_fact_params(&mut track, fact);
                     }
 
-                    // Append Data chunk fields to track.
+                    // Append Data chunk fields to track. For MPEG audio the block-based frame count
+                    // would be meaningless (frames are variable-length), so leave the frame count
+                    // unset rather than derive a bogus duration from the byte length.
                     if let Some(data_len) = data.len {
-                        append_data_params(&mut track, u64::from(data_len), &packet_info);
+                        if !is_mpeg {
+                            append_data_params(&mut track, u64::from(data_len), &packet_info);
+                        }
                     }
 
                     // Instantiate the reader.
@@ -174,6 +208,8 @@ impl<'s> WavReader<'s> {
                         packet_info,
                         data_start_pos,
                         data_end_pos,
+                        is_mpeg,
+                        mpeg_ts: 0,
                     });
                 }
             }
@@ -228,6 +264,15 @@ impl FormatReader for WavReader<'_> {
     }
 
     fn next_packet(&mut self) -> Result<Option<Packet>> {
+        // MPEG audio in WAV is framed from the elementary stream, one MPEG frame per packet.
+        if self.is_mpeg {
+            return mpeg::next_packet(
+                &mut self.reader,
+                self.data_end_pos.unwrap_or(u64::MAX),
+                &mut self.mpeg_ts,
+            );
+        }
+
         next_packet(
             &mut self.reader,
             &self.packet_info,
@@ -284,6 +329,19 @@ impl FormatReader for WavReader<'_> {
 
         debug!("seeking to frame_ts={required_ts}");
 
+        if self.is_mpeg {
+            let actual_ts = mpeg::seek(
+                &mut self.reader,
+                self.data_end_pos.unwrap_or(u64::MAX),
+                self.data_start_pos,
+                &mut self.mpeg_ts,
+                required_ts.get() as u64,
+            )?;
+            let actual_ts = Timestamp::try_from(actual_ts)
+                .map_err(|_| Error::SeekError(SeekErrorKind::OutOfRange))?;
+            return Ok(SeekedTo { track_id: 0, actual_ts, required_ts });
+        }
+
         // WAVE is not internally packetized for PCM codecs. Packetization is simulated by trying to
         // read a constant number of samples or blocks every call to next_packet. Therefore, a
         // packet begins wherever the data stream is currently positioned. Since timestamps on
@@ -327,5 +385,270 @@ impl FormatReader for WavReader<'_> {
         Self: 's,
     {
         self.reader
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
+    use symphonia_core::formats::FormatReader;
+    use symphonia_core::units::Time;
+
+    use super::*;
+
+    /// A single MPEG-1 Layer III frame: 128 kbps, 44.1 kHz, stereo (417 bytes). The body is zeroed;
+    /// only framing is under test, not decoding.
+    fn mp3_frame() -> Vec<u8> {
+        let mut frame = vec![0u8; 417];
+        frame[0..4].copy_from_slice(&0xFFFB_9000u32.to_be_bytes());
+        frame
+    }
+
+    /// Wrap concatenated MPEG audio frames in a minimal RIFF/WAVE container whose `fmt ` chunk
+    /// declares `WAVE_FORMAT_MPEGLAYER3` (0x0055).
+    fn riff_mpeglayer3(frames: &[Vec<u8>]) -> Vec<u8> {
+        let data: Vec<u8> = frames.iter().flatten().copied().collect();
+
+        // MPEGLAYER3WAVEFORMAT: 16-byte WAVEFORMATEX base + 2-byte cbSize + 12-byte extension.
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&0x0055u16.to_le_bytes()); // wFormatTag
+        fmt.extend_from_slice(&2u16.to_le_bytes()); // nChannels
+        fmt.extend_from_slice(&44_100u32.to_le_bytes()); // nSamplesPerSec
+        fmt.extend_from_slice(&16_000u32.to_le_bytes()); // nAvgBytesPerSec
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // nBlockAlign
+        fmt.extend_from_slice(&0u16.to_le_bytes()); // wBitsPerSample
+        fmt.extend_from_slice(&12u16.to_le_bytes()); // cbSize
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // wID (MPEG Layer 3)
+        fmt.extend_from_slice(&0u32.to_le_bytes()); // fdwFlags
+        fmt.extend_from_slice(&417u16.to_le_bytes()); // nBlockSize
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // nFramesPerBlock
+        fmt.extend_from_slice(&0u16.to_le_bytes()); // nCodecDelay
+
+        let mut body = Vec::new();
+        body.extend_from_slice(b"WAVE");
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&(fmt.len() as u32).to_le_bytes());
+        body.extend_from_slice(&fmt);
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        body.extend_from_slice(&data);
+
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn reads_mpeg_layer3_in_wav() {
+        let frames = vec![mp3_frame(), mp3_frame()];
+        let bytes = riff_mpeglayer3(&frames);
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let mut reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        // The track is recognised as MP3 at 44.1 kHz.
+        let params = reader.tracks()[0].codec_params.as_ref().unwrap().audio().unwrap();
+        assert_eq!(params.codec, CODEC_ID_MP3);
+        assert_eq!(params.sample_rate, Some(44_100));
+
+        // Each MPEG frame is emitted as one packet, byte-for-byte, then the stream ends.
+        let packet = reader.next_packet().unwrap().unwrap();
+        assert_eq!(&packet.data[..], &frames[0][..]);
+        let packet = reader.next_packet().unwrap().unwrap();
+        assert_eq!(&packet.data[..], &frames[1][..]);
+        assert!(reader.next_packet().unwrap().is_none());
+    }
+
+    fn mpeg_reader(frames: &[Vec<u8>], seekable: bool) -> WavReader<'static> {
+        let bytes = Cursor::new(riff_mpeglayer3(frames));
+        let source: Box<dyn MediaSource> =
+            if seekable { Box::new(bytes) } else { Box::new(ReadOnlySource::new(bytes)) };
+        let mss = MediaSourceStream::new(source, Default::default());
+        WavReader::try_new(mss, FormatOptions::default()).expect("valid MPEG WAVE")
+    }
+
+    fn variable_frames() -> Vec<Vec<u8>> {
+        [(0xFFFB_9000u32, 417), (0xFFFB_B000, 626), (0xFFFB_9200, 418), (0xFFFB_9000, 417)]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (header, len))| {
+                let mut frame = vec![0; len];
+                frame[..4].copy_from_slice(&header.to_be_bytes());
+                frame[len - 1] = index as u8;
+                frame
+            })
+            .collect()
+    }
+
+    #[test]
+    fn preserves_first_frame_after_large_leading_padding() {
+        for seekable in [false, true] {
+            let frames = variable_frames();
+            let mut data = vec![vec![0; 256 * 1024]];
+            data.extend(frames.clone());
+            let mut reader = mpeg_reader(&data, seekable);
+            for (index, frame) in frames.iter().enumerate() {
+                let packet = reader.next_packet().expect("read packet").expect("complete frame");
+                assert_eq!(&packet.data[..], frame);
+                assert_eq!(packet.pts, Timestamp::from(index as u32 * 1152));
+            }
+            assert!(reader.next_packet().expect("end of data").is_none());
+        }
+    }
+
+    #[test]
+    fn ignores_false_sync_before_first_frame() {
+        // Also test a real header inside the false candidate's apparent payload.
+        for padding_len in [16, 700] {
+            let mut padding = vec![0; padding_len];
+            padding[..4].copy_from_slice(&0xFFF3_8000u32.to_be_bytes());
+            let frame = mp3_frame();
+            let mut reader = mpeg_reader(&[padding, frame.clone(), frame.clone()], false);
+            let params = reader.tracks()[0]
+                .codec_params
+                .as_ref()
+                .expect("params")
+                .audio()
+                .expect("audio params");
+            assert_eq!(params.sample_rate, Some(44_100));
+            for _ in 0..2 {
+                let packet = reader.next_packet().expect("read packet").expect("valid frame");
+                assert_eq!(&packet.data[..], &frame);
+            }
+            assert!(reader.next_packet().expect("end of data").is_none());
+        }
+    }
+
+    #[test]
+    fn seeks_mpeg_frames_with_variable_lengths() {
+        let frames = variable_frames();
+        for mode in [SeekMode::Accurate, SeekMode::Coarse] {
+            let mut reader = mpeg_reader(&frames, true);
+            reader.next_packet().expect("read packet").expect("first frame");
+            let required_ts = Timestamp::from(2400);
+            let seeked = reader
+                .seek(mode, SeekTo::Timestamp { ts: required_ts, track_id: 0 })
+                .expect("seek into third frame");
+            assert_eq!(seeked.required_ts, required_ts);
+            assert_eq!(seeked.actual_ts, Timestamp::from(2304));
+            let packet = reader.next_packet().expect("read packet").expect("third frame");
+            assert_eq!(packet.pts, seeked.actual_ts);
+            assert_eq!(&packet.data[..], &frames[2]);
+            let packet = reader.next_packet().expect("read packet").expect("fourth frame");
+            assert_eq!(packet.pts, Timestamp::from(3456));
+            assert_eq!(&packet.data[..], &frames[3]);
+
+            let seeked = reader
+                .seek(mode, SeekTo::Timestamp { ts: Timestamp::ZERO, track_id: 0 })
+                .expect("seek back to start");
+            assert_eq!(seeked.actual_ts, Timestamp::ZERO);
+            let packet = reader.next_packet().expect("read packet").expect("first frame");
+            assert_eq!(packet.pts, Timestamp::ZERO);
+            assert_eq!(&packet.data[..], &frames[0]);
+        }
+    }
+
+    #[test]
+    fn seeks_forward_only_mpeg_stream() {
+        let frames = variable_frames();
+        let mut reader = mpeg_reader(&frames, false);
+        reader.next_packet().expect("read packet").expect("first frame");
+        assert!(matches!(
+            reader.seek(SeekMode::Accurate, SeekTo::Timestamp { ts: Timestamp::ZERO, track_id: 0 }),
+            Err(Error::SeekError(SeekErrorKind::ForwardOnly))
+        ));
+        let seeked = reader
+            .seek(SeekMode::Accurate, SeekTo::Timestamp { ts: Timestamp::from(2400), track_id: 0 })
+            .expect("forward seek");
+        let packet = reader.next_packet().expect("read packet").expect("third frame");
+        assert_eq!(seeked.actual_ts, Timestamp::from(2304));
+        assert_eq!(packet.pts, seeked.actual_ts);
+        assert_eq!(&packet.data[..], &frames[2]);
+        assert!(matches!(
+            reader.seek(
+                SeekMode::Accurate,
+                SeekTo::Timestamp { ts: Timestamp::from(10000), track_id: 0 }
+            ),
+            Err(Error::SeekError(SeekErrorKind::OutOfRange))
+        ));
+    }
+
+    #[test]
+    fn seeks_with_layer3_reservoir_preroll() {
+        for (header, len, duration, reservoir) in
+            [(0xFFFB_9000u32, 417, 1152u32, 511u16), (0xFFF3_8000, 208, 576, 255)]
+        {
+            for has_crc in [false, true] {
+                let header = if has_crc { header & !0x1_0000 } else { header };
+                let mut frame = vec![0; len];
+                frame[..4].copy_from_slice(&header.to_be_bytes());
+                let mut frames = vec![frame; 7];
+                let side_info = 4 + if has_crc { 2 } else { 0 };
+                if duration == 1152 {
+                    frames[3][side_info..side_info + 2]
+                        .copy_from_slice(&(reservoir << 7).to_be_bytes());
+                }
+                else {
+                    frames[3][side_info] = reservoir as u8;
+                }
+                for seekable in [false, true] {
+                    let mut reader = mpeg_reader(&frames, seekable);
+                    let seeked = reader
+                        .seek(
+                            SeekMode::Accurate,
+                            SeekTo::Timestamp {
+                                ts: Timestamp::from(3 * duration + 1),
+                                track_id: 0,
+                            },
+                        )
+                        .expect("seek with reservoir references");
+                    assert_eq!(seeked.actual_ts, Timestamp::from(duration));
+                    for index in 1..=3 {
+                        let packet = reader.next_packet().expect("read reference").expect("frame");
+                        assert_eq!(packet.pts, Timestamp::from(index as u32 * duration));
+                        assert_eq!(&packet.data[..], &frames[index]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seeks_mpeg_by_time_after_padding() {
+        let frames = variable_frames();
+        let mut data = vec![vec![0; 256 * 1024]];
+        data.extend(frames.clone());
+        let mut reader = mpeg_reader(&data, true);
+        let seeked = reader
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: Time::try_new(0, 55_000_000).expect("valid time"),
+                    track_id: None,
+                },
+            )
+            .expect("seek by time");
+        assert_eq!(seeked.actual_ts, Timestamp::from(2304));
+        let packet = reader.next_packet().expect("read packet").expect("third frame");
+        assert_eq!(packet.pts, seeked.actual_ts);
+        assert_eq!(&packet.data[..], &frames[2]);
+    }
+
+    #[test]
+    fn respects_data_end_and_truncated_final_frames() {
+        let frame = mp3_frame();
+        for tail in [Vec::new(), frame[..100].to_vec()] {
+            let mut bytes = riff_mpeglayer3(&[frame.clone(), tail]);
+            // Bytes outside the data chunk must not be used to confirm or complete audio frames.
+            bytes.extend_from_slice(&frame);
+            let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+            let mut reader = WavReader::try_new(mss, FormatOptions::default()).expect("MPEG WAVE");
+            let packet = reader.next_packet().expect("read packet").expect("complete frame");
+            assert_eq!(&packet.data[..], &frame);
+            assert!(reader.next_packet().expect("end of data").is_none());
+        }
     }
 }
