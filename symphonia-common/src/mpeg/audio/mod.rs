@@ -280,18 +280,25 @@ impl AudioSpecificConfig {
 
                 let depends_on_core = bs.read_bool()?;
 
-                if depends_on_core {
+                // Some encoders (for example, the one used for Audible audiobooks) set
+                // dependsOnCoreCoder but end the config without the coreCoderDelay that should
+                // follow. Other decoders read the missing bits as zeros, so do the same and treat
+                // the rest of the GASpecificConfig as absent instead of failing.
+                let truncated = depends_on_core && bs.bits_left() < 14 + 1;
+
+                if depends_on_core && !truncated {
                     let _delay = bs.read_bits_leq32(14)?;
                 }
 
-                let extension_flag = bs.read_bool()?;
+                let extension_flag = !truncated && bs.read_bool()?;
 
                 if asc.channels.is_none() {
                     return unsupported_error("common (mp4a): program config element");
                 }
 
-                if (asc.object_type == AudioObjectType::Scalable)
-                    || (asc.object_type == AudioObjectType::ErAacScalable)
+                if !truncated
+                    && ((asc.object_type == AudioObjectType::Scalable)
+                        || (asc.object_type == AudioObjectType::ErAacScalable))
                 {
                     let _layer = bs.read_bits_leq32(3)?;
                 }
@@ -481,5 +488,31 @@ pub fn get_audio_codec_profile(asc: &AudioSpecificConfig) -> Option<CodecProfile
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_lc_config() {
+        // AAC-LC, 44.1 kHz, mono, no core coder.
+        let asc = AudioSpecificConfig::read(&[0x12, 0x08]).unwrap();
+        assert_eq!(asc.object_type, AudioObjectType::Lc);
+        assert_eq!(asc.sample_rate, 44100);
+        assert_eq!(asc.channels, Some(layouts::CHANNEL_LAYOUT_MONO));
+        assert_eq!(asc.samples, 1024);
+    }
+
+    #[test]
+    fn read_lc_config_missing_core_coder_delay() {
+        // AAC-LC, 44.1 kHz, stereo, with dependsOnCoreCoder set but no coreCoderDelay, as found
+        // in Audible audiobooks.
+        let asc = AudioSpecificConfig::read(&[0x12, 0x12]).unwrap();
+        assert_eq!(asc.object_type, AudioObjectType::Lc);
+        assert_eq!(asc.sample_rate, 44100);
+        assert_eq!(asc.channels, Some(layouts::CHANNEL_LAYOUT_STEREO));
+        assert_eq!(asc.samples, 1024);
     }
 }
