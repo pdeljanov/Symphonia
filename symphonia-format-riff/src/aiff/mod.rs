@@ -224,7 +224,7 @@ impl<'s> AiffReader<'s> {
 
         // Append sound data chunk fields to track.
         if let Some(data_len) = ssnd.len {
-            append_data_params(&mut track, u64::from(data_len), &packet_info);
+            append_data_params(&mut track, u64::from(data_len), &packet_info)?;
         }
 
         Ok(AiffReader {
