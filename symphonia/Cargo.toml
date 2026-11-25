@@ -25,6 +25,7 @@ aac = ["dep:symphonia-codec-aac"]
 adpcm = ["dep:symphonia-codec-adpcm"]
 alac = ["dep:symphonia-codec-alac"]
 flac = ["dep:symphonia-bundle-flac"]
+wavpack = ["dep:symphonia-codec-wavpack"]
 caf = ["dep:symphonia-format-caf"]
 isomp4 = ["dep:symphonia-format-isomp4"]
 mkv = ["dep:symphonia-format-mkv"]
@@ -49,6 +50,7 @@ all-codecs = [
     "adpcm",
     "alac",
     "flac",
+    "wavpack",
     "mp1",
     "mp2",
     "mp3",
@@ -62,6 +64,7 @@ all-formats = [
     "isomp4",
     "mkv",
     "ogg",
+    "wavpack",
     "aiff",
     "wav",
 ]
@@ -144,6 +147,11 @@ optional = true
 [dependencies.symphonia-codec-vorbis]
 version = "0.6.1"
 path = "../symphonia-codec-vorbis"
+optional = true
+
+[dependencies.symphonia-codec-wavpack]
+version = "0.6.0"
+path = "../symphonia-codec-wavpack"
 optional = true
 
 [dependencies.symphonia-format-riff]
