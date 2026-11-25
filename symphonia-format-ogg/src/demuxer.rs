@@ -91,6 +91,9 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
+            // The previous physical stream has ended. Drop its logical streams so that running out
+            // of data while starting the next one is not mistaken for the end of the previous one.
+            self.streams.clear();
             self.start_new_physical_stream()?;
             return reset_error();
         }
@@ -108,7 +111,9 @@ impl<'s> OggReader<'s> {
     }
 
     fn have_all_streams_read_last_page(&self) -> bool {
-        self.streams.iter().all(|(_, stream)| stream.has_read_last_page().unwrap_or(true))
+        // No logical streams means a new physical stream failed to start.
+        !self.streams.is_empty()
+            && self.streams.iter().all(|(_, stream)| stream.has_read_last_page().unwrap_or(true))
     }
 
     fn peek_logical_packet(&self) -> Option<&Packet> {
