@@ -280,7 +280,9 @@ impl LogicalStream {
             let mut next_pkt_pts = page_start_ts;
 
             for packet in self.packets.iter_mut().skip(num_prev_packets) {
+                // Ogg audio packets are never reordered, so the DTS equals the PTS.
                 packet.pts = next_pkt_pts;
+                packet.dts = next_pkt_pts;
 
                 // The packet's duration is populated with the packet's decoded duration (includes
                 // delay and padding). Calculate the next packet's PTS. This is also the end PTS of

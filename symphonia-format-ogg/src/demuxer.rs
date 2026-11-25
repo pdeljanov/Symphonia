@@ -588,3 +588,54 @@ impl FormatReader for OggReader<'_> {
         self.reader
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::checksum::Crc32;
+
+    fn page(flags: u8, absgp: u64, seq: u32, packets: &[&[u8]]) -> Vec<u8> {
+        let mut page = b"OggS".to_vec();
+        page.push(0);
+        page.push(flags);
+        page.extend_from_slice(&absgp.to_le_bytes());
+        page.extend_from_slice(&1u32.to_le_bytes());
+        page.extend_from_slice(&seq.to_le_bytes());
+        page.extend_from_slice(&[0; 4]);
+        page.push(packets.len() as u8);
+        // Each packet is shorter than 255 bytes, so it uses a single lacing value.
+        page.extend(packets.iter().map(|p| p.len() as u8));
+        packets.iter().for_each(|p| page.extend_from_slice(p));
+
+        let mut crc = Crc32::new(0);
+        crc.process_buf_bytes(&page);
+        page[22..26].copy_from_slice(&crc.crc().to_le_bytes());
+        page
+    }
+
+    #[test]
+    fn packet_dts_equals_pts() {
+        // Mono Opus, no pre-skip, 48 kHz input, mapping family 0.
+        let mut opus_head = b"OpusHead".to_vec();
+        opus_head.extend_from_slice(&[1, 1, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0]);
+        let mut opus_tags = b"OpusTags".to_vec();
+        opus_tags.extend_from_slice(&[0; 8]);
+        // TOC byte 0xf8: CELT-only fullband, 20 ms (960 samples), one frame.
+        let audio: &[u8] = &[0xf8, 0xff, 0xfe];
+
+        let mut data = page(0x02, 0, 0, &[&opus_head]);
+        data.extend(page(0x00, 0, 1, &[&opus_tags]));
+        data.extend(page(0x04, 3 * 960, 2, &[audio, audio, audio]));
+
+        let mss = MediaSourceStream::new(Box::new(std::io::Cursor::new(data)), Default::default());
+        let mut reader = OggReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        let mut count = 0;
+        while let Some(packet) = reader.next_packet().unwrap() {
+            assert_eq!(packet.pts, Timestamp::from(count * 960));
+            assert_eq!(packet.dts, packet.pts);
+            count += 1;
+        }
+        assert_eq!(count, 3);
+    }
+}
