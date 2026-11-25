@@ -878,17 +878,36 @@ impl<'a> BitReaderLtr<'a> {
 impl private::FetchBitsLtr for BitReaderLtr<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
+        debug_assert!(self.n_bits_left <= u64::BITS);
 
-        let mut num_bytes_read = 0;
+        let free_bytes = ((u64::BITS - self.n_bits_left) / u8::BITS) as usize;
+        // Clamp to the input length to keep the slices below in bounds.
+        let bytes_to_append = min(self.buf.len(), free_bytes);
 
-        for &byte in self.buf.iter().take(num_bytes) {
-            self.bits |= u64::from(byte) << (u64::BITS - 8 - self.n_bits_left);
-            self.n_bits_left += 8;
-            num_bytes_read += 1;
+        // Return early to avoid needing checked shift operations in the full-word fetch, a
+        // zero-byte refill would shift the mask by 64.
+        if bytes_to_append == 0 {
+            return Ok(());
         }
 
-        self.buf = &self.buf[num_bytes_read..];
+        // Load a full word if available.
+        if let Some(&bytes) = self.buf.first_chunk() {
+            let bits_to_append = bytes_to_append as u32 * u8::BITS;
+            // We load eight bytes but may consume fewer. Mask the extra bytes before shifting,
+            // since n_bits_left is not necessarily aligned to 8. Unused bits must stay zeroed
+            // to not collide with subsequent refills.
+            let mask = u64::MAX << (u64::BITS - bits_to_append);
+            let word = u64::from_be_bytes(bytes) & mask;
+            self.bits |= word >> self.n_bits_left;
+            self.n_bits_left += bits_to_append;
+        }
+        else {
+            for &byte in &self.buf[..bytes_to_append] {
+                self.bits |= u64::from(byte) << (u64::BITS - u8::BITS - self.n_bits_left);
+                self.n_bits_left += u8::BITS;
+            }
+        }
+        self.buf = &self.buf[bytes_to_append..];
 
         Ok(())
     }
@@ -1318,17 +1337,36 @@ impl<'a> BitReaderRtl<'a> {
 impl private::FetchBitsRtl for BitReaderRtl<'_> {
     #[inline]
     fn fetch_bits_partial(&mut self) -> io::Result<()> {
-        let num_bytes = (u64::BITS - self.n_bits_left) as usize >> 3;
+        debug_assert!(self.n_bits_left <= u64::BITS);
 
-        let mut num_bytes_read = 0;
+        let free_bytes = ((u64::BITS - self.n_bits_left) / u8::BITS) as usize;
+        // Clamp to the input length to keep the slices below in bounds.
+        let bytes_to_append = min(self.buf.len(), free_bytes);
 
-        for &byte in self.buf.iter().take(num_bytes) {
-            self.bits |= u64::from(byte) << self.n_bits_left;
-            self.n_bits_left += 8;
-            num_bytes_read += 1;
+        // Return early to avoid needing checked shift operations in the full-word fetch, a
+        // zero-byte refill would shift the mask by 64.
+        if bytes_to_append == 0 {
+            return Ok(());
         }
 
-        self.buf = &self.buf[num_bytes_read..];
+        // Load a full word if available.
+        if let Some(&bytes) = self.buf.first_chunk() {
+            let bits_to_append = bytes_to_append as u32 * u8::BITS;
+            // We load eight bytes but may consume fewer. Mask the extra bytes before shifting,
+            // since n_bits_left is not necessarily aligned to 8. Unused bits must stay zeroed
+            // to not collide with subsequent refills.
+            let mask = u64::MAX >> (u64::BITS - bits_to_append);
+            let word = u64::from_le_bytes(bytes) & mask;
+            self.bits |= word << self.n_bits_left;
+            self.n_bits_left += bits_to_append;
+        }
+        else {
+            for &byte in &self.buf[..bytes_to_append] {
+                self.bits |= u64::from(byte) << self.n_bits_left;
+                self.n_bits_left += u8::BITS;
+            }
+        }
+        self.buf = &self.buf[bytes_to_append..];
 
         Ok(())
     }
