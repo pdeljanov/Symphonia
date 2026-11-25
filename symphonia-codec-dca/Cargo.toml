@@ -1,0 +1,20 @@
+[package]
+name = "symphonia-codec-dca"
+description = "Pure Rust DTS Coherent Acoustics (DCA) decoder (a part of project Symphonia)."
+authors = ["Ruben Iskov <rubeniskov@gmail.com>"]
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "dts", "dca"]
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log = { workspace = true }
+lazy_static = { workspace = true }
+symphonia-core = { version = "0.6.0-alpha.1", path = "../symphonia-core" }
+symphonia-common = { version = "0.6.0-alpha.1", path = "../symphonia-common" }
