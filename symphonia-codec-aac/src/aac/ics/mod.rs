@@ -11,7 +11,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBitsLtr;
 use symphonia_core::io::vlc::{Codebook, Entry8x16};
 
@@ -25,7 +25,7 @@ use lazy_static::lazy_static;
 use log::debug;
 
 mod gain;
-mod ltp;
+mod pred;
 mod pulse;
 mod tns;
 
@@ -43,7 +43,7 @@ const POW43_TABLE_LEN: usize = 8192;
 
 lazy_static! {
     /// Pre-computed table of y = x^(4/3).
-    static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
+    pub static ref POW43_TABLE: Box<[f32; POW43_TABLE_LEN]> = {
         let table: Vec<f32> = (0..POW43_TABLE_LEN).map(|i| (i as f32).powf(4.0 / 3.0)).collect();
         table.into_boxed_slice().try_into().expect("vec initialized to correct table length")
     };
@@ -93,7 +93,7 @@ pub struct IcsInfo {
     pub num_windows: usize,
     pub max_sfb: usize,
     pub long_win: bool,
-    pub ltp: Option<ltp::LtpData>,
+    pub pred: Option<pred::PredictorData>,
 }
 
 impl IcsInfo {
@@ -108,13 +108,19 @@ impl IcsInfo {
             num_windows: 0,
             window_groups: 0,
             max_sfb: 0,
-            ltp: None,
+            pred: None,
             long_win: true,
         }
     }
 
     /// this method should be called from Ics::decode_info() which will perform additional validations for max_sfb
-    pub fn decode<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
+    pub fn decode<B: ReadBitsLtr>(
+        &mut self,
+        bs: &mut B,
+        aot: AudioObjectType,
+        max_pred_sfb: usize,
+    ) -> Result<()> {
+        self.pred = None;
         self.prev_window_sequence = self.window_sequence;
         self.prev_window_shape = self.window_shape;
 
@@ -161,7 +167,17 @@ impl IcsInfo {
             self.long_win = true;
             self.num_windows = 1;
             self.max_sfb = bs.read_bits_leq32(6)? as usize;
-            self.ltp = ltp::LtpData::read(bs)?;
+
+            // Prediction data.
+            if bs.read_bool()? {
+                match aot {
+                    AudioObjectType::Main => {
+                        self.pred =
+                            Some(pred::PredictorData::read(bs, self.max_sfb, max_pred_sfb)?);
+                    }
+                    _ => return unsupported_error("aac: long term prediction"),
+                }
+            }
         }
         Ok(())
     }
@@ -177,7 +193,8 @@ impl IcsInfo {
         self.prev_window_shape = prev_window_shape;
     }
 
-    fn get_group_start(&self, g: usize) -> usize {
+    #[inline(always)]
+    pub fn get_group_start(&self, g: usize) -> usize {
         if g == 0 {
             0
         }
@@ -203,8 +220,15 @@ pub struct Ics {
     num_sec: [usize; MAX_WINDOWS],
     pub scales: [[f32; MAX_SFBS]; MAX_WINDOWS],
     sbinfo: GASubbandInfo,
+    max_pred_sfb: usize,
+    predictors: Option<pred::PredictorState>,
     pub coeffs: [f32; 1024],
     delay: [f32; 1024],
+    /// Coupling channel contributions to add before TNS, after TNS, and after the IMDCT.
+    cc_before_tns: Vec<f32>,
+    cc_after_tns: Vec<f32>,
+    cc_time: Vec<f32>,
+    cc_active: [bool; 3],
 }
 
 impl Ics {
@@ -221,14 +245,31 @@ impl Ics {
             scales: [[0.0; MAX_SFBS]; MAX_WINDOWS],
             num_sec: [0; MAX_WINDOWS],
             sbinfo,
+            max_pred_sfb: pred::max_pred_sfb(sbinfo.find_index()),
+            predictors: None,
             coeffs: [0.0; 1024],
             delay: [0.0; 1024],
+            cc_before_tns: Vec::new(),
+            cc_after_tns: Vec::new(),
+            cc_time: Vec::new(),
+            cc_active: [false; 3],
         }
+    }
+
+    /// The number of coefficients of a frame.
+    pub fn frame_len(&self) -> usize {
+        self.sbinfo.frame_len
+    }
+
+    /// The number of coefficients of a short window.
+    pub fn win_len(&self) -> usize {
+        self.sbinfo.frame_len / 8
     }
 
     pub fn reset(&mut self) {
         self.info = IcsInfo::new();
         self.delay = [0.0; 1024];
+        self.predictors = None;
     }
 
     fn decode_section_data<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
@@ -297,8 +338,8 @@ impl Ics {
         self.sfb_cb[g][sfb] == INTENSITY_HCB
     }
 
-    pub fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B) -> Result<()> {
-        self.info.decode(bs)?;
+    pub fn decode_info<B: ReadBitsLtr>(&mut self, bs: &mut B, aot: AudioObjectType) -> Result<()> {
+        self.info.decode(bs, aot, self.max_pred_sfb)?;
 
         // validate info.max_sfb - it should not be bigger than bands array len - 1
         if self.info.max_sfb + 1 > self.get_bands().len() {
@@ -358,6 +399,7 @@ impl Ics {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn get_bands(&self) -> &'static [usize] {
         if self.info.long_win { self.sbinfo.long_bands } else { self.sbinfo.short_bands }
     }
@@ -367,6 +409,7 @@ impl Ics {
         self.coeffs.fill(0.0);
 
         let bands = self.get_bands();
+        let short_len = self.win_len();
 
         for g in 0..self.info.window_groups {
             let cur_w = self.info.get_group_start(g);
@@ -379,7 +422,7 @@ impl Ics {
                 let scale = self.scales[g][sfb];
 
                 for w in cur_w..next_w {
-                    let dst = &mut self.coeffs[start + w * 128..end + w * 128];
+                    let dst = &mut self.coeffs[start + w * short_len..end + w * short_len];
 
                     // Derived from ISO/IEC-14496-3 Table 4.151.
                     match cb_idx {
@@ -419,7 +462,7 @@ impl Ics {
         // If a common window is used, a common ICS info was decoded previously.
         if !common_window {
             // do not call self.info.decode() as it will skip required validations present in the decode_info()
-            self.decode_info(bs)?;
+            self.decode_info(bs, aot)?;
         }
 
         self.decode_section_data(bs)?;
@@ -430,7 +473,7 @@ impl Ics {
 
         validate!(self.pulse.is_none() || self.info.long_win);
 
-        let is_aac_lc = aot == AudioObjectType::Lc;
+        let is_aac_lc = matches!(aot, AudioObjectType::Lc | AudioObjectType::ErAacLc);
 
         self.tns = tns::Tns::read(bs, &self.info, is_aac_lc)?;
 
@@ -443,28 +486,115 @@ impl Ics {
         }
 
         self.decode_spectrum(bs, lcg)?;
+
+        if aot == AudioObjectType::Main {
+            let predictors = self.predictors.get_or_insert_with(pred::PredictorState::new);
+
+            if self.info.long_win {
+                let bands = self.sbinfo.long_bands;
+                predictors.apply_long(
+                    &mut self.coeffs,
+                    bands,
+                    self.max_pred_sfb,
+                    self.info.pred.as_ref(),
+                );
+            }
+            else {
+                predictors.reset();
+            }
+        }
+
         Ok(())
     }
 
-    pub fn synth_channel(&mut self, dsp: &mut dsp::Dsp, rate_idx: usize, dst: &mut [f32]) {
+    /// Add `gain * spectrum` of a coupling channel to the spectrum of this channel, before or
+    /// after the TNS filter of this channel is applied.
+    pub fn add_coupling_spectrum(&mut self, after_tns: bool, spectrum: &[f32], gain: &[f32]) {
+        let frame_len = self.frame_len();
+        let (acc, index) =
+            if after_tns { (&mut self.cc_after_tns, 1) } else { (&mut self.cc_before_tns, 0) };
+
+        acc.resize(frame_len, 0.0);
+        for ((a, &s), &g) in acc.iter_mut().zip(spectrum).zip(gain) {
+            *a += s * g;
+        }
+        self.cc_active[index] = true;
+    }
+
+    /// Add `gain * signal` of an independently switched coupling channel to the output of this
+    /// channel.
+    pub fn add_coupling_time(&mut self, signal: &[f32], gain: f32) {
+        self.cc_time.resize(self.frame_len(), 0.0);
+        for (a, &s) in self.cc_time.iter_mut().zip(signal) {
+            *a += s * gain;
+        }
+        self.cc_active[2] = true;
+    }
+
+    /// Prepare the spectrum of a coupling channel, `coeffs`, for use by the channels that it is
+    /// coupled to, with the TNS filter applied if `after_tns`.
+    pub fn prepare_coupling_spectrum(&mut self, rate_idx: usize, after_tns: bool) {
         let bands = self.get_bands();
 
         if let Some(pulse) = &self.pulse {
             pulse.synth(bands, &self.scales, &mut self.coeffs);
         }
 
-        if let Some(tns) = &self.tns {
-            tns.synth(&self.info, bands, rate_idx, &mut self.coeffs);
+        if after_tns {
+            if let Some(tns) = &self.tns {
+                tns.synth(&self.info, bands, rate_idx, self.win_len(), &mut self.coeffs);
+            }
+        }
+    }
+
+    /// Add the accumulated spectrum of the coupling channels with the index `index` to the
+    /// coefficients, and clear the accumulator.
+    fn merge_coupling_spectrum(&mut self, index: usize) {
+        if !self.cc_active[index] {
+            return;
+        }
+        self.cc_active[index] = false;
+
+        let acc = if index == 0 { &mut self.cc_before_tns } else { &mut self.cc_after_tns };
+        for (c, a) in self.coeffs.iter_mut().zip(acc.iter_mut()) {
+            *c += *a;
+            *a = 0.0;
+        }
+    }
+
+    #[inline]
+    pub fn synth_channel(&mut self, dsp: &mut dsp::Dsp, rate_idx: usize, dst: &mut [f32]) {
+        let bands = self.get_bands();
+        let frame_len = self.frame_len();
+
+        if let Some(pulse) = &self.pulse {
+            pulse.synth(bands, &self.scales, &mut self.coeffs);
         }
 
+        self.merge_coupling_spectrum(0);
+
+        if let Some(tns) = &self.tns {
+            tns.synth(&self.info, bands, rate_idx, self.win_len(), &mut self.coeffs);
+        }
+
+        self.merge_coupling_spectrum(1);
+
         dsp.synth(
-            &self.coeffs,
-            &mut self.delay,
+            &self.coeffs[..frame_len],
+            &mut self.delay[..frame_len],
             self.info.window_sequence,
             self.info.window_shape,
             self.info.prev_window_shape,
             dst,
         );
+
+        if self.cc_active[2] {
+            self.cc_active[2] = false;
+            for (d, s) in dst.iter_mut().zip(self.cc_time.iter_mut()) {
+                *d += *s;
+                *s = 0.0;
+            }
+        }
     }
 }
 
@@ -524,16 +654,14 @@ fn decode_quads_signed<B: ReadBitsLtr>(
     scale: f32,
     dst: &mut [f32],
 ) -> Result<()> {
-    // Table of dequantized samples for all possible quantized values.
-    let iquant = [-scale, 0.0, scale];
-
     for out in dst.chunks_exact_mut(4) {
         let (a, b, c, d) = cb.read_quant(bs)?;
 
-        out[0] = iquant[a as usize];
-        out[1] = iquant[b as usize];
-        out[2] = iquant[c as usize];
-        out[3] = iquant[d as usize];
+        // The quantized values 0, 1, and 2 represent -1, 0, and 1.
+        out[0] = (a as f32 - 1.0) * scale;
+        out[1] = (b as f32 - 1.0) * scale;
+        out[2] = (c as f32 - 1.0) * scale;
+        out[3] = (d as f32 - 1.0) * scale;
     }
     Ok(())
 }

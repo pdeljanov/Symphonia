@@ -176,6 +176,12 @@ impl LogicalStream {
             // types of packet data.
             match self.mapper.map_packet(&data) {
                 Ok(MapResult::StreamData { dur, discard }) => {
+                    // Only the packets of the first page can be delay frames. This distinguishes
+                    // a seek to the start of the stream from a seek to another position.
+                    let is_start_page =
+                        self.start_bound.is_none_or(|bound| bound.seq == page.header.sequence);
+                    let discard = if is_start_page { discard } else { Duration::ZERO };
+
                     total_pkt_dur = total_pkt_dur.saturating_add(dur);
                     total_pkt_discard = total_pkt_discard.saturating_add(discard);
 
@@ -280,7 +286,9 @@ impl LogicalStream {
             let mut next_pkt_pts = page_start_ts;
 
             for packet in self.packets.iter_mut().skip(num_prev_packets) {
+                // Ogg audio packets are never reordered, so the DTS equals the PTS.
                 packet.pts = next_pkt_pts;
+                packet.dts = next_pkt_pts;
 
                 // The packet's duration is populated with the packet's decoded duration (includes
                 // delay and padding). Calculate the next packet's PTS. This is also the end PTS of

@@ -112,3 +112,219 @@ name = "demux_caf"
 path = "fuzz_targets/demux_caf.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fmtdec_ape"
+path = "fuzz_targets/fmtdec_ape.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_tta"
+path = "fuzz_targets/fmtdec_tta.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_adx"
+path = "fuzz_targets/fmtdec_adx.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_sbc"
+path = "fuzz_targets/fmtdec_sbc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_dfpwm"
+path = "fuzz_targets/fmtdec_dfpwm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_truehd"
+path = "fuzz_targets/fmtdec_truehd.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_ac3"
+path = "fuzz_targets/fmtdec_ac3.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_dca"
+path = "fuzz_targets/fmtdec_dca.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_wavpack"
+path = "fuzz_targets/fmtdec_wavpack.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_flv"
+path = "fuzz_targets/fmtdec_flv.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_ts"
+path = "fuzz_targets/fmtdec_ts.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_w64"
+path = "fuzz_targets/fmtdec_w64.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_adts"
+path = "fuzz_targets/fmtdec_adts.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_ogg"
+path = "fuzz_targets/fmtdec_ogg.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_wav"
+path = "fuzz_targets/fmtdec_wav.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_isomp4"
+path = "fuzz_targets/fmtdec_isomp4.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_mkv"
+path = "fuzz_targets/fmtdec_mkv.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_caf"
+path = "fuzz_targets/fmtdec_caf.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_aiff"
+path = "fuzz_targets/fmtdec_aiff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_flac"
+path = "fuzz_targets/fmtdec_flac.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fmtdec_mpa"
+path = "fuzz_targets/fmtdec_mpa.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_opus"
+path = "fuzz_targets/rawdec_opus.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_speex"
+path = "fuzz_targets/rawdec_speex.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_g723"
+path = "fuzz_targets/rawdec_g723.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_nellymoser"
+path = "fuzz_targets/rawdec_nellymoser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_ac3"
+path = "fuzz_targets/rawdec_ac3.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_dca"
+path = "fuzz_targets/rawdec_dca.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_sbc"
+path = "fuzz_targets/rawdec_sbc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_dfpwm"
+path = "fuzz_targets/rawdec_dfpwm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_truehd"
+path = "fuzz_targets/rawdec_truehd.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_adx"
+path = "fuzz_targets/rawdec_adx.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_tta"
+path = "fuzz_targets/rawdec_tta.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_ape"
+path = "fuzz_targets/rawdec_ape.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_wavpack"
+path = "fuzz_targets/rawdec_wavpack.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_swf_adpcm"
+path = "fuzz_targets/rawdec_swf_adpcm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rawdec_he_aac"
+path = "fuzz_targets/rawdec_he_aac.rs"
+test = false
+doc = false

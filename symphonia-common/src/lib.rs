@@ -13,5 +13,6 @@
 #![allow(clippy::manual_range_contains)]
 
 pub mod apple;
+pub mod frames;
 pub mod mpeg;
 pub mod xiph;

@@ -27,7 +27,7 @@ impl SttsAtom {
     /// is indexed relative to the `SttsAtom`. Complexity of this function in O(N).
     pub fn find_timing_for_sample(&self, sample_num: u32) -> Option<(u64, u32)> {
         let mut ts = 0;
-        let mut next_entry_first_sample = 0;
+        let mut next_entry_first_sample: u64 = 0;
 
         // The Stts atom compactly encodes a mapping between number of samples and sample duration.
         // Iterate through each entry until the entry containing the next sample is found. The next
@@ -35,11 +35,12 @@ impl SttsAtom {
         // the n-1 iterated entries, plus the product of the number of consumed samples in the n-th
         // iterated entry and sample duration.
         for entry in &self.entries {
-            next_entry_first_sample += entry.sample_count;
+            let entry_first_sample = next_entry_first_sample;
+            next_entry_first_sample += u64::from(entry.sample_count);
 
-            if sample_num < next_entry_first_sample {
-                let entry_sample_offset = sample_num + entry.sample_count - next_entry_first_sample;
-                ts += u64::from(entry.sample_delta) * u64::from(entry_sample_offset);
+            if u64::from(sample_num) < next_entry_first_sample {
+                let entry_sample_offset = u64::from(sample_num) - entry_first_sample;
+                ts += u64::from(entry.sample_delta) * entry_sample_offset;
 
                 return Some((ts, entry.sample_delta));
             }
@@ -54,18 +55,18 @@ impl SttsAtom {
     /// is indexed relative to the `SttsAtom`. Complexity of this function in O(N).
     pub fn find_sample_for_timestamp(&self, ts: u64) -> Option<u32> {
         let mut ts_accum = 0;
-        let mut sample_num = 0;
+        let mut sample_num: u64 = 0;
 
         for entry in &self.entries {
             let delta = u64::from(entry.sample_delta) * u64::from(entry.sample_count);
 
             if ts_accum + delta > ts {
-                sample_num += ((ts - ts_accum) / u64::from(entry.sample_delta)) as u32;
-                return Some(sample_num);
+                sample_num += (ts - ts_accum) / u64::from(entry.sample_delta);
+                return u32::try_from(sample_num).ok();
             }
 
             ts_accum += delta;
-            sample_num += entry.sample_count;
+            sample_num += u64::from(entry.sample_count);
         }
 
         None
@@ -99,5 +100,46 @@ impl Atom for SttsAtom {
         }
 
         Ok(SttsAtom { entries, total_duration })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stts(entries: &[(u32, u32)]) -> SttsAtom {
+        SttsAtom {
+            entries: entries
+                .iter()
+                .map(|&(sample_count, sample_delta)| SampleDurationEntry {
+                    sample_count,
+                    sample_delta,
+                })
+                .collect(),
+            total_duration: 0,
+        }
+    }
+
+    #[test]
+    fn find_timing_for_sample_does_not_overflow() {
+        let atom = stts(&[(1, 1024), (u32::MAX, 1024)]);
+        assert_eq!(atom.find_timing_for_sample(0), Some((0, 1024)));
+        assert_eq!(atom.find_timing_for_sample(1), Some((1024, 1024)));
+        assert_eq!(atom.find_timing_for_sample(u32::MAX), Some((u64::from(u32::MAX) * 1024, 1024)));
+
+        let atom = stts(&[(u32::MAX, 1024)]);
+        assert_eq!(
+            atom.find_timing_for_sample(u32::MAX - 1),
+            Some((u64::from(u32::MAX - 1) * 1024, 1024))
+        );
+        assert_eq!(atom.find_timing_for_sample(u32::MAX), None);
+    }
+
+    #[test]
+    fn find_sample_for_timestamp_does_not_overflow() {
+        let atom = stts(&[(u32::MAX, 1), (u32::MAX, 1)]);
+        assert_eq!(atom.find_sample_for_timestamp(10), Some(10));
+        assert_eq!(atom.find_sample_for_timestamp(u64::from(u32::MAX)), Some(u32::MAX));
+        assert_eq!(atom.find_sample_for_timestamp(u64::from(u32::MAX) + 5), None);
     }
 }

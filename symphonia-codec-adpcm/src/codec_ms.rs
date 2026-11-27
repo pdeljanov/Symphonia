@@ -20,6 +20,9 @@ const MS_ADAPTATION_TABLE: [i32; 16] = [
 const MS_ADAPT_COEFFS1: [i32; 7] = [256, 512, 0, 192, 240, 460, 392];
 const MS_ADAPT_COEFFS2: [i32; 7] = [0, -256, 0, 64, 0, -208, -232];
 
+/// The largest delta that a valid stream can reach.
+const MAX_DELTA: i32 = 1 << 24;
+
 const DELTA_MIN: i32 = 16;
 
 macro_rules! check_block_predictor {
@@ -89,12 +92,13 @@ impl AdpcmMsBlockStatus {
     fn expand_nibble(&mut self, byte: u8, nibble: Nibble) -> i32 {
         let nibble = nibble.get_nibble(byte);
         let signed_nibble = signed_nibble(nibble) as i32;
+        // A corrupt stream can grow the delta without bound, so avoid overflows.
         let predictor = ((self.sample1 * self.coeff1) + (self.sample2 * self.coeff2)) / 256
-            + signed_nibble * self.delta;
+            + signed_nibble.saturating_mul(self.delta);
         self.sample2 = self.sample1;
         self.sample1 = clamp_i16(predictor) as i32;
-        self.delta = (MS_ADAPTATION_TABLE[nibble as usize] * self.delta) / 256;
-        self.delta = self.delta.max(DELTA_MIN);
+        self.delta = (MS_ADAPTATION_TABLE[nibble as usize].saturating_mul(self.delta)) / 256;
+        self.delta = self.delta.clamp(DELTA_MIN, MAX_DELTA);
         from_i16_shift!(self.sample1)
     }
 }

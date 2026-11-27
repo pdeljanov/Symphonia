@@ -8,7 +8,8 @@
 use core::str;
 
 use log::debug;
-use symphonia_core::audio::{Channels, Position};
+use symphonia_core::audio::{Channels, Position, layouts};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ADPCM_IMA_QT;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
@@ -71,6 +72,7 @@ impl Atom for StsdAtom {
             | AtomType::AudioSampleEntryOpus
             | AtomType::AudioSampleEntryMp3
             | AtomType::AudioSampleEntryLpcm
+            | AtomType::AudioSampleEntryImaQt
             | AtomType::AudioSampleEntryQtWave
             | AtomType::AudioSampleEntryALaw
             | AtomType::AudioSampleEntryMuLaw
@@ -137,6 +139,9 @@ pub enum SampleEntry {
     Other,
 }
 
+/// The number of frames in a QuickTime IMA ADPCM block.
+const IMA_QT_FRAMES_PER_BLOCK: u64 = 64;
+
 /// Audio sample entry.
 #[derive(Debug, Default)]
 pub struct AudioSampleEntry {
@@ -148,6 +153,7 @@ pub struct AudioSampleEntry {
     pub bits_per_sample: Option<u32>,
     pub bits_per_coded_sample: Option<u32>,
     pub frames_per_packet: Option<u64>,
+    pub frames_per_block: Option<u64>,
     pub channels: Option<Channels>,
     pub verification_check: Option<VerificationCheck>,
     pub extra_data: Option<Box<[u8]>>,
@@ -163,6 +169,7 @@ impl AudioSampleEntry {
             bits_per_coded_sample: self.bits_per_coded_sample,
             channels: self.channels.clone(),
             max_frames_per_packet: self.frames_per_packet,
+            frames_per_block: self.frames_per_block,
             verification_check: self.verification_check,
             extra_data: self.extra_data.clone(),
             ..Default::default()
@@ -213,6 +220,14 @@ impl Atom for AudioSampleEntry {
                 // Version 0.
                 if is_pcm_codec {
                     entry.codec_id = pcm_codec_id(header.atom_type);
+
+                    // The lpcm atom type carries no fixed PCM codec for version 0 and 1
+                    // sample entries. Its PCM format is only described by the version 2
+                    // extension fields, so it is invalid here.
+                    if entry.codec_id == CODEC_ID_NULL_AUDIO {
+                        return decode_error("isomp4: lpcm audio sample entry must be version 2");
+                    }
+
                     let bits_per_sample = 8 * bytes_per_pcm_sample(entry.codec_id);
 
                     // Validate the codec-derived bytes-per-sample equals the declared
@@ -246,6 +261,13 @@ impl Atom for AudioSampleEntry {
 
                 if is_pcm_codec {
                     entry.codec_id = pcm_codec_id(header.atom_type);
+
+                    // Same as version 0: the lpcm atom type has no fixed PCM codec below
+                    // version 2.
+                    if entry.codec_id == CODEC_ID_NULL_AUDIO {
+                        return decode_error("isomp4: lpcm audio sample entry must be version 2");
+                    }
+
                     let codec_bytes_per_sample = bytes_per_pcm_sample(entry.codec_id);
 
                     // Validate the codec-derived bytes-per-sample equals the declared
@@ -336,6 +358,15 @@ impl Atom for AudioSampleEntry {
             }
         }
 
+        // A QuickTime IMA ADPCM sample entry has no codec-specific atom. Each packet is a block of
+        // 64 frames.
+        if header.atom_type == AtomType::AudioSampleEntryImaQt {
+            entry.codec_id = CODEC_ID_ADPCM_IMA_QT;
+            entry.frames_per_packet = Some(IMA_QT_FRAMES_PER_BLOCK);
+            entry.frames_per_block = Some(IMA_QT_FRAMES_PER_BLOCK);
+            entry.channels = Some(pcm_channels(entry.num_channels)?);
+        }
+
         // A MP3 sample entry has no codec-specific atom.
         if header.atom_type == AtomType::AudioSampleEntryMp3 {
             entry.codec_id = CODEC_ID_MP3;
@@ -358,10 +389,10 @@ fn pcm_codec_id(atype: AtomType) -> AudioCodecId {
         AtomType::AudioSampleEntryU8 => CODEC_ID_PCM_U8,
         AtomType::AudioSampleEntryS16Le => CODEC_ID_PCM_S16LE,
         AtomType::AudioSampleEntryS16Be => CODEC_ID_PCM_S16BE,
-        AtomType::AudioSampleEntryS24 => CODEC_ID_PCM_S24LE,
-        AtomType::AudioSampleEntryS32 => CODEC_ID_PCM_S32LE,
-        AtomType::AudioSampleEntryF32 => CODEC_ID_PCM_F32LE,
-        AtomType::AudioSampleEntryF64 => CODEC_ID_PCM_F64LE,
+        AtomType::AudioSampleEntryS24 => CODEC_ID_PCM_S24BE,
+        AtomType::AudioSampleEntryS32 => CODEC_ID_PCM_S32BE,
+        AtomType::AudioSampleEntryF32 => CODEC_ID_PCM_F32BE,
+        AtomType::AudioSampleEntryF64 => CODEC_ID_PCM_F64BE,
         _ => CODEC_ID_NULL_AUDIO,
     }
 }
@@ -434,6 +465,13 @@ fn pcm_channels(num_channels: u32) -> Result<Channels> {
     match num_channels {
         1 => Ok(Channels::Positioned(Position::FRONT_LEFT)),
         2 => Ok(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)),
+        // The channel layout atom is not parsed, so assume the common default layouts.
+        3 => Ok(layouts::CHANNEL_LAYOUT_3P0),
+        4 => Ok(layouts::CHANNEL_LAYOUT_4P0),
+        5 => Ok(layouts::CHANNEL_LAYOUT_5P0),
+        6 => Ok(layouts::CHANNEL_LAYOUT_5P1),
+        7 => Ok(layouts::CHANNEL_LAYOUT_6P1),
+        8 => Ok(layouts::CHANNEL_LAYOUT_7P1),
         _ => decode_error("isomp4: invalid number of channels"),
     }
 }
@@ -740,5 +778,158 @@ impl Atom for PaspAtom {
             vert_off_n: it.read_u32()?,
             vert_off_d: it.read_u32()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::IsoMp4Reader;
+    use std::io::Cursor;
+    use symphonia_core::errors::Error;
+    use symphonia_core::formats::FormatOptions;
+    use symphonia_core::io::{MediaSourceStream, MediaSourceStreamOptions};
+
+    /// Wrap `body` in an ISO-BMFF atom with the given four-cc.
+    fn atom(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8 + body.len());
+        buf.extend_from_slice(&(body.len() as u32 + 8).to_be_bytes());
+        buf.extend_from_slice(fourcc);
+        buf.extend_from_slice(body);
+        buf
+    }
+
+    /// Build a minimal MP4 containing a single audio track whose sample description
+    /// entry uses the given atom type and sample entry version.
+    fn mp4_with_audio_sample_entry(entry_type: &[u8; 4], version: u16) -> Vec<u8> {
+        // Audio sample entry body.
+        let mut entry = Vec::new();
+        entry.extend_from_slice(&[0; 6]); // Reserved.
+        entry.extend_from_slice(&1u16.to_be_bytes()); // Data reference index.
+        entry.extend_from_slice(&version.to_be_bytes());
+        entry.extend_from_slice(&[0; 6]); // Revision level + vendor.
+        entry.extend_from_slice(&2u16.to_be_bytes()); // Channel count.
+        entry.extend_from_slice(&16u16.to_be_bytes()); // Sample size.
+        entry.extend_from_slice(&[0; 4]); // Compression id + packet size.
+        entry.extend_from_slice(&(44100u32 << 16).to_be_bytes()); // Sample rate (16.16).
+
+        match version {
+            1 => {
+                entry.extend_from_slice(&1u32.to_be_bytes()); // Frames per packet.
+                entry.extend_from_slice(&2u32.to_be_bytes()); // Bytes per PCM sample.
+                entry.extend_from_slice(&[0; 8]); // Bytes per frame + unused.
+            }
+            2 => {
+                entry.extend_from_slice(&[0; 4]); // Reserved.
+                entry.extend_from_slice(&44100f64.to_be_bytes()); // Sample rate.
+                entry.extend_from_slice(&2u32.to_be_bytes()); // Channel count.
+                entry.extend_from_slice(&0x7f00_0000u32.to_be_bytes()); // Constant.
+                entry.extend_from_slice(&16u32.to_be_bytes()); // Bits per sample.
+                entry.extend_from_slice(&4u32.to_be_bytes()); // LPCM flags (signed int).
+                entry.extend_from_slice(&0u32.to_be_bytes()); // Bytes per packet.
+                entry.extend_from_slice(&1u32.to_be_bytes()); // LPCM frames per packet.
+            }
+            _ => (),
+        }
+
+        // stsd atom with the sample entry as its single entry.
+        let mut stsd_body = vec![0; 4]; // Version + flags.
+        stsd_body.extend_from_slice(&1u32.to_be_bytes()); // Entry count.
+        stsd_body.extend_from_slice(&atom(entry_type, &entry));
+
+        // Sample table atom with the remaining (empty) mandatory tables.
+        let stbl = atom(
+            b"stbl",
+            &[
+                atom(b"stsd", &stsd_body),
+                atom(b"stts", &[0; 8]),
+                atom(b"stsc", &[0; 8]),
+                atom(b"stsz", &[0; 12]),
+            ]
+            .concat(),
+        );
+
+        let minf = atom(b"minf", &[atom(b"smhd", &[0; 8]), stbl].concat());
+
+        // mdhd atom (version 0).
+        let mut mdhd_body = vec![0; 4]; // Version + flags.
+        mdhd_body.extend_from_slice(&[0; 8]); // ctime + mtime.
+        mdhd_body.extend_from_slice(&44100u32.to_be_bytes()); // Timescale.
+        mdhd_body.extend_from_slice(&[0; 8]); // Duration + language + quality.
+        let mdhd = atom(b"mdhd", &mdhd_body);
+
+        // hdlr atom ("soun" handler).
+        let mut hdlr_body = vec![0; 8]; // Version + flags + component type.
+        hdlr_body.extend_from_slice(b"soun");
+        hdlr_body.extend_from_slice(&[0; 12]); // Component flags + flags mask.
+        let hdlr = atom(b"hdlr", &hdlr_body);
+
+        let mdia = atom(b"mdia", &[mdhd, hdlr, minf].concat());
+
+        // tkhd atom (version 0).
+        let mut tkhd_body = vec![0; 4]; // Version + flags.
+        tkhd_body.extend_from_slice(&[0; 8]); // ctime + mtime.
+        tkhd_body.extend_from_slice(&1u32.to_be_bytes()); // Track id.
+        tkhd_body.extend_from_slice(&[0; 8]); // Reserved + duration.
+        tkhd_body.extend_from_slice(&[0; 14]); // Reserved + layer + alt group + volume.
+        let tkhd = atom(b"tkhd", &tkhd_body);
+
+        let trak = atom(b"trak", &[tkhd, mdia].concat());
+
+        // mvhd atom (version 0).
+        let mut mvhd_body = vec![0; 4]; // Version + flags.
+        mvhd_body.extend_from_slice(&[0; 8]); // ctime + mtime.
+        mvhd_body.extend_from_slice(&1000u32.to_be_bytes()); // Timescale.
+        mvhd_body.extend_from_slice(&[0; 4]); // Duration.
+        mvhd_body.extend_from_slice(&0x0001_0000u32.to_be_bytes()); // Preferred rate 1.0.
+        mvhd_body.extend_from_slice(&0x0100u16.to_be_bytes()); // Preferred volume 1.0.
+        let mvhd = atom(b"mvhd", &mvhd_body);
+
+        let moov = atom(b"moov", &[mvhd, trak].concat());
+
+        // ftyp atom.
+        let mut ftyp_body = Vec::new();
+        ftyp_body.extend_from_slice(b"M4A ");
+        ftyp_body.extend_from_slice(&[0; 4]); // Minor version.
+        ftyp_body.extend_from_slice(b"M4A mp42"); // Compatible brands.
+
+        [atom(b"ftyp", &ftyp_body), moov].concat()
+    }
+
+    /// Probe a complete MP4 through the format reader.
+    fn probe(data: Vec<u8>) -> symphonia_core::errors::Result<IsoMp4Reader<'static>> {
+        let mss = MediaSourceStream::new(
+            Box::new(Cursor::new(data)),
+            MediaSourceStreamOptions::default(),
+        );
+        IsoMp4Reader::try_new(mss, FormatOptions::default())
+    }
+
+    #[test]
+    fn audio_sample_entry_lpcm_v0_is_rejected() {
+        // An lpcm atom type on a version 0 sample entry has no derivable PCM codec.
+        // Previously this reached an unreachable!() in bytes_per_pcm_sample and
+        // aborted the process (issue #560).
+        let result = probe(mp4_with_audio_sample_entry(b"lpcm", 0));
+        assert!(matches!(result, Err(Error::DecodeError(_))));
+    }
+
+    #[test]
+    fn audio_sample_entry_lpcm_v1_is_rejected() {
+        let result = probe(mp4_with_audio_sample_entry(b"lpcm", 1));
+        assert!(matches!(result, Err(Error::DecodeError(_))));
+    }
+
+    #[test]
+    fn audio_sample_entry_lpcm_v2_is_accepted() {
+        // Version 2 is the valid form of an lpcm sample entry.
+        let result = probe(mp4_with_audio_sample_entry(b"lpcm", 2));
+        assert!(result.is_ok(), "probe failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn audio_sample_entry_pcm_v0_is_accepted() {
+        // A PCM atom type with a fixed codec mapping remains valid at version 0.
+        let result = probe(mp4_with_audio_sample_entry(b"sowt", 0));
+        assert!(result.is_ok(), "probe failed: {:?}", result.err());
     }
 }

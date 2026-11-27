@@ -12,11 +12,13 @@ use std::num::NonZero;
 
 use symphonia_core::audio::Channels;
 use symphonia_core::codecs::audio::well_known::{
-    CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE,
-    CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE,
+    CODEC_ID_ADPCM_G722, CODEC_ID_ADPCM_G726, CODEC_ID_ADPCM_G726LE, CODEC_ID_ADPCM_IMA_WAV,
+    CODEC_ID_ADPCM_MS, CODEC_ID_ADPCM_YAMAHA, CODEC_ID_G723_1, CODEC_ID_PCM_ALAW,
+    CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE,
+    CODEC_ID_PCM_MULAW,
 };
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters};
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
 use symphonia_core::io::{MediaSourceStream, ReadBytes};
 
@@ -196,6 +198,8 @@ pub enum FormatData {
     Extensible(FormatExtensible),
     ALaw(FormatALaw),
     MuLaw(FormatMuLaw),
+    Mpeg(FormatMpeg),
+    Framed(FormatFramed),
 }
 
 pub struct FormatPcm {
@@ -211,9 +215,8 @@ pub struct FormatPcm {
 
 impl FormatPcm {
     pub fn make_packet_info(&self) -> Result<PacketInfo> {
-        let num_channels = self.channels.count() as u16;
-        let frame_len = (self.bits_per_sample / 8) * num_channels;
-        PacketInfo::without_blocks(u32::from(frame_len))
+        let frame_len = u32::from(self.bits_per_sample / 8) * self.channels.count() as u32;
+        PacketInfo::without_blocks(frame_len)
     }
 }
 
@@ -229,29 +232,53 @@ pub struct FormatAdpcm {
 
 impl FormatAdpcm {
     pub fn make_packet_info(&self) -> Result<PacketInfo> {
-        let num_channels = self.channels.count() as u16;
-        let bits_per_frame = (self.bits_per_sample * num_channels) as u64;
+        let num_channels = self.channels.count() as u64;
+        let bits_per_frame = u64::from(self.bits_per_sample) * num_channels;
+        let block_align = u64::from(self.block_align);
 
         match self.codec {
             CODEC_ID_ADPCM_MS => {
                 // Don't allow underflow to occur.
-                if 7 * num_channels > self.block_align {
+                if 7 * num_channels > block_align || bits_per_frame == 0 {
                     return decode_error("riff (adpcm_ms): block align too small");
                 }
-                let frames_per_block =
-                    (8 * u64::from(self.block_align - 7 * num_channels)) / bits_per_frame + 2;
+                let frames_per_block = (8 * (block_align - 7 * num_channels)) / bits_per_frame + 2;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
             CODEC_ID_ADPCM_IMA_WAV => {
                 // Don't allow underflow to occur.
-                if 4 * num_channels > self.block_align {
+                if 4 * num_channels > block_align || bits_per_frame == 0 {
                     return decode_error("riff (adpcm_ima_wav): block align too small");
                 }
-                let frames_per_block =
-                    (8 * u64::from(self.block_align - 4 * num_channels)) / bits_per_frame + 1;
+                let frames_per_block = (8 * (block_align - 4 * num_channels)) / bits_per_frame + 1;
                 PacketInfo::with_blocks(self.block_align, frames_per_block)
             }
-            _ => unimplemented!("incomplete new adpcm codec"),
+            CODEC_ID_ADPCM_G722 => {
+                // Two samples per byte.
+                PacketInfo::with_blocks(
+                    self.block_align.max(1),
+                    2 * u64::from(self.block_align.max(1)),
+                )
+            }
+            CODEC_ID_ADPCM_YAMAHA => {
+                // Two samples per byte, shared by the channels.
+                PacketInfo::with_blocks(
+                    self.block_align.max(1),
+                    2 * u64::from(self.block_align.max(1)) / num_channels.max(1),
+                )
+            }
+            CODEC_ID_ADPCM_G726 | CODEC_ID_ADPCM_G726LE => {
+                // Eight codes pack into a whole number of bytes.
+                if !(2..=5).contains(&self.bits_per_sample) {
+                    return decode_error("riff (adpcm_g726): invalid bits per sample");
+                }
+                PacketInfo::with_blocks(self.bits_per_sample, 8)
+            }
+            CODEC_ID_G723_1 => {
+                // A block is a frame of 30 ms at 8 kHz.
+                PacketInfo::with_blocks(self.block_align.max(1), 240)
+            }
+            _ => unsupported_error("riff: unsupported adpcm codec"),
         }
     }
 }
@@ -324,6 +351,38 @@ impl FormatMuLaw {
     pub fn make_packet_info(&self) -> Result<PacketInfo> {
         let num_channels = self.channels.count() as u32;
         PacketInfo::without_blocks(num_channels)
+    }
+}
+
+pub struct FormatMpeg {
+    /// Channel bitmask.
+    pub channels: Channels,
+    /// Codec ID (`CODEC_ID_MP1`, `CODEC_ID_MP2`, or `CODEC_ID_MP3`).
+    pub codec: AudioCodecId,
+}
+
+impl FormatMpeg {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        // MPEG audio frames are variable-length and are packetized frame-by-frame directly from
+        // the data chunk (see `wave::mpeg`), so the block-based packet model is not used for
+        // framing. A unit block keeps the shared duration/seek helpers well-defined.
+        PacketInfo::without_blocks(1)
+    }
+}
+
+/// A compressed elementary stream that is framed from the data chunk (see `wave::framed`).
+pub struct FormatFramed {
+    /// Channel bitmask.
+    pub channels: Channels,
+    /// Codec ID.
+    pub codec: AudioCodecId,
+}
+
+impl FormatFramed {
+    pub fn make_packet_info(&self) -> Result<PacketInfo> {
+        // The frames are variable-length and are packetized directly from the data chunk, so the
+        // block-based packet model is not used for framing.
+        PacketInfo::without_blocks(1)
     }
 }
 
@@ -448,16 +507,24 @@ pub fn append_format_params(
         }
         FormatData::Adpcm(adpcm) => {
             codec_params.for_codec(adpcm.codec).with_channels(adpcm.channels);
+
+            if adpcm.codec == CODEC_ID_ADPCM_G726 || adpcm.codec == CODEC_ID_ADPCM_G726LE {
+                codec_params.with_bits_per_coded_sample(u32::from(adpcm.bits_per_sample));
+            }
         }
         FormatData::IeeeFloat(ieee) => {
             codec_params.for_codec(ieee.codec).with_channels(ieee.channels);
         }
         FormatData::Extensible(ext) => {
-            codec_params
-                .for_codec(ext.codec)
-                .with_bits_per_coded_sample(u32::from(ext.valid_bits_per_sample))
-                .with_bits_per_sample(u32::from(ext.valid_bits_per_sample))
-                .with_channels(ext.channels);
+            codec_params.for_codec(ext.codec).with_channels(ext.channels);
+
+            // A-law and mu-law samples are coded with 8 bits, but decode to 16-bit samples. As for
+            // the non-extensible A-law and mu-law formats, leave the bits per sample unset.
+            if ext.codec != CODEC_ID_PCM_ALAW && ext.codec != CODEC_ID_PCM_MULAW {
+                codec_params
+                    .with_bits_per_coded_sample(u32::from(ext.valid_bits_per_sample))
+                    .with_bits_per_sample(u32::from(ext.valid_bits_per_sample));
+            }
         }
         FormatData::ALaw(alaw) => {
             codec_params.for_codec(alaw.codec).with_channels(alaw.channels);
@@ -465,6 +532,39 @@ pub fn append_format_params(
         FormatData::MuLaw(mulaw) => {
             codec_params.for_codec(mulaw.codec).with_channels(mulaw.channels);
         }
+        FormatData::Mpeg(mpeg) => {
+            codec_params.for_codec(mpeg.codec).with_channels(mpeg.channels);
+        }
+        FormatData::Framed(framed) => {
+            codec_params.for_codec(framed.codec).with_channels(framed.channels);
+        }
+    }
+}
+
+#[test]
+fn test_append_format_params_ext_alaw_mulaw() {
+    use symphonia_core::audio::Position;
+
+    // WAVE_FORMAT_EXTENSIBLE A-law and mu-law, 8 bits per sample. The codec parameters must not
+    // state 8 bits per decoded sample, or the PCM decoder rejects them.
+    for (tag, codec) in [(0x06, CODEC_ID_PCM_ALAW), (0x07, CODEC_ID_PCM_MULAW)] {
+        let ext = FormatExtensible {
+            bits_per_sample: 8,
+            valid_bits_per_sample: 8,
+            channels: Channels::Positioned(Position::FRONT_CENTER),
+            sub_format_guid: [
+                tag, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38,
+                0x9b, 0x71,
+            ],
+            codec,
+        };
+
+        let mut codec_params = AudioCodecParameters::new();
+        append_format_params(&mut codec_params, FormatData::Extensible(ext), 8000);
+
+        assert_eq!(codec_params.codec, codec);
+        assert_eq!(codec_params.bits_per_sample, None);
+        assert_eq!(codec_params.bits_per_coded_sample, None);
     }
 }
 

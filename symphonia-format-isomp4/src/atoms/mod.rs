@@ -127,6 +127,7 @@ pub enum AtomType {
     AudioSampleEntryF32,
     AudioSampleEntryF64,
     AudioSampleEntryFlac,
+    AudioSampleEntryImaQt,
     AudioSampleEntryLpcm,
     AudioSampleEntryMp3,
     AudioSampleEntryMp4a,
@@ -310,6 +311,7 @@ impl From<[u8; 4]> for AtomType {
             b"hvc1" => AtomType::VisualSampleEntryHvc1,
             b"hvcC" => AtomType::HevcConfiguration,
             b"ilst" => AtomType::MetaList,
+            b"ima4" => AtomType::AudioSampleEntryImaQt,
             b"in24" => AtomType::AudioSampleEntryS24,
             b"in32" => AtomType::AudioSampleEntryS32,
             b"lpcm" => AtomType::AudioSampleEntryLpcm,
@@ -853,7 +855,9 @@ impl<R: ReadAtom> AtomIterator<R> {
         R: MediaSource,
     {
         // Must currently have a pending atom to allow resynchronizing to it.
-        let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;
+        if !self.reader.is_seekable() {
+            let _ = self.pending.as_ref().ok_or(AtomError::NoPendingAtom)?;
+        }
 
         // Seek to the desired position. Doesn't seek if already in position.
         self.seek_reader(pos)?;

@@ -1,0 +1,21 @@
+[package]
+name = "symphonia-format-flv"
+description = "Pure Rust Flash Video (FLV) demuxer (a part of project Symphonia)."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "demuxer", "flv", "flash"]
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log = { workspace = true }
+symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+symphonia-common = { version = "0.6.1", path = "../symphonia-common" }
+
+[lints]
+workspace = true

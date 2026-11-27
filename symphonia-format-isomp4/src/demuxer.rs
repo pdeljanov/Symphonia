@@ -16,6 +16,7 @@ use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Sc
 use symphonia_core::formats::well_known::FORMAT_ID_ISOMP4;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
+use symphonia_core::packet::PacketBuilder;
 use symphonia_core::units::Time;
 
 use std::collections::HashMap;
@@ -23,6 +24,7 @@ use std::io::{Seek, SeekFrom};
 use std::num::NonZero;
 use std::sync::Arc;
 
+use crate::atoms::elst::ElstEntry;
 use crate::atoms::{AtomError, AtomIterator, AtomType, ReadAtom};
 use crate::atoms::{FtypAtom, MetaAtom, MoofAtom, MoovAtom, SidxAtom, TrakAtom};
 use crate::stream::*;
@@ -46,10 +48,20 @@ pub struct TrackState {
     next_sample: u32,
     /// The current sample byte position relative to the start of the track.
     next_sample_pos: u64,
+    /// The media timestamp presented at presentation timestamp 0, derived from the edit list.
+    ts_offset: i64,
+    /// The presentation timestamp at which the presentation of the track ends, derived from the
+    /// edit list.
+    ts_end: Option<Timestamp>,
 }
 
 impl TrackState {
-    pub fn make(track_num: usize, trak: &TrakAtom, timespan: &TimeSpan) -> (Self, Track) {
+    pub fn make(
+        track_num: usize,
+        trak: &TrakAtom,
+        timespan: &TimeSpan,
+        movie_timescale: NonZero<u32>,
+    ) -> (Self, Track) {
         let mut track = Track::new(trak.tkhd.id);
 
         // Create the codec parameters using the sample description atom.
@@ -57,10 +69,24 @@ impl TrackState {
             track.with_codec_params(codec_params);
         }
 
+        // Get the presentation timing from the edit list, if supported.
+        let edit = edit_list_timing(trak, movie_timescale).unwrap_or_default();
+
+        // If the edit specifies the duration of the presentation, it supersedes the duration of
+        // all samples.
+        let duration = edit.duration.unwrap_or(timespan.duration);
+
         // Populate timing information.
         track
             .with_time_base(TimeBase::from_recip(timespan.timescale))
-            .with_duration(timespan.duration);
+            .with_duration(duration)
+            .with_start_ts(Timestamp::new(-edit.media_time));
+
+        if let Ok(delay) = u32::try_from(edit.media_time) {
+            if delay > 0 {
+                track.with_delay(delay);
+            }
+        }
 
         // If the track is an audio track, and the timescale is equal to the sample rate, then the
         // number of frames is equal to the duration. This is the case for almost all audio tracks.
@@ -69,7 +95,7 @@ impl TrackState {
         if let Some(CodecParameters::Audio(audio)) = &track.codec_params {
             if let Some(sample_rate) = audio.sample_rate {
                 if sample_rate == timespan.timescale.get() {
-                    track.with_num_frames(timespan.duration.get());
+                    track.with_num_frames(duration.get());
                 }
             }
         }
@@ -80,10 +106,63 @@ impl TrackState {
             cur_seg: 0,
             next_sample: 0,
             next_sample_pos: 0,
+            ts_offset: edit.media_time,
+            ts_end: edit.duration.and_then(|dur| Timestamp::try_from(dur.get()).ok()),
         };
 
         (state, track)
     }
+}
+
+/// Presentation timing derived from an edit list.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct EditListTiming {
+    /// The media time, in media timescale units, of the start of the presentation.
+    media_time: i64,
+    /// The duration of the presentation, in media timescale units, if known.
+    duration: Option<Duration>,
+}
+
+/// Get the presentation timing of a track from its edit list.
+///
+/// Returns `None` if the track has no edit list, or the edit list is not supported.
+fn edit_list_timing(trak: &TrakAtom, movie_timescale: NonZero<u32>) -> Option<EditListTiming> {
+    let elst = trak.edts.as_ref()?.elst.as_ref()?;
+    edit_list_timing_from_entries(&elst.entries, movie_timescale, trak.mdia.mdhd.timescale)
+}
+
+/// Get the presentation timing from a list of edits (ISO/IEC 14496-12, 8.6.6).
+///
+/// Only a single edit that maps the media timeline to the presentation timeline at the normal rate
+/// is supported. This is commonly used to remove encoder delay and padding.
+fn edit_list_timing_from_entries(
+    entries: &[ElstEntry],
+    movie_timescale: NonZero<u32>,
+    media_timescale: NonZero<u32>,
+) -> Option<EditListTiming> {
+    let [entry] = entries
+    else {
+        return None;
+    };
+
+    // A media time of -1 indicates an empty edit, and a media rate of 0 indicates a dwell. Neither
+    // are supported.
+    if entry.media_time < 0 || entry.media_rate_int != 1 || entry.media_rate_frac != 0 {
+        return None;
+    }
+
+    // The segment duration is in movie timescale units. A segment duration of 0 indicates that the
+    // edit only provides the offset of the media timeline (e.g., for fragmented streams).
+    let duration = match entry.segment_duration {
+        0 => None,
+        dur => {
+            let dur = u128::from(dur) * u128::from(media_timescale.get())
+                / u128::from(movie_timescale.get());
+            Some(Duration::new(u64::try_from(dur).ok()?))
+        }
+    };
+
+    Some(EditListTiming { media_time: entry.media_time, duration })
 }
 
 /// Information regarding the next sample.
@@ -99,6 +178,8 @@ struct NextSampleInfo {
     time: Time,
     /// The duration of the next sample.
     dur: Duration,
+    /// The timestamp at which the presentation of the track ends.
+    end_ts: Option<Timestamp>,
     /// The segment containing the next sample.
     seg_idx: usize,
 }
@@ -145,6 +226,11 @@ pub struct IsoMp4Reader<'s> {
     track_states: Vec<TrackState>,
     /// Optional, movie extends atom used for fragmented streams.
     moov: Arc<MoovAtom>,
+    /// Seekability of the source at construction. Consumed fragments are only dropped when this
+    /// is false: a backward seek finds its timestamp by scanning `segs`.
+    source_is_seekable: bool,
+    /// Total length of a seekable source, in bytes.
+    source_len: Option<u64>,
 }
 
 impl<'s> IsoMp4Reader<'s> {
@@ -306,16 +392,14 @@ impl<'s> IsoMp4Reader<'s> {
             }
             else {
                 // If non-fragmented, use the total duration (media timescale) from the track's
-                // stts atom. Since edits are not currently supported, this is the duration of all
-                // samples that will be yielded.
-                //
-                // TODO: Support edits. Once supported, prefer the tkhd duration.
+                // stts atom. This is the duration of all samples that will be yielded. If supported,
+                // the edit list may override this duration.
                 let duration = Duration::from(trak.mdia.minf.stbl.stts.total_duration);
 
                 TimeSpan::new(trak.mdia.mdhd.timescale, duration)
             };
 
-            let (track_state, track) = TrackState::make(t, trak, &timespan);
+            let (track_state, track) = TrackState::make(t, trak, &timespan, moov.mvhd.timescale);
 
             tracks.push(track);
             track_states.push(track_state);
@@ -338,7 +422,28 @@ impl<'s> IsoMp4Reader<'s> {
         media_info.with_time_base(TimeBase::from_recip(moov.mvhd.timescale));
         media_info.with_duration(Duration::new(moov.mvhd.duration));
 
-        Ok(IsoMp4Reader { iter: it, media_info, tracks, metadata, track_states, segs, moov })
+        Ok(IsoMp4Reader {
+            iter: it,
+            media_info,
+            tracks,
+            metadata,
+            track_states,
+            segs,
+            moov,
+            source_is_seekable: is_seekable,
+            source_len: total_len,
+        })
+    }
+
+    /// `true` when the pending atom runs through the end of a seekable source.
+    ///
+    /// Nothing can follow that atom. Leaving it pending lets `read_raw_boxed_slice_exact` seek
+    /// back to an indexed sample after playback has reached EOF.
+    fn pending_atom_reaches_eof(&self) -> bool {
+        match (self.source_len, self.iter.pending().and_then(|header| header.end())) {
+            (Some(len), Some(end)) => end >= len,
+            _ => false,
+        }
     }
 
     /// Idempotently gets information regarding the next sample of the media stream. This function
@@ -358,11 +463,13 @@ impl<'s> IsoMp4Reader<'s> {
             for (seg_idx_delta, seg) in self.segs[state.cur_seg..].iter().enumerate() {
                 // Try to get the timestamp for the next sample of the track from the segment.
                 if let Some(timing) = seg.sample_timing(state.track_num, state.next_sample)? {
-                    // Calculate the presentation time using the timestamp.
-                    let Some(ts) = timing.ts.try_into().ok()
+                    // Calculate the presentation timestamp from the media timestamp.
+                    let Some(ts) = media_to_presentation_ts(timing.ts, state.ts_offset)
                     else {
                         return Ok(None);
                     };
+
+                    // Calculate the presentation time using the timestamp.
 
                     let Some(sample_time) = tb.calc_time(ts)
                     else {
@@ -385,6 +492,7 @@ impl<'s> IsoMp4Reader<'s> {
                                 ts,
                                 time: sample_time,
                                 dur: Duration::from(timing.dur),
+                                end_ts: state.ts_end,
                                 seg_idx: seg_idx_delta + state.cur_seg,
                             });
                         }
@@ -432,7 +540,55 @@ impl<'s> IsoMp4Reader<'s> {
         Ok(Some(SampleDataInfo { pos, len: sample_data_desc.size }))
     }
 
+    /// Drop fragments that every track has moved past.
+    ///
+    /// Returns the number of leading segments removed. Seekable sources keep every fragment so a
+    /// backward seek can scan `segs`. The last segment stays: it is the sample-index predecessor
+    /// of the next fragment. Callers must not be holding an absolute `segs` index.
+    fn reclaim_consumed_segments(&mut self) -> usize {
+        if self.source_is_seekable || self.track_states.is_empty() || self.segs.len() <= 1 {
+            return 0;
+        }
+
+        // The last segment stands in for a sample that belongs to a fragment not yet read.
+        let last_idx = self.segs.len() - 1;
+        let mut first_live = last_idx;
+
+        for state in &self.track_states {
+            let mut live = last_idx;
+
+            // The first segment at or after `cur_seg` that still contains the next sample. An
+            // idle track's `cur_seg` can point at a fragment that no longer contains that sample.
+            for (idx, seg) in self.segs.iter().enumerate().skip(state.cur_seg) {
+                if seg.track_sample_range(state.track_num).contains(&state.next_sample) {
+                    live = idx;
+                    break;
+                }
+            }
+
+            first_live = first_live.min(live);
+        }
+
+        if first_live == 0 {
+            return 0;
+        }
+
+        self.segs.drain(..first_live);
+
+        for state in &mut self.track_states {
+            // `cur_seg` may sit in the drained prefix when that fragment did not contain the
+            // track's next sample.
+            state.cur_seg = state.cur_seg.saturating_sub(first_live);
+        }
+
+        first_live
+    }
+
     fn try_read_more_segments(&mut self) -> Result<bool> {
+        // Do this before `segs.last()`, and only when no `NextSampleInfo.seg_idx` is in hand.
+        // Those indices are absolute into `segs`.
+        self.reclaim_consumed_segments();
+
         // If all tracks ended in the last segment, then do not try to read anymore segments.
         //
         // Note, there will always be one segment because the moov atom was converted into a segment
@@ -522,13 +678,27 @@ impl<'s> IsoMp4Reader<'s> {
             return seek_error(SeekErrorKind::OutOfRange);
         }
 
+        // The segments are indexed by media timestamp. Convert the presentation timestamp into a
+        // media timestamp.
+        let ts_offset = self.track_states[track_num].ts_offset;
+
+        let Some(media_ts) = ts.get().checked_add(ts_offset).and_then(|ts| u64::try_from(ts).ok())
+        else {
+            return seek_error(SeekErrorKind::OutOfRange);
+        };
+
         let mut seg_skip = 0;
 
         let seek_loc = 'locate: loop {
             // Iterate over all segments and attempt to find the segment and sample number that
             // contains the desired timestamp. Skip segments already examined.
             for (seg_idx, seg) in self.segs.iter().enumerate().skip(seg_skip) {
-                if let Some(sample_num) = seg.ts_sample(track_num, ts.get() as u64)? {
+                // Earlier fragments may have been reclaimed on an unseekable source.
+                if media_ts < seg.track_ts_range(track_num).start {
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+
+                if let Some(sample_num) = seg.ts_sample(track_num, media_ts)? {
                     break 'locate SeekLocation { seg_idx, sample_num };
                 }
 
@@ -536,7 +706,12 @@ impl<'s> IsoMp4Reader<'s> {
                 seg_skip = seg_idx + 1;
             }
 
-            // Otherwise, try to read more segments from the stream.
+            // Otherwise, try to read more segments from the stream. Reclaim first so `seg_skip`,
+            // an absolute index, moves with the drained prefix. The reclaim inside
+            // `try_read_more_segments` is then a no-op.
+            let reclaimed = self.reclaim_consumed_segments();
+            seg_skip = seg_skip.saturating_sub(reclaimed);
+
             if !self.try_read_more_segments()? {
                 return seek_error(SeekErrorKind::OutOfRange);
             }
@@ -550,10 +725,10 @@ impl<'s> IsoMp4Reader<'s> {
             None => return seek_error(SeekErrorKind::OutOfRange),
         };
 
-        // Try to convert the sample timing to a timestamp.
-        let actual_ts = match Timestamp::try_from(timing.ts) {
-            Ok(ts) => ts,
-            _ => return seek_error(SeekErrorKind::OutOfRange),
+        // Try to convert the sample timing to a presentation timestamp.
+        let Some(actual_ts) = media_to_presentation_ts(timing.ts, ts_offset)
+        else {
+            return seek_error(SeekErrorKind::OutOfRange);
         };
 
         // Get the sample information.
@@ -622,6 +797,11 @@ impl FormatReader for IsoMp4Reader<'_> {
             if let Some(info) = self.next_sample_info()? {
                 break info;
             }
+            else if self.pending_atom_reaches_eof() {
+                // `seek_atom_end` would drop the pending atom. A later seek still has to raw-read
+                // samples that are already indexed, which requires some atom to be pending.
+                return Ok(None);
+            }
             else {
                 // The inner reader of the atom iterator has been used/seeked around to read
                 // packets, so resync the reader and iterator by seeking to the end of the current
@@ -652,12 +832,14 @@ impl FormatReader for IsoMp4Reader<'_> {
         let data =
             self.iter.read_raw_boxed_slice_exact(sample_info.pos, sample_info.len as usize)?;
 
-        Ok(Some(Packet::new(
-            next_sample_info.track_id,
-            next_sample_info.ts,
-            next_sample_info.dur,
-            data,
-        )))
+        Ok(Some(
+            PacketBuilder::new()
+                .track_id(next_sample_info.track_id)
+                .pts(next_sample_info.ts)
+                .data(data)
+                .trimmed_dur(next_sample_info.dur, next_sample_info.end_ts)
+                .build(),
+        ))
     }
 
     fn metadata(&mut self) -> Metadata<'_> {
@@ -673,7 +855,7 @@ impl FormatReader for IsoMp4Reader<'_> {
             return seek_error(SeekErrorKind::Unseekable);
         }
 
-        match to {
+        let seeked = match to {
             SeekTo::Timestamp { ts, track_id } => {
                 // The seek timestamp is in timebase units specific to the selected track. Get the
                 // selected track and use the timebase to convert the timestamp into time units so
@@ -725,7 +907,15 @@ impl FormatReader for IsoMp4Reader<'_> {
                 // Seek the primary track and return the result.
                 self.seek_track_by_time(track_num, time)
             }
+        };
+
+        // Track state now points at the seeked samples, so fragments before that position are
+        // consumed. No `NextSampleInfo.seg_idx` is held here.
+        if seeked.is_ok() {
+            self.reclaim_consumed_segments();
         }
+
+        seeked
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>
@@ -734,6 +924,12 @@ impl FormatReader for IsoMp4Reader<'_> {
     {
         self.iter.into_inner()
     }
+}
+
+/// Convert a media timestamp into a presentation timestamp given the media timestamp presented at
+/// presentation timestamp 0.
+fn media_to_presentation_ts(media_ts: u64, ts_offset: i64) -> Option<Timestamp> {
+    i64::try_from(media_ts).ok()?.checked_sub(ts_offset).map(Timestamp::new)
 }
 
 impl ReadAtom for MediaSourceStream<'_> {}
@@ -772,3 +968,407 @@ impl From<AtomError> for Error {
 //         ((duration as u128 * dst_timescale.get() as u128) / src_timescale.get() as u128) as u64,
 //     )
 // }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use symphonia_core::errors::{Error, SeekErrorKind};
+    use symphonia_core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+    use symphonia_core::io::{
+        MediaSource, MediaSourceStream, MediaSourceStreamOptions, ReadBytes, ReadOnlySource,
+    };
+    use symphonia_core::units::{Time, Timestamp};
+
+    use super::IsoMp4Reader;
+
+    const FRAGMENTS: usize = 32;
+
+    fn push_u16(buf: &mut Vec<u8>, value: u16) {
+        buf.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn push_u32(buf: &mut Vec<u8>, value: u32) {
+        buf.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn with_atom(buf: &mut Vec<u8>, tag: &[u8; 4], write_body: impl FnOnce(&mut Vec<u8>)) {
+        let start = buf.len();
+        buf.extend_from_slice(&[0, 0, 0, 0]);
+        buf.extend_from_slice(tag);
+        write_body(buf);
+        let size = u32::try_from(buf.len() - start).unwrap();
+        buf[start..start + 4].copy_from_slice(&size.to_be_bytes());
+    }
+
+    fn full_box(buf: &mut Vec<u8>, flags: u32) {
+        buf.push(0);
+        buf.push(((flags >> 16) & 0xff) as u8);
+        buf.push(((flags >> 8) & 0xff) as u8);
+        buf.push((flags & 0xff) as u8);
+    }
+
+    fn write_trak(buf: &mut Vec<u8>, track_id: u32) {
+        with_atom(buf, b"trak", |buf| {
+            with_atom(buf, b"tkhd", |buf| {
+                full_box(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, track_id);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u16(buf, 0);
+                push_u16(buf, 0);
+                push_u16(buf, 0);
+            });
+
+            with_atom(buf, b"mdia", |buf| {
+                with_atom(buf, b"mdhd", |buf| {
+                    full_box(buf, 0);
+                    push_u32(buf, 0);
+                    push_u32(buf, 0);
+                    push_u32(buf, 1000);
+                    push_u32(buf, 0);
+                    push_u16(buf, 0);
+                    push_u16(buf, 0);
+                });
+
+                with_atom(buf, b"hdlr", |buf| {
+                    full_box(buf, 0);
+                    push_u32(buf, 0);
+                    buf.extend_from_slice(b"soun");
+                    buf.extend_from_slice(&[0; 12]);
+                });
+
+                with_atom(buf, b"minf", |buf| {
+                    with_atom(buf, b"stbl", |buf| {
+                        with_atom(buf, b"stsd", |buf| {
+                            full_box(buf, 0);
+                            push_u32(buf, 1);
+                            with_atom(buf, b"raw ", |buf| {
+                                buf.extend_from_slice(&[0; 6]);
+                                push_u16(buf, 1);
+                                push_u16(buf, 0);
+                                push_u16(buf, 0);
+                                push_u32(buf, 0);
+                                push_u16(buf, 1);
+                                push_u16(buf, 8);
+                                push_u16(buf, 0);
+                                push_u16(buf, 0);
+                                push_u32(buf, 0);
+                            });
+                        });
+
+                        // Empty sample tables: the moov sample range is 0..0.
+                        for tag in [b"stts", b"stsc"] {
+                            with_atom(buf, tag, |buf| {
+                                full_box(buf, 0);
+                                push_u32(buf, 0);
+                            });
+                        }
+
+                        with_atom(buf, b"stsz", |buf| {
+                            full_box(buf, 0);
+                            push_u32(buf, 0);
+                            push_u32(buf, 0);
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    fn write_trex(buf: &mut Vec<u8>, track_id: u32) {
+        with_atom(buf, b"trex", |buf| {
+            full_box(buf, 0);
+            push_u32(buf, track_id);
+            push_u32(buf, 1);
+            push_u32(buf, 1);
+            push_u32(buf, 1);
+            push_u32(buf, 0);
+        });
+    }
+
+    /// `ftyp` + `moov` + `FRAGMENTS` `moof`/`mdat` pairs.
+    ///
+    /// Each fragment carries one sample for track 1. When `idle_track` is set, track 2 has a
+    /// single sample in fragment 0 and no samples after that.
+    fn fragmented_movie(idle_track: bool) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        with_atom(&mut buf, b"ftyp", |buf| {
+            buf.extend_from_slice(b"isom");
+            push_u32(buf, 0);
+        });
+
+        with_atom(&mut buf, b"moov", |buf| {
+            with_atom(buf, b"mvhd", |buf| {
+                full_box(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u32(buf, 1000);
+                push_u32(buf, 0);
+                push_u32(buf, 0);
+                push_u16(buf, 0);
+            });
+
+            write_trak(buf, 1);
+            if idle_track {
+                write_trak(buf, 2);
+            }
+
+            with_atom(buf, b"mvex", |buf| {
+                write_trex(buf, 1);
+                if idle_track {
+                    write_trex(buf, 2);
+                }
+            });
+        });
+
+        for index in 0..FRAGMENTS {
+            let tracks: &[u32] = if idle_track && index == 0 { &[1, 2] } else { &[1] };
+            // Track 1's byte is the fragment index. Track 2, when present, follows it.
+            let payload = [index as u8, 0];
+            let payload = if tracks.len() == 2 { &payload[..] } else { &payload[..1] };
+
+            let moof_start = buf.len();
+            let mut data_offsets = Vec::with_capacity(tracks.len());
+
+            with_atom(&mut buf, b"moof", |buf| {
+                with_atom(buf, b"mfhd", |buf| {
+                    full_box(buf, 0);
+                    push_u32(buf, (index + 1) as u32);
+                });
+
+                for &track_id in tracks {
+                    with_atom(buf, b"traf", |buf| {
+                        with_atom(buf, b"tfhd", |buf| {
+                            full_box(buf, 0);
+                            push_u32(buf, track_id);
+                        });
+                        with_atom(buf, b"trun", |buf| {
+                            full_box(buf, 0x1);
+                            push_u32(buf, 1);
+                            data_offsets.push(buf.len());
+                            push_u32(buf, 0);
+                        });
+                    });
+                }
+            });
+
+            let moof_len = buf.len() - moof_start;
+            for (sample, pos) in data_offsets.iter().enumerate() {
+                let data_offset = u32::try_from(moof_len + 8 + sample).unwrap();
+                buf[*pos..*pos + 4].copy_from_slice(&data_offset.to_be_bytes());
+            }
+
+            with_atom(&mut buf, b"mdat", |buf| {
+                buf.extend_from_slice(payload);
+            });
+        }
+
+        buf
+    }
+
+    /// `try_new` rewinds 4 bytes, matching a probe that has already read the atom size.
+    fn open_fragmented(bytes: Vec<u8>, seekable: bool) -> IsoMp4Reader<'static> {
+        let source: Box<dyn MediaSource> = if seekable {
+            Box::new(Cursor::new(bytes))
+        }
+        else {
+            Box::new(ReadOnlySource::new(Cursor::new(bytes)))
+        };
+
+        let mut mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
+        mss.read_buf_exact(&mut [0u8; 4]).expect("probe bytes");
+        IsoMp4Reader::try_new(mss, FormatOptions::default()).expect("isomp4 reader")
+    }
+
+    #[test]
+    fn fragmented_unseekable_drops_consumed_moof_segments() {
+        let mut reader = open_fragmented(fragmented_movie(false), false);
+        let mut count = 0usize;
+
+        loop {
+            match reader.next_packet().expect("next packet") {
+                Some(packet) => {
+                    assert_eq!(packet.pts.get(), count as i64);
+                    assert_eq!(&*packet.data, &[count as u8]);
+                    assert!(reader.segs.len() <= 2);
+                    count += 1;
+                }
+                None => {
+                    assert_eq!(reader.segs.len(), 1);
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(count, FRAGMENTS);
+    }
+
+    #[test]
+    fn fragmented_unseekable_rejects_seek_before_retained_history() {
+        let mut reader = open_fragmented(fragmented_movie(false), false);
+
+        for _ in 0..3 {
+            reader.next_packet().expect("next packet").expect("some packet");
+        }
+
+        let first_ts = reader.segs[0].track_ts_range(0).start;
+        assert_eq!(first_ts, 1);
+
+        for to in [
+            SeekTo::Time { time: Time::ZERO, track_id: None },
+            SeekTo::Timestamp { ts: Timestamp::from(0), track_id: 1 },
+        ] {
+            assert!(matches!(
+                reader.seek(SeekMode::Accurate, to),
+                Err(Error::SeekError(SeekErrorKind::OutOfRange))
+            ));
+        }
+
+        let packet = reader.next_packet().expect("packet after failed seek").expect("some packet");
+        assert_eq!(packet.pts.get(), 3);
+        assert_eq!(&*packet.data, &[3]);
+
+        let first_ts = reader.segs[0].track_ts_range(0).start;
+        let ts = Timestamp::try_from(first_ts).expect("valid retained timestamp");
+        let seeked = reader
+            .seek(SeekMode::Accurate, SeekTo::Timestamp { ts, track_id: 1 })
+            .expect("seek to retained history boundary");
+        assert_eq!(seeked.actual_ts.get(), first_ts as i64);
+
+        let packet = reader.next_packet().expect("packet after seek").expect("some packet");
+        assert_eq!(packet.pts.get(), first_ts as i64);
+        assert_eq!(&*packet.data, &[first_ts as u8]);
+    }
+
+    #[test]
+    fn fragmented_seekable_keeps_moof_segments_for_seek() {
+        let mut reader = open_fragmented(fragmented_movie(false), true);
+
+        loop {
+            if reader.next_packet().expect("next packet").is_none() {
+                break;
+            }
+        }
+
+        // moov plus one segment per fragment.
+        assert_eq!(reader.segs.len(), FRAGMENTS + 1);
+
+        reader
+            .seek(SeekMode::Accurate, SeekTo::Time { time: Time::ZERO, track_id: None })
+            .expect("seek to start");
+
+        let packet = reader.next_packet().expect("packet after seek").expect("some packet");
+        assert_eq!(&*packet.data, &[0]);
+    }
+
+    #[test]
+    fn fragmented_unseekable_idle_track_does_not_pin_segments() {
+        let mut reader = open_fragmented(fragmented_movie(true), false);
+        let mut count = 0usize;
+        let mut track_two = 0usize;
+
+        loop {
+            match reader.next_packet().expect("next packet") {
+                Some(packet) => {
+                    if packet.track_id == 2 {
+                        track_two += 1;
+                        assert_eq!(packet.pts.get(), 0);
+                    }
+                    count += 1;
+                    // Both fragment-0 samples are the two timestamp-0 packets.
+                    if count >= 2 {
+                        assert!(reader.segs.len() <= 2);
+                    }
+                }
+                None => {
+                    assert_eq!(reader.segs.len(), 1);
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(count, FRAGMENTS + 1);
+        assert_eq!(track_two, 1);
+    }
+}
+
+#[cfg(test)]
+mod edit_list_tests {
+    use super::*;
+
+    fn entry(segment_duration: u64, media_time: i64) -> ElstEntry {
+        ElstEntry { segment_duration, media_time, media_rate_int: 1, media_rate_frac: 0 }
+    }
+
+    fn timescale(timescale: u32) -> NonZero<u32> {
+        NonZero::new(timescale).unwrap()
+    }
+
+    #[test]
+    fn verify_simple_edit_sets_offset_and_duration() {
+        let timing = edit_list_timing_from_entries(
+            &[entry(1_485_443, 5_119)],
+            timescale(44_100),
+            timescale(44_100),
+        );
+
+        assert_eq!(
+            timing,
+            Some(EditListTiming { media_time: 5_119, duration: Some(Duration::new(1_485_443)) })
+        );
+    }
+
+    #[test]
+    fn verify_simple_edit_rescales_duration_to_media_timescale() {
+        let timing = edit_list_timing_from_entries(
+            &[entry(1_000, 2_048)],
+            timescale(1_000),
+            timescale(48_000),
+        );
+
+        assert_eq!(
+            timing,
+            Some(EditListTiming { media_time: 2_048, duration: Some(Duration::new(48_000)) })
+        );
+    }
+
+    #[test]
+    fn verify_edit_without_segment_duration_only_sets_offset() {
+        let timing =
+            edit_list_timing_from_entries(&[entry(0, 2_048)], timescale(1_000), timescale(48_000));
+
+        assert_eq!(timing, Some(EditListTiming { media_time: 2_048, duration: None }));
+    }
+
+    #[test]
+    fn verify_unsupported_edits_are_ignored() {
+        let mut dwell = entry(1_000, 0);
+        dwell.media_rate_int = 0;
+
+        let mut bad_rate = entry(1_000, 0);
+        bad_rate.media_rate_frac = 1;
+
+        let ts = timescale(48_000);
+
+        assert!(edit_list_timing_from_entries(&[], ts, ts).is_none());
+        assert!(edit_list_timing_from_entries(&[entry(1_000, -1)], ts, ts).is_none());
+        assert!(edit_list_timing_from_entries(&[dwell], ts, ts).is_none());
+        assert!(edit_list_timing_from_entries(&[bad_rate], ts, ts).is_none());
+        assert!(
+            edit_list_timing_from_entries(&[entry(1_000, -1), entry(1_000, 0)], ts, ts).is_none()
+        );
+    }
+
+    #[test]
+    fn verify_media_to_presentation_ts() {
+        assert_eq!(media_to_presentation_ts(2_048, 2_112), Some(Timestamp::new(-64)));
+        assert_eq!(media_to_presentation_ts(5_000, 0), Some(Timestamp::new(5_000)));
+        assert_eq!(media_to_presentation_ts(u64::MAX, 0), None);
+    }
+}

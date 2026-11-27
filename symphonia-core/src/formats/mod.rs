@@ -725,4 +725,24 @@ pub mod well_known {
     pub const FORMAT_ID_MKV: FormatId = FormatId(0x10c);
     /// Flash Video
     pub const FORMAT_ID_FLV: FormatId = FormatId(0x10d);
+    /// Monkey's Audio
+    pub const FORMAT_ID_APE: FormatId = FormatId(0x10e);
+    /// DTS Coherent Acoustics
+    pub const FORMAT_ID_DCA: FormatId = FormatId(0x10f);
+    /// True Audio
+    pub const FORMAT_ID_TTA: FormatId = FormatId(0x110);
+    /// Dolby Digital (AC-3) elementary stream
+    pub const FORMAT_ID_AC3: FormatId = FormatId(0x111);
+    /// CRI ADX
+    pub const FORMAT_ID_ADX: FormatId = FormatId(0x112);
+    /// Sony Wave64
+    pub const FORMAT_ID_W64: FormatId = FormatId(0x113);
+    /// MPEG transport stream
+    pub const FORMAT_ID_TS: FormatId = FormatId(0x114);
+    /// Raw DFPWM
+    pub const FORMAT_ID_DFPWM: FormatId = FormatId(0x115);
+    /// Raw SBC (Bluetooth A2DP)
+    pub const FORMAT_ID_SBC: FormatId = FormatId(0x116);
+    /// Raw Dolby TrueHD / MLP
+    pub const FORMAT_ID_TRUEHD: FormatId = FormatId(0x117);
 }

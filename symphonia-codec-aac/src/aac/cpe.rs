@@ -29,7 +29,6 @@ pub struct ChannelPair {
     ms_used: [[bool; MAX_SFBS]; MAX_WINDOWS],
     ics0: ics::Ics,
     ics1: ics::Ics,
-    lcg: Lcg,
 }
 
 impl ChannelPair {
@@ -41,8 +40,12 @@ impl ChannelPair {
             ms_used: [[false; MAX_SFBS]; MAX_WINDOWS],
             ics0: ics::Ics::new(sbinfo),
             ics1: ics::Ics::new(sbinfo),
-            lcg: Lcg::new(0x1f2e3d4c), // Use the same seed as ffmpeg for symphonia-check.
         }
+    }
+
+    pub fn clear_coefficients(&mut self) {
+        self.ics0.coeffs.fill(0.0);
+        self.ics1.coeffs.fill(0.0);
     }
 
     pub fn reset(&mut self) {
@@ -53,15 +56,17 @@ impl ChannelPair {
     pub fn decode_ga_sce<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
+        lcg: &mut Lcg,
         aot: AudioObjectType,
     ) -> Result<()> {
-        self.ics0.decode(bs, &mut self.lcg, aot, false)?;
+        self.ics0.decode(bs, lcg, aot, false)?;
         Ok(())
     }
 
     pub fn decode_ga_cpe<B: ReadBitsLtr>(
         &mut self,
         bs: &mut B,
+        lcg: &mut Lcg,
         aot: AudioObjectType,
     ) -> Result<()> {
         let common_window = bs.read_bool()?;
@@ -69,7 +74,7 @@ impl ChannelPair {
         if common_window {
             // Decode the common ICS info block into the first channel.
             // do not call self.ics0.info.decode() as it will skip required validations present in self.ics0.decode_info()
-            self.ics0.decode_info(bs)?;
+            self.ics0.decode_info(bs, aot)?;
 
             // Mid-side stereo mask decoding.
             self.ms_mask_present = bs.read_bits_leq32(2)? as u8;
@@ -103,14 +108,15 @@ impl ChannelPair {
             self.ics1.info.copy_from_common(&self.ics0.info);
         }
 
-        self.ics0.decode(bs, &mut self.lcg, aot, common_window)?;
-        self.ics1.decode(bs, &mut self.lcg, aot, common_window)?;
+        self.ics0.decode(bs, lcg, aot, common_window)?;
+        self.ics1.decode(bs, lcg, aot, common_window)?;
 
         // Joint-stereo decoding
         if common_window {
             let bands = self.ics0.get_bands();
 
             let mut g = 0;
+            let short_len = self.ics0.win_len();
 
             for w in 0..self.ics0.info.num_windows {
                 if w > 0 && !self.ics0.info.scale_factor_grouping[w - 1] {
@@ -118,8 +124,8 @@ impl ChannelPair {
                 }
 
                 for sfb in 0..self.ics0.info.max_sfb {
-                    let start = w * 128 + bands[sfb];
-                    let end = w * 128 + bands[sfb + 1];
+                    let start = w * short_len + bands[sfb];
+                    let end = w * short_len + bands[sfb + 1];
 
                     if self.ics1.is_intensity(g, sfb) {
                         // Intensity stereo
@@ -164,19 +170,44 @@ impl ChannelPair {
         dsp: &mut dsp::Dsp,
         abuf: &mut AudioBuffer<f32>,
         rate_idx: usize,
+        plane_map: &[usize],
     ) {
         self.ics0.synth_channel(
             dsp,
             rate_idx,
-            abuf.plane_mut(self.channel).expect("channel index is valid"),
+            abuf.plane_mut(plane_map[self.channel]).expect("channel index is valid"),
         );
 
         if self.is_pair {
             self.ics1.synth_channel(
                 dsp,
                 rate_idx,
-                abuf.plane_mut(self.channel + 1).expect("channel+1 index is valid"),
+                abuf.plane_mut(plane_map[self.channel + 1]).expect("channel+1 index is valid"),
             );
+        }
+    }
+
+    /// Get channel `ch_index` (0, or 1 for a channel pair).
+    pub fn ics_mut(&mut self, ch_index: usize) -> Option<&mut ics::Ics> {
+        match ch_index {
+            0 => Some(&mut self.ics0),
+            1 if self.is_pair => Some(&mut self.ics1),
+            _ => None,
+        }
+    }
+
+    /// Synthesize channel `ch_index` (0, or 1 for a channel pair) of the element to `dst`.
+    pub fn synth_channel_to_buf(
+        &mut self,
+        dsp: &mut dsp::Dsp,
+        rate_idx: usize,
+        ch_index: usize,
+        dst: &mut [f32],
+    ) {
+        match ch_index {
+            0 => self.ics0.synth_channel(dsp, rate_idx, dst),
+            1 => self.ics1.synth_channel(dsp, rate_idx, dst),
+            _ => {}
         }
     }
 }

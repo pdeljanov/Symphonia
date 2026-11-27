@@ -58,8 +58,16 @@ impl<'s> AdtsReader<'s> {
 
         codec_params.for_codec(CODEC_ID_AAC).with_sample_rate(header.sample_rate);
 
+        if let Some(profile) = get_audio_codec_profile_by_object_type(header.profile) {
+            codec_params.with_profile(profile);
+        }
+
         if let Some(channels) = header.channels {
             codec_params.with_channels(channels);
+        }
+        else if let Some((channels, asc)) = read_in_band_pce(&mut mss, &header)? {
+            // The channels are defined by a program config element at the start of the stream.
+            codec_params.with_channels(channels).with_extra_data(asc.into_boxed_slice());
         }
 
         // Populat the track.
@@ -85,6 +93,127 @@ impl<'s> AdtsReader<'s> {
             next_packet_ts: Timestamp::new(0),
         })
     }
+}
+
+fn get_audio_codec_profile_by_object_type(
+    object_type: AudioObjectType,
+) -> Option<symphonia_core::codecs::CodecProfile> {
+    use symphonia_core::codecs::audio::well_known::profiles::*;
+
+    match object_type {
+        AudioObjectType::Main => Some(CODEC_PROFILE_AAC_MAIN),
+        AudioObjectType::Lc => Some(CODEC_PROFILE_AAC_LC),
+        AudioObjectType::Ssr => Some(CODEC_PROFILE_AAC_SSR),
+        AudioObjectType::Ltp => Some(CODEC_PROFILE_AAC_LTP),
+        _ => None,
+    }
+}
+
+/// Look for a program config element at the start of the first frame, and if found, return the
+/// channels it defines and an equivalent audio specific config. The reader is left at the start of
+/// the frame.
+fn read_in_band_pce<B: ReadBytes + SeekBuffered>(
+    reader: &mut B,
+    header: &AdtsHeader,
+) -> Result<Option<(Channels, Vec<u8>)>> {
+    /// A program config element, with the 3 bit syntactic element ID, fits in this many bytes.
+    const MAX_PCE_BYTES: usize = 128;
+
+    let header_len = usize::from(header.header_len());
+    reader.ignore_bytes(header_len as u64)?;
+
+    let len = usize::from(header.payload_len()).min(MAX_PCE_BYTES);
+    let mut buf = [0; MAX_PCE_BYTES];
+    reader.read_buf_exact(&mut buf[..len])?;
+    reader.seek_buffered_rev(header_len + len);
+
+    let mut bs = BitReaderLtr::new(&buf[..len]);
+
+    const ID_PCE: u32 = 5;
+
+    if bs.read_bits_leq32(3)? != ID_PCE {
+        return Ok(None);
+    }
+
+    let Ok(pce) = ProgramConfig::read(&mut bs)
+    else {
+        return Ok(None);
+    };
+
+    let object_type = match header.profile {
+        AudioObjectType::Main => 1,
+        AudioObjectType::Ssr => 3,
+        AudioObjectType::Ltp => 4,
+        _ => 2,
+    };
+
+    let asc = make_pce_asc(object_type, header.sample_rate, &pce);
+
+    Ok(Some((pce.channels, asc)))
+}
+
+/// Write an audio specific config for an AAC stream whose channels are defined by a program config
+/// element.
+fn make_pce_asc(object_type: u32, sample_rate: u32, pce: &ProgramConfig) -> Vec<u8> {
+    struct BitWriter {
+        bytes: Vec<u8>,
+        bits: usize,
+    }
+
+    impl BitWriter {
+        fn put(&mut self, value: u32, count: usize) {
+            for i in (0..count).rev() {
+                if self.bits % 8 == 0 {
+                    self.bytes.push(0);
+                }
+                let bit = ((value >> i) & 1) as u8;
+                if let Some(last) = self.bytes.last_mut() {
+                    *last |= bit << (7 - self.bits % 8);
+                }
+                self.bits += 1;
+            }
+        }
+    }
+
+    let mut w = BitWriter { bytes: Vec::new(), bits: 0 };
+
+    w.put(object_type, 5);
+    // Explicit sample rate.
+    w.put(0xf, 4);
+    w.put(sample_rate, 24);
+    // Channel configuration 0, and the frame length, core coder, and extension flags.
+    w.put(0, 4);
+    w.put(0, 3);
+
+    let count = |group: u8| pce.elements.iter().filter(|e| e.group == group).count() as u32;
+
+    w.put(0, 4); // Element instance tag.
+    w.put(1, 2); // Object type.
+    w.put(0, 4); // Sampling frequency index (unused).
+    w.put(count(0), 4);
+    w.put(count(1), 4);
+    w.put(count(2), 4);
+    w.put(count(3), 2);
+    w.put(0, 3); // Associated data elements.
+    w.put(0, 4); // Coupling channel elements.
+    w.put(0, 3); // Mixdown flags.
+
+    for group in 0..3 {
+        for element in pce.elements.iter().filter(|e| e.group == group) {
+            w.put(u32::from(element.id == 1), 1);
+            w.put(element.tag, 4);
+        }
+    }
+
+    for element in pce.elements.iter().filter(|e| e.group == 3) {
+        w.put(element.tag, 4);
+    }
+
+    // Byte alignment, and an empty comment.
+    w.bits = w.bytes.len() * 8;
+    w.put(0, 8);
+
+    w.bytes
 }
 
 impl Scoreable for AdtsReader<'_> {

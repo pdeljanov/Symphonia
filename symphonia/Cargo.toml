@@ -18,20 +18,35 @@ all-features = true
 
 [features]
 # Only royalty-free open standard codecs and formats are enabled by default.
-default = ["opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "pcm", "vorbis", "wav"]
+default = ["opt-simd", "all-meta", "adpcm", "flac", "mkv", "ogg", "opus", "pcm", "vorbis", "wav", "wavpack"]
 
 # Feature flags to enable specific codecs, container, and standalone metadata formats.
 aac = ["dep:symphonia-codec-aac"]
+mac = ["dep:symphonia-bundle-ape"]
+tta = ["dep:symphonia-bundle-tta"]
+adx = ["dep:symphonia-bundle-adx"]
+truehd = ["dep:symphonia-bundle-truehd"]
+dfpwm = ["dep:symphonia-bundle-dfpwm"]
+sbc = ["dep:symphonia-bundle-sbc"]
 adpcm = ["dep:symphonia-codec-adpcm"]
 alac = ["dep:symphonia-codec-alac"]
+ac3 = ["dep:symphonia-codec-ac3"]
+dca = ["dep:symphonia-codec-dca"]
+speex = ["dep:symphonia-codec-speex"]
+g723 = ["dep:symphonia-codec-g723"]
+nellymoser = ["dep:symphonia-codec-nellymoser"]
 flac = ["dep:symphonia-bundle-flac"]
+wavpack = ["dep:symphonia-codec-wavpack"]
 caf = ["dep:symphonia-format-caf"]
 isomp4 = ["dep:symphonia-format-isomp4"]
+flv = ["dep:symphonia-format-flv"]
+ts = ["dep:symphonia-format-ts"]
 mkv = ["dep:symphonia-format-mkv"]
 mp1 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp1"]
 mp2 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp2"]
 mp3 = ["dep:symphonia-bundle-mp3", "symphonia-bundle-mp3/mp3"]
 ogg = ["dep:symphonia-format-ogg"]
+opus = ["dep:symphonia-codec-opus"]
 pcm = ["dep:symphonia-codec-pcm"]
 aiff = ["dep:symphonia-format-riff", "symphonia-format-riff/aiff"]
 vorbis = ["dep:symphonia-codec-vorbis"]
@@ -46,22 +61,46 @@ mpa = ["mp1", "mp2", "mp3"]
 # Enable all supported codecs.
 all-codecs = [
     "aac",
+    "mac",
+    "tta",
+    "adx",
+    "truehd",
+    "dfpwm",
+    "sbc",
     "adpcm",
     "alac",
+    "ac3",
+    "dca",
+    "speex",
+    "g723",
+    "nellymoser",
     "flac",
+    "wavpack",
     "mp1",
     "mp2",
     "mp3",
+    "opus",
     "pcm",
     "vorbis",
 ]
 
 # Enable all supported container formats.
 all-formats = [
+    "mac",
+    "tta",
+    "adx",
+    "truehd",
+    "dfpwm",
+    "sbc",
+    "ac3",
+    "dca",
     "caf",
+    "flv",
+    "ts",
     "isomp4",
     "mkv",
     "ogg",
+    "wavpack",
     "aiff",
     "wav",
 ]
@@ -109,6 +148,16 @@ path = "../symphonia-metadata"
 # Standalone crate enables all metadata formats by default.
 default-features = false
 
+[dependencies.symphonia-bundle-ape]
+version = "0.6.1"
+path = "../symphonia-bundle-ape"
+optional = true
+
+[dependencies.symphonia-bundle-tta]
+version = "0.6.1"
+path = "../symphonia-bundle-tta"
+optional = true
+
 [dependencies.symphonia-bundle-flac]
 version = "0.6.1"
 path = "../symphonia-bundle-flac"
@@ -136,6 +185,66 @@ version = "0.6.1"
 path = "../symphonia-codec-alac"
 optional = true
 
+[dependencies.symphonia-codec-opus]
+version = "0.6.1"
+path = "../symphonia-codec-opus"
+optional = true
+
+[dependencies.symphonia-codec-g723]
+version = "0.6.1"
+path = "../symphonia-codec-g723"
+optional = true
+
+[dependencies.symphonia-codec-nellymoser]
+version = "0.6.1"
+path = "../symphonia-codec-nellymoser"
+optional = true
+
+[dependencies.symphonia-codec-speex]
+version = "0.6.1"
+path = "../symphonia-codec-speex"
+optional = true
+
+[dependencies.symphonia-bundle-dfpwm]
+version = "0.6.1"
+path = "../symphonia-bundle-dfpwm"
+optional = true
+
+[dependencies.symphonia-bundle-sbc]
+version = "0.6.1"
+path = "../symphonia-bundle-sbc"
+optional = true
+
+[dependencies.symphonia-bundle-truehd]
+version = "0.6.1"
+path = "../symphonia-bundle-truehd"
+optional = true
+
+[dependencies.symphonia-bundle-adx]
+version = "0.6.1"
+path = "../symphonia-bundle-adx"
+optional = true
+
+[dependencies.symphonia-format-flv]
+version = "0.6.1"
+path = "../symphonia-format-flv"
+optional = true
+
+[dependencies.symphonia-format-ts]
+version = "0.6.1"
+path = "../symphonia-format-ts"
+optional = true
+
+[dependencies.symphonia-codec-ac3]
+version = "0.6.1"
+path = "../symphonia-codec-ac3"
+optional = true
+
+[dependencies.symphonia-codec-dca]
+version = "0.6.1"
+path = "../symphonia-codec-dca"
+optional = true
+
 [dependencies.symphonia-codec-pcm]
 version = "0.6.1"
 path = "../symphonia-codec-pcm"
@@ -144,6 +253,11 @@ optional = true
 [dependencies.symphonia-codec-vorbis]
 version = "0.6.1"
 path = "../symphonia-codec-vorbis"
+optional = true
+
+[dependencies.symphonia-codec-wavpack]
+version = "0.6.0"
+path = "../symphonia-codec-wavpack"
 optional = true
 
 [dependencies.symphonia-format-riff]

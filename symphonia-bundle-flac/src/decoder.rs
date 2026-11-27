@@ -22,62 +22,158 @@ use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, BufReader, ReadBitsLtr};
 use symphonia_core::packet::PacketRef;
 use symphonia_core::support_audio_codec;
-use symphonia_core::util::bits::sign_extend_leq32_to_i32;
+use symphonia_core::util::bits::{sign_extend_leq32_to_i32, sign_extend_leq64_to_i64};
 
 use log::{debug, log_enabled, warn};
 
 use super::frame::*;
 use super::validate::Validator;
 
-fn decorrelate_left_side(left: &[i32], side: &mut [i32]) {
-    for (s, l) in side.iter_mut().zip(left) {
-        *s = *l - *s;
+/// A sample type that a subframe may be decoded into.
+///
+/// Subframes are normally decoded into `i32` samples. However, the Side channel of a 32-bit stereo
+/// stream requires 33 bits per sample (RFC 9639, section 4.2), and must be decoded into `i64`
+/// samples. Residuals always fit in an `i32` (section 9.2.7.3), and predictions are always
+/// calculated with `i64`.
+trait SubframeSample: Copy + From<i32> + Into<i64> {
+    /// The maximum number of bits per sample this type can represent.
+    const MAX_BITS: u32;
+
+    /// Read a signed sample of `bps` bits.
+    fn read<B: ReadBitsLtr>(bs: &mut B, bps: u32) -> Result<Self>;
+
+    /// Add a prediction to the sample (residual). For `i32`, the prediction is truncated and the
+    /// addition wraps. This is correct since the final sample of a valid stream always fits in an
+    /// `i32`, even if the prediction alone does not.
+    fn add_prediction(self, prediction: i64) -> Self;
+
+    /// Shift the sample left by `shift` bits, wrapping on overflow.
+    fn wrapping_shl(self, shift: u32) -> Self;
+}
+
+impl SubframeSample for i32 {
+    const MAX_BITS: u32 = i32::BITS;
+
+    #[inline(always)]
+    fn read<B: ReadBitsLtr>(bs: &mut B, bps: u32) -> Result<Self> {
+        Ok(sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps))
+    }
+
+    #[inline(always)]
+    fn add_prediction(self, prediction: i64) -> Self {
+        self.wrapping_add(prediction as i32)
+    }
+
+    #[inline(always)]
+    fn wrapping_shl(self, shift: u32) -> Self {
+        i32::wrapping_shl(self, shift)
     }
 }
 
-fn decorrelate_mid_side(mid: &mut [i32], side: &mut [i32]) {
-    for (m, s) in mid.iter_mut().zip(side) {
-        // Mid (M) is given as M = L/2 + R/2, while Side (S) is given as S = L - R.
-        //
-        // To calculate the individual channels, the following equations can be used:
-        //      - L = S/2 + M
-        //      - R = M - S/2
-        //
-        // Ideally, this would work, but since samples are represented as integers, division yields
-        // the floor of the divided value. Therefore, the channel restoration equations actually
-        // yield:
-        //      - L = floor(S/2) + M
-        //      - R = M - floor(S/2)
-        //
-        // This will produce incorrect samples whenever the sample S is odd. For example:
-        //      - 2/2 = 1
-        //      - 3/2 = 1 (should be 2 if rounded!)
-        //
-        // To get the proper rounding behaviour, the solution is to add one to the result if S is
-        // odd:
-        //      - L = floor(S/2) + M + (S%2) = M + (S%2) + floor(S/2)
-        //      - R = M - floor(S/2) + (S%2) = M + (S%2) - floor(S/2)
-        //
-        // Further, to prevent loss of accuracy, instead of dividing S/2 and adding or subtracting
-        // it from M, multiply M*2, then add or subtract S, and then divide the whole result by 2.
-        // This gives one extra bit of precision for the intermediate computations.
-        //
-        // Conveniently, since M should be doubled, the LSB will always be 0. This allows S%2 to
-        // be added simply by bitwise ORing S&1 to M<<1.
-        //
-        // Therefore the final equations yield:
-        //      - L = (2*M + (S%2) + S) / 2
-        //      - R = (2*M + (S%2) - S) / 2
-        let mid = (*m << 1) | (*s & 1);
-        let side = *s;
-        *m = (mid + side) >> 1;
-        *s = (mid - side) >> 1;
+impl SubframeSample for i64 {
+    const MAX_BITS: u32 = i64::BITS;
+
+    #[inline(always)]
+    fn read<B: ReadBitsLtr>(bs: &mut B, bps: u32) -> Result<Self> {
+        Ok(sign_extend_leq64_to_i64(bs.read_bits_leq64(bps)?, bps))
+    }
+
+    #[inline(always)]
+    fn add_prediction(self, prediction: i64) -> Self {
+        self.wrapping_add(prediction)
+    }
+
+    #[inline(always)]
+    fn wrapping_shl(self, shift: u32) -> Self {
+        i64::wrapping_shl(self, shift)
     }
 }
 
-fn decorrelate_right_side(right: &[i32], side: &mut [i32]) {
-    for (s, r) in side.iter_mut().zip(right) {
-        *s += *r;
+/// Decoded Side (Difference) channel samples, paired with the output plane when out-of-place.
+enum Side<'a> {
+    I32(&'a mut [i32]),
+    I64(&'a [i64], &'a mut [i32]),
+}
+
+fn decorrelate_left_side(left: &[i32], side: Side<'_>) {
+    match side {
+        Side::I32(side) => {
+            for (s, l) in side.iter_mut().zip(left) {
+                *s = *l - *s;
+            }
+        }
+        Side::I64(side, out) => {
+            for ((o, &l), &s) in out.iter_mut().zip(left).zip(side) {
+                *o = i64::from(l).wrapping_sub(s) as i32;
+            }
+        }
+    }
+}
+
+fn decorrelate_mid_side(mid: &mut [i32], side: Side<'_>) {
+    // Mid (M) is given as M = L/2 + R/2, while Side (S) is given as S = L - R.
+    //
+    // To calculate the individual channels, the following equations can be used:
+    //      - L = S/2 + M
+    //      - R = M - S/2
+    //
+    // Ideally, this would work, but since samples are represented as integers, division yields
+    // the floor of the divided value. Therefore, the channel restoration equations actually
+    // yield:
+    //      - L = floor(S/2) + M
+    //      - R = M - floor(S/2)
+    //
+    // This will produce incorrect samples whenever the sample S is odd. For example:
+    //      - 2/2 = 1
+    //      - 3/2 = 1 (should be 2 if rounded!)
+    //
+    // To get the proper rounding behaviour, the solution is to add one to the result if S is
+    // odd:
+    //      - L = floor(S/2) + M + (S%2) = M + (S%2) + floor(S/2)
+    //      - R = M - floor(S/2) + (S%2) = M + (S%2) - floor(S/2)
+    //
+    // Further, to prevent loss of accuracy, instead of dividing S/2 and adding or subtracting
+    // it from M, multiply M*2, then add or subtract S, and then divide the whole result by 2.
+    // This gives one extra bit of precision for the intermediate computations.
+    //
+    // Conveniently, since M should be doubled, the LSB will always be 0. This allows S%2 to
+    // be added simply by bitwise ORing S&1 to M<<1.
+    //
+    // Therefore the final equations yield:
+    //      - L = (2*M + (S%2) + S) / 2
+    //      - R = (2*M + (S%2) - S) / 2
+    match side {
+        Side::I32(side) => {
+            for (m, s) in mid.iter_mut().zip(side) {
+                let mid = (*m << 1) | (*s & 1);
+                let side = *s;
+                *m = mid.wrapping_add(side) >> 1;
+                *s = mid.wrapping_sub(side) >> 1;
+            }
+        }
+        Side::I64(side, out) => {
+            for ((m, o), &s) in mid.iter_mut().zip(out.iter_mut()).zip(side) {
+                // For 32-bit streams, the intermediate values require up-to 34 bits.
+                let mid = (i64::from(*m) << 1) | (s & 1);
+                *m = (mid.wrapping_add(s) >> 1) as i32;
+                *o = (mid.wrapping_sub(s) >> 1) as i32;
+            }
+        }
+    }
+}
+
+fn decorrelate_right_side(right: &[i32], side: Side<'_>) {
+    match side {
+        Side::I32(side) => {
+            for (s, r) in side.iter_mut().zip(right) {
+                *s = s.wrapping_add(*r);
+            }
+        }
+        Side::I64(side, out) => {
+            for ((o, &r), &s) in out.iter_mut().zip(right).zip(side) {
+                *o = s.wrapping_add(i64::from(r)) as i32;
+            }
+        }
     }
 }
 
@@ -87,6 +183,8 @@ pub struct FlacDecoder {
     is_validating: bool,
     validator: Validator,
     buf: AudioBuffer<i32>,
+    /// Buffer for 33-bit Side channel samples. Only used for 32-bit stereo streams.
+    side_buf: Vec<i64>,
 }
 
 impl FlacDecoder {
@@ -132,6 +230,7 @@ impl FlacDecoder {
             is_validating: options.verify,
             validator: Default::default(),
             buf,
+            side_buf: Vec::new(),
         })
     }
 
@@ -199,7 +298,7 @@ impl FlacDecoder {
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, left)?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
 
                     decorrelate_left_side(left, side);
                 }
@@ -210,7 +309,7 @@ impl FlacDecoder {
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
                     read_subframe(&mut bs, bits_per_sample, mid)?;
-                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
 
                     decorrelate_mid_side(mid, side);
                 }
@@ -220,7 +319,7 @@ impl FlacDecoder {
                         .plane_pair_mut(0, 1)
                         .ok_or(Error::DecodeError("flac: unexpected channel assignment"))?;
 
-                    read_subframe(&mut bs, bits_per_sample + 1, side)?;
+                    let side = read_side(&mut bs, bits_per_sample + 1, side, &mut self.side_buf)?;
                     read_subframe(&mut bs, bits_per_sample, right)?;
 
                     decorrelate_right_side(right, side);
@@ -242,6 +341,28 @@ impl FlacDecoder {
         }
 
         Ok(())
+    }
+}
+
+/// Read a Side (Difference) subframe into `out` if it fits in `i32` samples, or into `buf_i64`
+/// otherwise (i.e., 33-bit Side subframes in 32-bit streams).
+fn read_side<'a, B: ReadBitsLtr>(
+    bs: &mut B,
+    frame_bps: u32,
+    out: &'a mut [i32],
+    buf_i64: &'a mut Vec<i64>,
+) -> Result<Side<'a>> {
+    if frame_bps <= i32::BITS {
+        read_subframe(bs, frame_bps, out)?;
+        Ok(Side::I32(out))
+    }
+    else {
+        if buf_i64.len() < out.len() {
+            buf_i64.resize(out.len(), 0);
+        }
+        let side = &mut buf_i64[..out.len()];
+        read_subframe(bs, frame_bps, side)?;
+        Ok(Side::I64(side, out))
     }
 }
 
@@ -338,7 +459,15 @@ enum SubFrameType {
     Linear(u32),
 }
 
-fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) -> Result<()> {
+fn read_subframe<B: ReadBitsLtr, S: SubframeSample>(
+    bs: &mut B,
+    frame_bps: u32,
+    buf: &mut [S],
+) -> Result<()> {
+    if frame_bps > S::MAX_BITS {
+        return decode_error("flac: subframe bit width exceeds sample type");
+    }
+
     // First sub-frame bit must always 0.
     if bs.read_bool()? {
         return decode_error("flac: subframe padding is not 0");
@@ -400,7 +529,7 @@ fn read_subframe<B: ReadBitsLtr>(bs: &mut B, frame_bps: u32, buf: &mut [i32]) ->
 }
 
 #[inline(always)]
-fn samples_shl(shift: u32, buf: &mut [i32]) {
+fn samples_shl<S: SubframeSample>(shift: u32, buf: &mut [S]) {
     if shift > 0 {
         for sample in buf.iter_mut() {
             *sample = sample.wrapping_shl(shift);
@@ -408,8 +537,12 @@ fn samples_shl(shift: u32, buf: &mut [i32]) {
     }
 }
 
-fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
-    let const_sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
+fn decode_constant<B: ReadBitsLtr, S: SubframeSample>(
+    bs: &mut B,
+    bps: u32,
+    buf: &mut [S],
+) -> Result<()> {
+    let const_sample = S::read(bs, bps)?;
 
     for sample in buf.iter_mut() {
         *sample = const_sample;
@@ -418,19 +551,23 @@ fn decode_constant<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Res
     Ok(())
 }
 
-fn decode_verbatim<B: ReadBitsLtr>(bs: &mut B, bps: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_verbatim<B: ReadBitsLtr, S: SubframeSample>(
+    bs: &mut B,
+    bps: u32,
+    buf: &mut [S],
+) -> Result<()> {
     for sample in buf.iter_mut() {
-        *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(bps)?, bps);
+        *sample = S::read(bs, bps)?;
     }
 
     Ok(())
 }
 
-fn decode_fixed_linear<B: ReadBitsLtr>(
+fn decode_fixed_linear<B: ReadBitsLtr, S: SubframeSample>(
     bs: &mut B,
     bps: u32,
     order: u32,
-    buf: &mut [i32],
+    buf: &mut [S],
 ) -> Result<()> {
     if order as usize > buf.len() {
         return decode_error("flac: fixed predictor order is greater than the block size");
@@ -452,7 +589,12 @@ fn decode_fixed_linear<B: ReadBitsLtr>(
     Ok(())
 }
 
-fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i32]) -> Result<()> {
+fn decode_linear<B: ReadBitsLtr, S: SubframeSample>(
+    bs: &mut B,
+    bps: u32,
+    order: u32,
+    buf: &mut [S],
+) -> Result<()> {
     if order as usize > buf.len() {
         return decode_error("flac: predictor order is greater than the block size");
     }
@@ -484,9 +626,14 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
 
         // Helper function to dispatch to a predictor with a maximum order of N.
         #[inline(always)]
-        fn lpc<const N: usize>(order: u32, coeffs: &[i32; 32], coeff_shift: i32, buf: &mut [i32]) {
+        fn lpc<const N: usize, S: SubframeSample>(
+            order: u32,
+            coeffs: &[i32; 32],
+            coeff_shift: i32,
+            buf: &mut [S],
+        ) {
             let coeffs_n = (&coeffs[32 - N..32]).try_into().expect("slice has exactly N elements");
-            lpc_predict::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
+            lpc_predict::<N, _>(order as usize, coeffs_n, coeff_shift as u32, buf);
         }
 
         // Pick the best length linear predictor to use based on the order. Most FLAC streams use
@@ -495,12 +642,12 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
         // then there will be wasted computations. On the other hand, it is not worth the code bloat
         // to specialize for every order <= 12.
         match order {
-            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            0..=4 => lpc::<4, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            5..=6 => lpc::<6, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            7..=8 => lpc::<8, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            9..=10 => lpc::<10, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            11..=12 => lpc::<12, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            _ => lpc::<32, _>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
     }
     else {
@@ -510,10 +657,10 @@ fn decode_linear<B: ReadBitsLtr>(bs: &mut B, bps: u32, order: u32, buf: &mut [i3
     Ok(())
 }
 
-fn decode_residual<B: ReadBitsLtr>(
+fn decode_residual<B: ReadBitsLtr, S: SubframeSample>(
     bs: &mut B,
     n_prelude_samples: u32,
-    buf: &mut [i32],
+    buf: &mut [S],
 ) -> Result<()> {
     let method_enc = bs.read_bits_leq32(2)?;
 
@@ -574,10 +721,10 @@ fn decode_residual<B: ReadBitsLtr>(
     Ok(())
 }
 
-fn decode_rice_partition<B: ReadBitsLtr>(
+fn decode_rice_partition<B: ReadBitsLtr, S: SubframeSample>(
     bs: &mut B,
     param_bit_width: u32,
-    buf: &mut [i32],
+    buf: &mut [S],
 ) -> Result<()> {
     // Read the encoding parameter, generally the Rice parameter.
     let rice_param = bs.read_bits_leq32(param_bit_width)?;
@@ -593,7 +740,7 @@ fn decode_rice_partition<B: ReadBitsLtr>(
         for sample in buf.iter_mut() {
             let q = bs.read_unary_zeros()?;
             let r = bs.read_bits_leq32(rice_param)?;
-            *sample = rice_signed_to_i32((q << rice_param) | r);
+            *sample = S::from(rice_signed_to_i32((q << rice_param) | r));
         }
     }
     else {
@@ -607,7 +754,9 @@ fn decode_rice_partition<B: ReadBitsLtr>(
 
         // Read each binary encoded residual and store in buffer.
         for sample in buf.iter_mut() {
-            *sample = sign_extend_leq32_to_i32(bs.read_bits_leq32(residual_bits)?, residual_bits);
+            let residual =
+                sign_extend_leq32_to_i32(bs.read_bits_leq32(residual_bits)?, residual_bits);
+            *sample = S::from(residual);
         }
     }
 
@@ -660,7 +809,7 @@ fn verify_rice_signed_to_i32() {
     assert_eq!(rice_signed_to_i32(u32::MAX), -2_147_483_648);
 }
 
-fn fixed_predict(order: u32, buf: &mut [i32]) {
+fn fixed_predict<S: SubframeSample>(order: u32, buf: &mut [S]) {
     debug_assert!(order <= 4);
 
     // The Fixed Predictor is just a hard-coded version of the Linear Predictor up to order 4 and
@@ -674,35 +823,35 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
         // s(i) = 1*s(i),
         1 => {
             for i in 1..buf.len() {
-                buf[i] = buf[i].wrapping_add(buf[i - 1]);
+                buf[i] = buf[i].add_prediction(buf[i - 1].into());
             }
         }
         // A 2nd order predictor uses the polynomial: s(i) = 2*s(i-1) - 1*s(i-2).
         2 => {
             for i in 2..buf.len() {
-                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 2]));
-                let b = Wrapping(2) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b).0 as i32);
+                let a = Wrapping(-1) * Wrapping(buf[i - 2].into());
+                let b = Wrapping(2) * Wrapping(buf[i - 1].into());
+                buf[i] = buf[i].add_prediction((a + b).0);
             }
         }
         // A 3rd order predictor uses the polynomial: s(i) = 3*s(i-1) - 3*s(i-2) + 1*s(i-3).
         3 => {
             for i in 3..buf.len() {
-                let a = Wrapping(1) * Wrapping(i64::from(buf[i - 3]));
-                let b = Wrapping(-3) * Wrapping(i64::from(buf[i - 2]));
-                let c = Wrapping(3) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b + c).0 as i32);
+                let a = Wrapping(1) * Wrapping(buf[i - 3].into());
+                let b = Wrapping(-3) * Wrapping(buf[i - 2].into());
+                let c = Wrapping(3) * Wrapping(buf[i - 1].into());
+                buf[i] = buf[i].add_prediction((a + b + c).0);
             }
         }
         // A 4th order predictor uses the polynomial:
         // s(i) = 4*s(i-1) - 6*s(i-2) + 4*s(i-3) - 1*s(i-4).
         4 => {
             for i in 4..buf.len() {
-                let a = Wrapping(-1) * Wrapping(i64::from(buf[i - 4]));
-                let b = Wrapping(4) * Wrapping(i64::from(buf[i - 3]));
-                let c = Wrapping(-6) * Wrapping(i64::from(buf[i - 2]));
-                let d = Wrapping(4) * Wrapping(i64::from(buf[i - 1]));
-                buf[i] = buf[i].wrapping_add((a + b + c + d).0 as i32);
+                let a = Wrapping(-1) * Wrapping(buf[i - 4].into());
+                let b = Wrapping(4) * Wrapping(buf[i - 3].into());
+                let c = Wrapping(-6) * Wrapping(buf[i - 2].into());
+                let d = Wrapping(4) * Wrapping(buf[i - 1].into());
+                buf[i] = buf[i].add_prediction((a + b + c + d).0);
             }
         }
         _ => unreachable!(),
@@ -713,7 +862,12 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
 /// specified by `order`. Coefficients must be stored in reverse order in `coeffs` with the first
 /// coefficient at index 31. Coefficients at indices less than 31 - `order` must be 0.
 /// It is expected that the first `order` samples in `buf` are warm-up samples.
-fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32, buf: &mut [i32]) {
+fn lpc_predict<const N: usize, S: SubframeSample>(
+    order: usize,
+    coeffs: &[i32; N],
+    coeff_shift: u32,
+    buf: &mut [S],
+) {
     // Order must be less than or equal to the number of coefficients.
     debug_assert!(order <= coeffs.len());
 
@@ -724,14 +878,17 @@ fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32
     // calculate enough samples to reach N.
     let n_prefill = cmp::min(N, buf.len()) - order;
 
+    // For valid streams, the prediction cannot overflow an i64 since the coefficients are at most
+    // 15 bits, and samples at most 33 bits. Wrapping arithmetic is used to prevent invalid streams
+    // from causing a panic.
     for i in order..order + n_prefill {
         let predicted = coeffs[N - order..N]
             .iter()
             .zip(&buf[i - order..i])
-            .map(|(&c, &sample)| c as i64 * sample as i64)
-            .sum::<i64>();
+            .map(|(&c, &s)| i64::from(c).wrapping_mul(s.into()))
+            .fold(0, i64::wrapping_add);
 
-        buf[i] += (predicted >> coeff_shift) as i32;
+        buf[i] = buf[i].add_prediction(predicted >> coeff_shift);
     }
 
     // If the pre-fill operation filled the entire sample buffer, return immediately.
@@ -744,9 +901,205 @@ fn lpc_predict<const N: usize>(order: usize, coeffs: &[i32; N], coeff_shift: u32
         let predicted = coeffs
             .iter()
             .zip(&buf[i - N..i])
-            .map(|(&c, &s)| i64::from(c) * i64::from(s))
-            .sum::<i64>();
+            .map(|(&c, &s)| i64::from(c).wrapping_mul(s.into()))
+            .fold(0, i64::wrapping_add);
 
-        buf[i] += (predicted >> coeff_shift) as i32;
+        buf[i] = buf[i].add_prediction(predicted >> coeff_shift);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Writes a bitstream, most-significant bit first.
+    #[derive(Default)]
+    struct BitWriter {
+        buf: Vec<u8>,
+        n_bits: usize,
+    }
+
+    impl BitWriter {
+        /// Write the low `width` bits of `value`.
+        fn write(&mut self, value: u64, width: u32) {
+            for i in (0..width).rev() {
+                if self.n_bits % 8 == 0 {
+                    self.buf.push(0);
+                }
+                let bit = ((value >> i) & 1) as u8;
+                *self.buf.last_mut().unwrap() |= bit << (7 - (self.n_bits % 8));
+                self.n_bits += 1;
+            }
+        }
+
+        fn write_signed(&mut self, value: i64, width: u32) {
+            self.write(value as u64, width);
+        }
+
+        fn write_rice(&mut self, residual: i32, rice_param: u32) {
+            let folded = ((residual << 1) ^ (residual >> 31)) as u32;
+            for _ in 0..(folded >> rice_param) {
+                self.write(0, 1);
+            }
+            self.write(1, 1);
+            self.write(u64::from(folded), rice_param);
+        }
+
+        fn write_subframe_header(&mut self, subframe_type: u64, dropped_bps: u32) {
+            self.write(0, 1);
+            self.write(subframe_type, 6);
+            if dropped_bps > 0 {
+                self.write(1, 1);
+                self.write(0, dropped_bps - 1);
+                self.write(1, 1);
+            }
+            else {
+                self.write(0, 1);
+            }
+        }
+
+        /// Write a single partition of Rice coded residuals.
+        fn write_residuals(&mut self, residuals: &[i32], rice_param: u32) {
+            // Rice coding method, partition order 0.
+            self.write(0, 2);
+            self.write(0, 4);
+            self.write(u64::from(rice_param), 4);
+            for &r in residuals {
+                self.write_rice(r, rice_param);
+            }
+        }
+
+        fn finish(mut self) -> Vec<u8> {
+            // Pad so the reader can always fetch a full cache.
+            self.buf.extend_from_slice(&[0; 8]);
+            self.buf
+        }
+    }
+
+    // A 33-bit Side channel can represent values in the range [-2^32, 2^32 - 1].
+    const SIDE_MIN: i64 = -(1 << 32);
+    const SIDE_MAX: i64 = (1 << 32) - 1;
+
+    #[test]
+    fn verify_33bit_verbatim_subframe() {
+        let samples = [SIDE_MIN, SIDE_MAX, 0, -1, i64::from(i32::MIN) - 1, i64::from(i32::MAX) + 1];
+
+        let mut w = BitWriter::default();
+        w.write_subframe_header(0x01, 0);
+        for &s in &samples {
+            w.write_signed(s, 33);
+        }
+        let data = w.finish();
+
+        let mut buf = [0i64; 6];
+        read_subframe(&mut BitReaderLtr::new(&data), 33, &mut buf).unwrap();
+        assert_eq!(buf, samples);
+    }
+
+    #[test]
+    fn verify_33bit_constant_subframe_with_dropped_bits() {
+        // A 32-bit stream with 24-bit content has 8 dropped bits, but the Side channel can still
+        // exceed 32 bits once shifted.
+        let mut w = BitWriter::default();
+        w.write_subframe_header(0x00, 8);
+        w.write_signed(-(1 << 24), 25);
+        let data = w.finish();
+
+        let mut buf = [0i64; 4];
+        read_subframe(&mut BitReaderLtr::new(&data), 33, &mut buf).unwrap();
+        assert_eq!(buf, [SIDE_MIN; 4]);
+    }
+
+    #[test]
+    fn verify_33bit_fixed_subframe() {
+        let warmup = [4_000_000_000i64, 3_900_000_000];
+        let residuals = [7, -3, 0, 12, -25, 1];
+
+        let mut w = BitWriter::default();
+        w.write_subframe_header(0x08 | 2, 0);
+        for &s in &warmup {
+            w.write_signed(s, 33);
+        }
+        w.write_residuals(&residuals, 5);
+        let data = w.finish();
+
+        let mut expected = warmup.to_vec();
+        for &r in &residuals {
+            let n = expected.len();
+            expected.push(2 * expected[n - 1] - expected[n - 2] + i64::from(r));
+        }
+
+        let mut buf = [0i64; 8];
+        read_subframe(&mut BitReaderLtr::new(&data), 33, &mut buf).unwrap();
+        assert_eq!(buf[..], expected[..]);
+    }
+
+    #[test]
+    fn verify_33bit_lpc_subframe() {
+        let warmup = [3_000_000_000i64, 3_010_000_000];
+        let coeffs = [15565i32, -7373];
+        let shift = 13;
+        let residuals = [100, -200, 3, 0, 4095, -4096];
+
+        let mut w = BitWriter::default();
+        w.write_subframe_header(0x20 | (coeffs.len() as u64 - 1), 0);
+        for &s in &warmup {
+            w.write_signed(s, 33);
+        }
+        // QLP precision (15 bits) minus 1, and the QLP shift.
+        w.write(14, 4);
+        w.write(shift, 5);
+        for &c in &coeffs {
+            w.write_signed(i64::from(c), 15);
+        }
+        w.write_residuals(&residuals, 8);
+        let data = w.finish();
+
+        let mut expected = warmup.to_vec();
+        for &r in &residuals {
+            let n = expected.len();
+            let prediction =
+                i64::from(coeffs[0]) * expected[n - 1] + i64::from(coeffs[1]) * expected[n - 2];
+            expected.push((prediction >> shift) + i64::from(r));
+        }
+
+        let mut buf = [0i64; 8];
+        read_subframe(&mut BitReaderLtr::new(&data), 33, &mut buf).unwrap();
+        assert_eq!(buf[..], expected[..]);
+    }
+
+    #[test]
+    fn verify_i32_subframe_rejects_33bits() {
+        let mut w = BitWriter::default();
+        w.write_subframe_header(0x01, 0);
+        let data = w.finish();
+
+        let mut buf = [0i32; 4];
+        assert!(read_subframe(&mut BitReaderLtr::new(&data), 33, &mut buf).is_err());
+    }
+
+    #[test]
+    fn verify_i64_decorrelation() {
+        let values = [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX];
+
+        for &l in &values {
+            for &r in &values {
+                let side = [i64::from(l) - i64::from(r)];
+                let mid = (i64::from(l) + i64::from(r)) >> 1;
+
+                let mut out = [0];
+                decorrelate_left_side(&[l], Side::I64(&side, &mut out));
+                assert_eq!(out, [r], "left/side l={l} r={r}");
+
+                let mut out = [0];
+                decorrelate_right_side(&[r], Side::I64(&side, &mut out));
+                assert_eq!(out, [l], "right/side l={l} r={r}");
+
+                let mut mid = [mid as i32];
+                let mut out = [0];
+                decorrelate_mid_side(&mut mid, Side::I64(&side, &mut out));
+                assert_eq!((mid, out), ([l], [r]), "mid/side l={l} r={r}");
+            }
+        }
     }
 }

@@ -396,6 +396,12 @@ pub mod well_known {
     pub const CODEC_ID_ADPCM_IMA_WAV: AudioCodecId = AudioCodecId(0x204);
     /// ADPCM IMA QuickTime
     pub const CODEC_ID_ADPCM_IMA_QT: AudioCodecId = AudioCodecId(0x205);
+    /// ADPCM Yamaha
+    pub const CODEC_ID_ADPCM_YAMAHA: AudioCodecId = AudioCodecId(0x206);
+    /// ADPCM CRI ADX
+    pub const CODEC_ID_ADPCM_ADX: AudioCodecId = AudioCodecId(0x207);
+    /// ADPCM Shockwave Flash
+    pub const CODEC_ID_ADPCM_SWF: AudioCodecId = AudioCodecId(0x208);
 
     // Compressed lossy audio codecs
     //------------------------------
@@ -454,6 +460,12 @@ pub mod well_known {
     pub const CODEC_ID_BINK_AUDIO: AudioCodecId = AudioCodecId(0x1019);
     /// Smacker Audio
     pub const CODEC_ID_SMACKER_AUDIO: AudioCodecId = AudioCodecId(0x1020);
+    /// Dynamic Filter Pulse Width Modulation (DFPWM)
+    pub const CODEC_ID_DFPWM: AudioCodecId = AudioCodecId(0x1021);
+    /// ITU-T G.723.1
+    pub const CODEC_ID_G723_1: AudioCodecId = AudioCodecId(0x1022);
+    /// Nellymoser Asao
+    pub const CODEC_ID_NELLYMOSER: AudioCodecId = AudioCodecId(0x1023);
 
     // Compressed lossless audio codecs
     //---------------------------------
@@ -472,6 +484,8 @@ pub mod well_known {
     pub const CODEC_ID_RALF: AudioCodecId = AudioCodecId(0x2005);
     /// Dolby TrueHD Lossless codec
     pub const CODEC_ID_TRUEHD: AudioCodecId = AudioCodecId(0x2006);
+    /// Meridian Lossless Packing (MLP)
+    pub const CODEC_ID_MLP: AudioCodecId = AudioCodecId(0x2007);
 
     /// Codec profiles for well-known audio codecs.
     pub mod profiles {

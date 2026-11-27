@@ -5,8 +5,8 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-fuzz_target!(|data: Vec<u8>| {
-    let data = std::io::Cursor::new(data);
+fuzz_target!(|data: &[u8]| {
+    let data = std::io::Cursor::new(data.to_vec());
 
     let source = MediaSourceStream::new(Box::new(data), Default::default());
 

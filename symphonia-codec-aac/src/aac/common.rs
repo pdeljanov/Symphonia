@@ -75,6 +75,50 @@ pub static SWB_OFFSET_96K_LONG: [usize; 41 + 1] = [
     144, 156, 172, 188, 212, 240, 276, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024,
 ];
 
+pub static SWB_OFFSET_96K_LONG_960: [usize; 40 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80, 88, 96, 108, 120, 132,
+    144, 156, 172, 188, 212, 240, 276, 320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960,
+];
+
+pub static SWB_OFFSET_48K_LONG_960: [usize; 49 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 108, 120, 132, 144, 160,
+    176, 196, 216, 240, 264, 292, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704,
+    736, 768, 800, 832, 864, 896, 928, 960,
+];
+
+pub static SWB_OFFSET_24K_LONG_960: [usize; 46 + 1] = [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 52, 60, 68, 76, 84, 92, 100, 108, 116, 124, 136,
+    148, 160, 172, 188, 204, 220, 240, 260, 284, 308, 336, 364, 396, 432, 468, 508, 552, 600, 652,
+    704, 768, 832, 896, 960,
+];
+
+pub static SWB_OFFSET_16K_LONG_960: [usize; 42 + 1] = [
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 100, 112, 124, 136, 148, 160, 172, 184, 196, 212,
+    228, 244, 260, 280, 300, 320, 344, 368, 396, 424, 456, 492, 532, 572, 616, 664, 716, 772, 832,
+    896, 960,
+];
+
+pub static SWB_OFFSET_8K_LONG_960: [usize; 40 + 1] = [
+    0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 172, 188, 204, 220, 236, 252, 268,
+    288, 308, 328, 348, 372, 396, 420, 448, 476, 508, 544, 580, 620, 664, 712, 764, 820, 880, 944,
+    960,
+];
+
+pub const SWB_OFFSET_64K_SHORT_120: [usize; 12 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 92, 120];
+
+pub const SWB_OFFSET_48K_SHORT_120: [usize; 14 + 1] =
+    [0, 4, 8, 12, 16, 20, 28, 36, 44, 56, 68, 80, 96, 112, 120];
+
+pub const SWB_OFFSET_24K_SHORT_120: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 64, 76, 92, 108, 120];
+
+pub const SWB_OFFSET_16K_SHORT_120: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 60, 72, 88, 108, 120];
+
+pub const SWB_OFFSET_8K_SHORT_120: [usize; 15 + 1] =
+    [0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 60, 72, 88, 108, 120];
+
 /// A Linear Congruential Generator (LCG) pseudo-random number generator from Numerical Recipes.
 #[derive(Clone)]
 pub struct Lcg {
@@ -96,12 +140,24 @@ impl Lcg {
 
 #[derive(Clone, Copy)]
 pub struct GASubbandInfo {
+    pub frame_len: usize,
     pub min_srate: u32,
     pub long_bands: &'static [usize],
     pub short_bands: &'static [usize],
 }
 
 impl GASubbandInfo {
+    /// Find the scale factor bands for frames of `frame_len` (1024 or 960) coefficients, or `None`
+    /// if there are none for the combination.
+    pub fn find_for(srate: u32, frame_len: usize) -> Option<GASubbandInfo> {
+        match frame_len {
+            1024 => Some(Self::find(srate)),
+            960 => Some(AAC_SUBBAND_INFO_960[Self::find_idx(srate)])
+                .filter(|sbi| !sbi.long_bands.is_empty()),
+            _ => None,
+        }
+    }
+
     pub fn find(srate: u32) -> GASubbandInfo {
         for sbi in AAC_SUBBAND_INFO.iter() {
             if srate >= sbi.min_srate {
@@ -109,6 +165,11 @@ impl GASubbandInfo {
             }
         }
         unreachable!()
+    }
+
+    /// Get the index of this subband info, which is the same as the sampling frequency index.
+    pub fn find_index(&self) -> usize {
+        AAC_SUBBAND_INFO.iter().position(|sbi| sbi.min_srate == self.min_srate).unwrap_or(0)
     }
 
     pub fn find_idx(srate: u32) -> usize {
@@ -123,65 +184,153 @@ impl GASubbandInfo {
 
 static AAC_SUBBAND_INFO: [GASubbandInfo; 12] = [
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 92017,
         long_bands: &SWB_OFFSET_96K_LONG,
         short_bands: &SWB_OFFSET_64K_SHORT,
     }, //96K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 75132,
         long_bands: &SWB_OFFSET_96K_LONG,
         short_bands: &SWB_OFFSET_64K_SHORT,
     }, //88.2K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 55426,
         long_bands: &SWB_OFFSET_64K_LONG,
         short_bands: &SWB_OFFSET_64K_SHORT,
     }, //64K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 46009,
         long_bands: &SWB_OFFSET_48K_LONG,
         short_bands: &SWB_OFFSET_48K_SHORT,
     }, //48K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 37566,
         long_bands: &SWB_OFFSET_48K_LONG,
         short_bands: &SWB_OFFSET_48K_SHORT,
     }, //44.1K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 27713,
         long_bands: &SWB_OFFSET_32K_LONG,
         short_bands: &SWB_OFFSET_48K_SHORT,
     }, //32K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 23004,
         long_bands: &SWB_OFFSET_24K_LONG,
         short_bands: &SWB_OFFSET_24K_SHORT,
     }, //24K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 18783,
         long_bands: &SWB_OFFSET_24K_LONG,
         short_bands: &SWB_OFFSET_24K_SHORT,
     }, //22.05K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 13856,
         long_bands: &SWB_OFFSET_16K_LONG,
         short_bands: &SWB_OFFSET_16K_SHORT,
     }, //16K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 11502,
         long_bands: &SWB_OFFSET_16K_LONG,
         short_bands: &SWB_OFFSET_16K_SHORT,
     }, //12K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 9391,
         long_bands: &SWB_OFFSET_16K_LONG,
         short_bands: &SWB_OFFSET_16K_SHORT,
     }, //11.025K
     GASubbandInfo {
+        frame_len: 1024,
         min_srate: 0,
         long_bands: &SWB_OFFSET_8K_LONG,
         short_bands: &SWB_OFFSET_8K_SHORT,
     }, //8K
+];
+
+/// Scale factor bands of 960-sample frames. The long bands of 64 kHz are not known, and left empty.
+static AAC_SUBBAND_INFO_960: [GASubbandInfo; 12] = [
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 92017,
+        long_bands: &SWB_OFFSET_96K_LONG_960,
+        short_bands: &SWB_OFFSET_64K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 75132,
+        long_bands: &SWB_OFFSET_96K_LONG_960,
+        short_bands: &SWB_OFFSET_64K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 55426,
+        long_bands: &[],
+        short_bands: &SWB_OFFSET_64K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 46009,
+        long_bands: &SWB_OFFSET_48K_LONG_960,
+        short_bands: &SWB_OFFSET_48K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 37566,
+        long_bands: &SWB_OFFSET_48K_LONG_960,
+        short_bands: &SWB_OFFSET_48K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 27713,
+        long_bands: &SWB_OFFSET_48K_LONG_960,
+        short_bands: &SWB_OFFSET_48K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 23004,
+        long_bands: &SWB_OFFSET_24K_LONG_960,
+        short_bands: &SWB_OFFSET_24K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 18783,
+        long_bands: &SWB_OFFSET_24K_LONG_960,
+        short_bands: &SWB_OFFSET_24K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 13856,
+        long_bands: &SWB_OFFSET_16K_LONG_960,
+        short_bands: &SWB_OFFSET_16K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 11502,
+        long_bands: &SWB_OFFSET_16K_LONG_960,
+        short_bands: &SWB_OFFSET_16K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 9391,
+        long_bands: &SWB_OFFSET_16K_LONG_960,
+        short_bands: &SWB_OFFSET_16K_SHORT_120,
+    },
+    GASubbandInfo {
+        frame_len: 960,
+        min_srate: 0,
+        long_bands: &SWB_OFFSET_8K_LONG_960,
+        short_bands: &SWB_OFFSET_8K_SHORT_120,
+    },
 ];
 
 macro_rules! validate {

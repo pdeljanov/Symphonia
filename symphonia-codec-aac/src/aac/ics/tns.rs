@@ -146,12 +146,14 @@ impl Tns {
         Ok(Some(Self { n_filt, coeffs }))
     }
 
+    #[inline]
     pub fn synth(
         &self,
         info: &IcsInfo,
         bands: &[usize],
         rate_idx: usize,
-        coeffs: &mut [f32; 1024],
+        win_len: usize,
+        coeffs: &mut [f32],
     ) {
         let tns_max_bands = (if info.long_win {
             TNS_MAX_LONG_BANDS[rate_idx]
@@ -175,22 +177,38 @@ impl Tns {
                     continue;
                 }
 
-                let start = w * 128 + bands[bottom.min(tns_max_bands)];
-                let end = w * 128 + bands[top.min(tns_max_bands)];
+                let start = w * win_len + bands[bottom.min(tns_max_bands)];
+                let end = w * win_len + bands[top.min(tns_max_bands)];
 
-                let lpc = &self.coeffs[w][f].coef;
+                let mut local_lpc = [0.0f32; TNS_MAX_ORDER];
+                local_lpc[..order].copy_from_slice(&self.coeffs[w][f].coef[..order]);
 
                 if !self.coeffs[w][f].direction {
-                    for (m, i) in (start..end).enumerate() {
-                        for j in 0..order.min(m) {
-                            coeffs[i] -= coeffs[i - j - 1] * lpc[j];
+                    // The first coefficients of the range have fewer than `order` predecessors.
+                    let ramp = order.min(end - start);
+                    for m in 0..ramp {
+                        let i = start + m;
+                        for j in 0..m {
+                            coeffs[i] -= coeffs[i - j - 1] * local_lpc[j];
+                        }
+                    }
+                    for i in (start + ramp)..end {
+                        for j in 0..order {
+                            coeffs[i] -= coeffs[i - j - 1] * local_lpc[j];
                         }
                     }
                 }
                 else {
-                    for (m, i) in (start..end).rev().enumerate() {
-                        for j in 0..order.min(m) {
-                            coeffs[i] -= coeffs[i + j + 1] * lpc[j];
+                    let ramp = order.min(end - start);
+                    for m in 0..ramp {
+                        let i = end - 1 - m;
+                        for j in 0..m {
+                            coeffs[i] -= coeffs[i + j + 1] * local_lpc[j];
+                        }
+                    }
+                    for i in (start..end - ramp).rev() {
+                        for j in 0..order {
+                            coeffs[i] -= coeffs[i + j + 1] * local_lpc[j];
                         }
                     }
                 }

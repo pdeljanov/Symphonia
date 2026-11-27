@@ -58,7 +58,7 @@ pub fn read_object_descriptor_header<B: ReadBytes>(reader: &mut B) -> Result<(Cl
 /// Try to get a codec ID from from an object type indication.
 pub fn codec_id_from_object_type_indication(obj_type: u8) -> Option<CodecId> {
     use symphonia_core::codecs::audio::well_known::{
-        CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_DCA, CODEC_ID_EAC3, CODEC_ID_MP3,
+        CODEC_ID_AAC, CODEC_ID_AC3, CODEC_ID_DCA, CODEC_ID_EAC3, CODEC_ID_MP3, CODEC_ID_VORBIS,
     };
     use symphonia_core::codecs::video::well_known::{
         CODEC_ID_H264, CODEC_ID_HEVC, CODEC_ID_MPEG2, CODEC_ID_MPEG4, CODEC_ID_VP9,
@@ -76,6 +76,8 @@ pub fn codec_id_from_object_type_indication(obj_type: u8) -> Option<CodecId> {
     const OBJ_TYPE_AUDIO_AC3: u8 = 0xa5;
     const OBJ_TYPE_AUDIO_EAC3: u8 = 0xa6;
     const OBJ_TYPE_AUDIO_DTS: u8 = 0xa9;
+    // Not a standard object type, but the one that Vorbis in MP4 uses.
+    const OBJ_TYPE_AUDIO_VORBIS: u8 = 0xdd;
 
     // MPEG2 video
     const OBJ_TYPE_VISUAL_MPEG2_2_SP: u8 = 0x60; // Visual ISO/IEC 13818-2 Simple Profile
@@ -105,6 +107,7 @@ pub fn codec_id_from_object_type_indication(obj_type: u8) -> Option<CodecId> {
         OBJ_TYPE_AUDIO_AC3 => CodecId::Audio(CODEC_ID_AC3),
         OBJ_TYPE_AUDIO_EAC3 => CodecId::Audio(CODEC_ID_EAC3),
         OBJ_TYPE_AUDIO_DTS => CodecId::Audio(CODEC_ID_DCA),
+        OBJ_TYPE_AUDIO_VORBIS => CodecId::Audio(CODEC_ID_VORBIS),
         OBJ_TYPE_VISUAL_MPEG2_2_SP
         | OBJ_TYPE_VISUAL_MPEG2_2_MP
         | OBJ_TYPE_VISUAL_MPEG2_2_SNR

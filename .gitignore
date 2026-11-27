@@ -56,3 +56,7 @@ ehthumbs_vista.db
 *.stackdump
 [Dd]esktop.ini
 *.lnk
+
+# Scratch
+tmp/
+.tokensave

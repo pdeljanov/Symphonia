@@ -13,32 +13,34 @@
 #![allow(clippy::needless_update)]
 
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::errors::SeekErrorKind;
 use symphonia::core::errors::{Error, Result, unsupported_error};
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
+use symphonia::core::units::{Time, Timestamp};
 
 use clap::{Arg, ArgAction};
 use log::warn;
-
-/// The absolute maximum allowable sample delta. Around 2^-17 (-102.4dB).
-const ABS_MAX_ALLOWABLE_SAMPLE_DELTA: f32 = 0.00001;
 
 // The absolute maximum allowable sample delta for a fully compliant MP3 decoder as specified by the
 // ISO. Around 2^-14 (-84.2dB).
 // const ABS_MAX_ALLOWABLE_SAMPLE_DELTA_MP3: f32 = 0.00006104;
 
-#[derive(Copy, Clone, Default)]
+#[derive(Clone, Default)]
 enum RefDecoder {
     #[default]
     Ffmpeg,
+    /// A pre-decoded WAVE file.
+    Wav(PathBuf),
     Flac,
     Mpg123,
     Oggdec,
@@ -52,6 +54,8 @@ struct TestOptions {
     stop_after_fail: bool,
     keep_going: bool,
     gapless: bool,
+    tolerance: f32,
+    dump: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -91,6 +95,12 @@ fn build_ffmpeg_command(path: &Path, gapless: bool) -> Command {
     cmd
 }
 
+fn build_cat_command(path: &Path) -> Command {
+    let mut cmd = Command::new("cat");
+    cmd.arg(path).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd
+}
+
 fn build_flac_command(path: &Path) -> Command {
     let mut cmd = Command::new("flac");
 
@@ -125,6 +135,7 @@ impl RefProcess {
     fn try_spawn(decoder: RefDecoder, gapless: bool, path: &Path) -> Result<RefProcess> {
         let mut cmd = match decoder {
             RefDecoder::Ffmpeg => build_ffmpeg_command(path, gapless),
+            RefDecoder::Wav(wav) => build_cat_command(&wav),
             RefDecoder::Flac => build_flac_command(path),
             RefDecoder::Mpg123 => build_mpg123_command(path, gapless),
             RefDecoder::Oggdec => build_oggdec_command(path),
@@ -145,6 +156,7 @@ struct DecoderInstance {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
+    dec_opts: AudioDecoderOptions,
 }
 
 impl DecoderInstance {
@@ -175,7 +187,27 @@ impl DecoderInstance {
 
         let track_id = track.id;
 
-        Ok(DecoderInstance { format, decoder, track_id })
+        Ok(DecoderInstance { format, decoder, track_id, dec_opts })
+    }
+
+    /// Recreate the decoder from the track of the format reader, after the reader signalled that
+    /// the tracks changed (e.g., the next link of a chained Ogg stream).
+    fn reset_decoder(&mut self) -> Result<()> {
+        let track = match self.format.default_track(TrackType::Audio) {
+            Some(t) => t,
+            None => return unsupported_error("only audio tracks are supported"),
+        };
+
+        let codec_params = match &track.codec_params {
+            Some(CodecParameters::Audio(params)) => params,
+            _ => return unsupported_error("only audio tracks are supported"),
+        };
+
+        self.decoder =
+            symphonia::default::get_codecs().make_audio_decoder(codec_params, &self.dec_opts)?;
+        self.track_id = track.id;
+
+        Ok(())
     }
 
     fn samples_per_frame(&self) -> Option<u64> {
@@ -188,6 +220,10 @@ impl DecoderInstance {
             let packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => return Ok(None),
+                Err(Error::ResetRequired) => {
+                    self.reset_decoder()?;
+                    continue;
+                }
                 Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
                     // WavReader will always return an UnexpectedEof when it ends because the
                     // reference decoder is piping the decoded audio and cannot write out the
@@ -241,19 +277,40 @@ fn run_check(
     let mut tgt_sample_cnt = 0;
     let mut tgt_sample_pos = 0;
 
-    let samples_per_frame = tgt_inst.samples_per_frame().unwrap_or(1);
+    // The target's output channels may only be known once the first packet has been decoded (e.g.,
+    // an implicit parametric stereo upmix), so verify the samples/frame match after that.
+    let mut samples_per_frame: u64;
+    let ref_samples_per_frame = ref_inst.samples_per_frame().unwrap_or(1);
+    let mut verified_samples_per_frame = false;
 
-    // Samples/frame must match for both decoders.
-    if samples_per_frame != ref_inst.samples_per_frame().unwrap_or(1) {
-        return unsupported_error("target and reference decoder samples per frame mismatch");
-    }
+    let mut dump =
+        opts.dump.as_ref().map(std::fs::File::create).transpose()?.map(std::io::BufWriter::new);
 
     let early_fail = 'outer: loop {
         // Decode the next target audio buffer and copy it to the target sample buffer.
         match tgt_inst.next_audio_buf(opts.keep_going)? {
-            Some(buf) => buf.copy_to_vec_interleaved(&mut tgt_sample_buf),
+            Some(buf) => {
+                samples_per_frame = buf.spec().channels().count() as u64;
+                buf.copy_to_vec_interleaved(&mut tgt_sample_buf)
+            }
             None => break 'outer false,
         };
+
+        // Samples/frame must match for both decoders.
+        if !verified_samples_per_frame {
+            if samples_per_frame != ref_samples_per_frame {
+                return unsupported_error(
+                    "target and reference decoder samples per frame mismatch",
+                );
+            }
+            verified_samples_per_frame = true;
+        }
+
+        if let Some(dump) = dump.as_mut() {
+            for sample in &tgt_sample_buf {
+                dump.write_all(&sample.to_le_bytes())?;
+            }
+        }
 
         tgt_sample_cnt = tgt_sample_buf.len();
         tgt_sample_pos = 0;
@@ -292,7 +349,7 @@ fn run_check(
                 // difference.
                 let delta = t.clamp(-1.0, 1.0) - r.clamp(-1.0, 1.0);
 
-                if delta.abs() > ABS_MAX_ALLOWABLE_SAMPLE_DELTA {
+                if delta.abs() > opts.tolerance {
                     // Print per-sample or per-packet failure nessage based on selected options.
                     if !opts.is_quiet && (opts.is_per_sample || n_failed_pkt_samples == 0) {
                         println!(
@@ -346,9 +403,107 @@ fn run_check(
     Ok(())
 }
 
+/// Seek to a time, then decode the remainder of the stream, writing the decoded audio, starting
+/// from the exact seeked-to frame, as interleaved f32le samples.
+fn run_seek_dump(path: &Path, time: f64, dump: &Path, gapless: bool) -> Result<()> {
+    let tgt_mss = MediaSourceStream::new(Box::new(File::open(path)?), Default::default());
+    let dec_opts = AudioDecoderOptions::default().gapless(gapless);
+
+    let mut inst = DecoderInstance::try_open(tgt_mss, Default::default(), dec_opts)?;
+
+    let seek_to = SeekTo::Time {
+        time: Time::try_from_secs_f64(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?,
+        track_id: Some(inst.track_id),
+    };
+
+    // Decode the start of the stream first, as a player that seeks while playing would have. Some
+    // decoders keep stream parameters (e.g., the SBR header) that only appear at the start.
+    for _ in 0..8 {
+        match inst.format.next_packet() {
+            Ok(Some(packet)) if packet.track_id == inst.track_id => {
+                let _ = inst.decoder.decode(&packet);
+            }
+            Ok(Some(_)) => (),
+            _ => break,
+        }
+    }
+
+    let seeked_to = inst.format.seek(SeekMode::Accurate, seek_to)?;
+    inst.decoder.reset();
+
+    let time_base = inst
+        .format
+        .tracks()
+        .iter()
+        .find(|track| track.id == inst.track_id)
+        .and_then(|track| track.time_base)
+        .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+
+    let mut out = std::io::BufWriter::new(File::create(dump)?);
+    let mut samples: Vec<f32> = Vec::new();
+    let mut channels = 0;
+
+    // Timestamps are in the units of the timebase, which may differ from the sampling rate of the
+    // decoded audio (e.g., for SBR). Convert them to frames of the decoded audio.
+    let to_frames = |ts: i64, rate: u32| {
+        let secs = time_base.calc_time(Timestamp::new(ts));
+        secs.map(|time| (time.as_secs_f64() * f64::from(rate)).round() as i64).unwrap_or(0)
+    };
+
+    let mut required_frame = None;
+
+    loop {
+        let packet = match inst.format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => return Err(err),
+        };
+
+        if packet.track_id != inst.track_id {
+            continue;
+        }
+
+        // The decoded frames of a gapless packet begin after the trimmed frames.
+        let pts = packet.pts.get() + if gapless { packet.trim_start.get() as i64 } else { 0 };
+
+        let buf = match inst.decoder.decode(&packet) {
+            Ok(buf) => buf,
+            Err(Error::DecodeError(err)) => {
+                warn!("{err}");
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+
+        channels = buf.spec().channels().count();
+        let rate = buf.spec().rate();
+        buf.copy_to_vec_interleaved(&mut samples);
+
+        // The first sample that should be output is the one that was required.
+        let required =
+            *required_frame.get_or_insert_with(|| to_frames(seeked_to.required_ts.get(), rate));
+
+        let skip =
+            (required - to_frames(pts, rate)).clamp(0, (samples.len() / channels.max(1)) as i64);
+
+        for sample in &samples[skip as usize * channels..] {
+            out.write_all(&sample.to_le_bytes())?;
+        }
+    }
+
+    println!(
+        "required_ts={} actual_ts={} channels={channels}",
+        required_frame.unwrap_or(0),
+        seeked_to.actual_ts
+    );
+
+    Ok(())
+}
+
 fn run_test(path: &Path, opts: &TestOptions, result: &mut TestResult) -> Result<()> {
     // 1. Start the reference decoder process.
-    let mut ref_process = RefProcess::try_spawn(opts.ref_decoder, opts.gapless, path)?;
+    let mut ref_process = RefProcess::try_spawn(opts.ref_decoder.clone(), opts.gapless, path)?;
 
     // 2. Instantiate a Symphonia decoder for the reference process output.
     let ref_ms = Box::new(ReadOnlySource::new(match ref_process.child.stdout.take() {
@@ -413,6 +568,32 @@ fn main() {
                 .help("Specify a particular decoder to be used as the reference"),
         )
         .arg(
+            Arg::new("ref-wav")
+                .long("ref-wav")
+                .value_parser(clap::value_parser!(PathBuf))
+                .help("Use a pre-decoded WAVE file as the reference instead of a decoder"),
+        )
+        .arg(
+            Arg::new("dump")
+                .long("dump")
+                .value_parser(clap::value_parser!(PathBuf))
+                .help("Write the target's decoded audio as interleaved f32le samples to a file"),
+        )
+        .arg(
+            Arg::new("seek")
+                .long("seek")
+                .value_parser(clap::value_parser!(f64))
+                .requires("dump")
+                .help("Seek to a time in seconds and dump the audio from there (no comparison)"),
+        )
+        .arg(
+            Arg::new("tolerance")
+                .long("tolerance")
+                .value_parser(clap::value_parser!(f32))
+                .default_value("0.00001")
+                .help("The absolute maximum allowable sample delta"),
+        )
+        .arg(
             Arg::new("no-gapless")
                 .long("no-gapless")
                 .action(ArgAction::SetTrue)
@@ -445,7 +626,14 @@ fn main() {
         }
     };
 
+    let ref_decoder = match matches.get_one::<PathBuf>("ref-wav") {
+        Some(wav) => RefDecoder::Wav(wav.clone()),
+        None => ref_decoder,
+    };
+
     let opts = TestOptions {
+        dump: matches.get_one::<PathBuf>("dump").cloned(),
+        tolerance: *matches.get_one::<f32>("tolerance").expect("tolerance has a default"),
         ref_decoder,
         is_per_sample: matches.get_flag("samples"),
         is_quiet: matches.get_flag("quiet"),
@@ -454,6 +642,17 @@ fn main() {
         gapless: !matches.get_flag("no-gapless"),
         ..Default::default()
     };
+
+    if let Some(&time) = matches.get_one::<f64>("seek") {
+        let dump = opts.dump.as_ref().expect("dump is required by seek");
+
+        if let Err(err) = run_seek_dump(path, time, dump, opts.gapless) {
+            eprintln!("Seek test interrupted by error: {err}");
+            std::process::exit(2);
+        }
+
+        return;
+    }
 
     let mut res: TestResult = Default::default();
 

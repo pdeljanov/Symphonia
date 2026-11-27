@@ -173,7 +173,7 @@ fn scan_stream_end(
     streams: &mut BTreeMap<u32, LogicalStream>,
     byte_range_end: u64,
 ) -> Option<u64> {
-    let scoped_len = byte_range_end - reader.pos();
+    let scoped_len = byte_range_end.saturating_sub(reader.pos());
 
     let mut scoped_reader = ScopedStream::new(reader, scoped_len);
 

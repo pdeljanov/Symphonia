@@ -6,7 +6,7 @@ use symphonia::core::codecs::registry::RegisterableAudioDecoder;
 use symphonia::default::codecs::AdpcmDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
-fuzz_target!(|data: Vec<u8>| {
+fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
     }

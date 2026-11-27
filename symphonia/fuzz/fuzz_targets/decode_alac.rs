@@ -4,7 +4,7 @@ use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::CODEC_ID_
 use symphonia::default::codecs::AlacDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
-fuzz_target!(|data: Vec<u8>| {
+fuzz_target!(|data: &[u8]| {
     let mut codec_params = AudioCodecParameters::new();
     codec_params.for_codec(CODEC_ID_ALAC);
 

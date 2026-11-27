@@ -22,3 +22,22 @@ macro_rules! fuzz_demuxer {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! fuzz_demuxer_decode {
+    ($data:expr, $constructor:expr) => {{
+        use symphonia::core::formats::FormatOptions;
+        use symphonia::core::io::MediaSourceStream;
+        use symphonia::core::meta::MetadataOptions;
+
+        let cursor = std::io::Cursor::new($data);
+        let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+        let format_opts = FormatOptions::default();
+        let meta_opts = MetadataOptions::default();
+
+        if let Ok(reader) = $constructor(mss, &format_opts, &meta_opts) {
+            $crate::decode_all_packets(Box::new(reader));
+        }
+    }};
+}

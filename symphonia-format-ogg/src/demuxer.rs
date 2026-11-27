@@ -91,6 +91,9 @@ impl<'s> OggReader<'s> {
 
         // If the page is marked as a first page, then try to start a new physical stream.
         if page.header.is_first_page {
+            // The previous physical stream has ended. Drop its logical streams so that running out
+            // of data while starting the next one is not mistaken for the end of the previous one.
+            self.streams.clear();
             self.start_new_physical_stream()?;
             return reset_error();
         }
@@ -108,7 +111,9 @@ impl<'s> OggReader<'s> {
     }
 
     fn have_all_streams_read_last_page(&self) -> bool {
-        self.streams.iter().all(|(_, stream)| stream.has_read_last_page().unwrap_or(true))
+        // No logical streams means a new physical stream failed to start.
+        !self.streams.is_empty()
+            && self.streams.iter().all(|(_, stream)| stream.has_read_last_page().unwrap_or(true))
     }
 
     fn peek_logical_packet(&self) -> Option<&Packet> {
@@ -262,12 +267,7 @@ impl<'s> OggReader<'s> {
         // Consume packets until reaching the desired timestamp.
         let actual_ts = loop {
             match self.peek_logical_packet() {
-                Some(packet) => {
-                    // Skip packets not belonging to the stream being seeked.
-                    if packet.track_id != serial {
-                        continue;
-                    }
-
+                Some(packet) if packet.track_id == serial => {
                     match packet.pts.checked_add(packet.dur) {
                         Some(next_packet_ts) if next_packet_ts < target_ts => (),
                         // Packet exceeds the requested timestamp, or the representable range.
@@ -276,6 +276,9 @@ impl<'s> OggReader<'s> {
 
                     self.discard_logical_packet();
                 }
+                // The packet does not belong to the stream being seeked. Discard it so that the
+                // next packet, or page, may be examined. Peeking alone makes no progress.
+                Some(_) => self.discard_logical_packet(),
                 _ => match self.read_page() {
                     Ok(_) => (),
                     Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -505,12 +508,7 @@ impl FormatReader for OggReader<'_> {
 
                     // Timestamp upper-bound out-of-range.
                     if let Some(num_frames) = track.num_frames {
-                        let max_ts = track
-                            .start_ts
-                            .checked_add(Duration::from(num_frames))
-                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
-
-                        if ts > max_ts {
+                        if ts.get() > num_frames as i64 {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
@@ -554,12 +552,7 @@ impl FormatReader for OggReader<'_> {
 
                     // Timestamp upper-bound out-of-range.
                     if let Some(num_frames) = track.num_frames {
-                        let max_ts = track
-                            .start_ts
-                            .checked_add(Duration::from(num_frames))
-                            .ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
-
-                        if ts > max_ts {
+                        if ts.get() > num_frames as i64 {
                             return seek_error(SeekErrorKind::OutOfRange);
                         }
                     }
@@ -586,5 +579,56 @@ impl FormatReader for OggReader<'_> {
         Self: 's,
     {
         self.reader
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphonia_core::checksum::Crc32;
+
+    fn page(flags: u8, absgp: u64, seq: u32, packets: &[&[u8]]) -> Vec<u8> {
+        let mut page = b"OggS".to_vec();
+        page.push(0);
+        page.push(flags);
+        page.extend_from_slice(&absgp.to_le_bytes());
+        page.extend_from_slice(&1u32.to_le_bytes());
+        page.extend_from_slice(&seq.to_le_bytes());
+        page.extend_from_slice(&[0; 4]);
+        page.push(packets.len() as u8);
+        // Each packet is shorter than 255 bytes, so it uses a single lacing value.
+        page.extend(packets.iter().map(|p| p.len() as u8));
+        packets.iter().for_each(|p| page.extend_from_slice(p));
+
+        let mut crc = Crc32::new(0);
+        crc.process_buf_bytes(&page);
+        page[22..26].copy_from_slice(&crc.crc().to_le_bytes());
+        page
+    }
+
+    #[test]
+    fn packet_dts_equals_pts() {
+        // Mono Opus, no pre-skip, 48 kHz input, mapping family 0.
+        let mut opus_head = b"OpusHead".to_vec();
+        opus_head.extend_from_slice(&[1, 1, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0]);
+        let mut opus_tags = b"OpusTags".to_vec();
+        opus_tags.extend_from_slice(&[0; 8]);
+        // TOC byte 0xf8: CELT-only fullband, 20 ms (960 samples), one frame.
+        let audio: &[u8] = &[0xf8, 0xff, 0xfe];
+
+        let mut data = page(0x02, 0, 0, &[&opus_head]);
+        data.extend(page(0x00, 0, 1, &[&opus_tags]));
+        data.extend(page(0x04, 3 * 960, 2, &[audio, audio, audio]));
+
+        let mss = MediaSourceStream::new(Box::new(std::io::Cursor::new(data)), Default::default());
+        let mut reader = OggReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        let mut count = 0;
+        while let Some(packet) = reader.next_packet().unwrap() {
+            assert_eq!(packet.pts, Timestamp::from(count * 960));
+            assert_eq!(packet.dts, packet.pts);
+            count += 1;
+        }
+        assert_eq!(count, 3);
     }
 }

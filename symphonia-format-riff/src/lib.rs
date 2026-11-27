@@ -19,9 +19,13 @@ mod common;
 #[cfg(feature = "aiff")]
 mod aiff;
 #[cfg(feature = "wav")]
+mod w64;
+#[cfg(feature = "wav")]
 mod wave;
 
 #[cfg(feature = "aiff")]
 pub use aiff::AiffReader;
+#[cfg(feature = "wav")]
+pub use w64::W64Reader;
 #[cfg(feature = "wav")]
 pub use wave::WavReader;

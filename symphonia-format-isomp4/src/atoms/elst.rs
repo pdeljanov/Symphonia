@@ -14,17 +14,17 @@ use crate::atoms::{decode_error, limits::*};
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ElstEntry {
-    segment_duration: u64,
-    media_time: i64,
-    media_rate_int: i16,
-    media_rate_frac: i16,
+    pub segment_duration: u64,
+    pub media_time: i64,
+    pub media_rate_int: i16,
+    pub media_rate_frac: i16,
 }
 
 /// Edit list atom.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ElstAtom {
-    entries: Vec<ElstEntry>,
+    pub entries: Vec<ElstEntry>,
 }
 
 impl Atom for ElstAtom {
