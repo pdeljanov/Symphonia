@@ -313,6 +313,13 @@ impl PcmDecoder {
         // Otherwise, start with a 0 capacity and let the buffer grow dynamically while decoding.
         let capacity = params.max_frames_per_packet.unwrap_or(0) as usize;
 
+        if !symphonia_core::audio::is_reasonable_capacity(
+            capacity,
+            params.channels.as_ref().map_or(1, |c| c.count()),
+        ) {
+            return unsupported_error("pcm: maximum frames per packet is too large");
+        }
+
         // Determine the sample format for the audio buffer based on the codec ID.
         let (sample_format, sample_format_width, bytes_per_coded_sample) = match params.codec {
             CODEC_ID_PCM_S32LE | CODEC_ID_PCM_S32BE => (SampleFormat::S32, 32, 4),

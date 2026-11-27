@@ -55,6 +55,34 @@ impl State {
     }
 }
 
+impl State {
+    /// Get the layer the state decodes.
+    fn layer(&self) -> MpegLayer {
+        match self {
+            #[cfg(feature = "mp1")]
+            State::Layer1(_) => MpegLayer::Layer1,
+            #[cfg(feature = "mp2")]
+            State::Layer2(_) => MpegLayer::Layer2,
+            #[cfg(feature = "mp3")]
+            State::Layer3(_) => MpegLayer::Layer3,
+        }
+    }
+
+    /// Create the state for decoding `layer`, if the layer is enabled.
+    fn for_layer(layer: MpegLayer) -> Option<Self> {
+        match layer {
+            #[cfg(feature = "mp1")]
+            MpegLayer::Layer1 => Some(State::Layer1(layer1::Layer1::new())),
+            #[cfg(feature = "mp2")]
+            MpegLayer::Layer2 => Some(State::Layer2(layer2::Layer2::new())),
+            #[cfg(feature = "mp3")]
+            MpegLayer::Layer3 => Some(State::Layer3(Box::new(layer3::Layer3::new()))),
+            #[allow(unreachable_patterns)]
+            _ => None,
+        }
+    }
+}
+
 /// MPEG1 and MPEG2 audio layer 1, 2, and 3 decoder.
 pub struct MpaDecoder {
     opts: AudioDecoderOptions,
@@ -109,7 +137,16 @@ impl MpaDecoder {
         // Clear the audio buffer.
         self.buf.clear();
 
-        // Choose the decode step based on the MPEG layer and the current codec ID.
+        // Some containers (e.g., MP4) identify all MPEG audio layers with a single codec. Follow the
+        // layer of the stream if it differs from the one that was expected.
+        if self.state.layer() != header.layer {
+            match State::for_layer(header.layer) {
+                Some(state) => self.state = state,
+                None => return decode_error("mpa: invalid mpeg audio layer"),
+            }
+        }
+
+        // Choose the decode step based on the MPEG layer.
         match &mut self.state {
             #[cfg(feature = "mp1")]
             State::Layer1(layer) if header.layer == MpegLayer::Layer1 => {

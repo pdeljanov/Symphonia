@@ -612,3 +612,13 @@ impl<S: Sample> DerefMut for MutableAudioPlaneSlices<'_, S> {
         &mut self.planes
     }
 }
+
+/// The most samples (frames times channels) that a decoder should allocate up front for an audio
+/// buffer whose size comes from untrusted codec parameters.
+pub const MAX_PREALLOCATED_SAMPLES: usize = 1 << 24;
+
+/// Returns `true` if an audio buffer of `frames` frames and `channels` channels is small enough to
+/// allocate for untrusted codec parameters.
+pub fn is_reasonable_capacity(frames: usize, channels: usize) -> bool {
+    frames.saturating_mul(channels) <= MAX_PREALLOCATED_SAMPLES
+}

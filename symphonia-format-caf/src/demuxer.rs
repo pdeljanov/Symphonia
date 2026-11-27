@@ -34,6 +34,7 @@ use symphonia_core::{
 
 use symphonia_common::apple::audio::alac::MagicCookie as AlacMagicCookie;
 use symphonia_common::mpeg::formats::*;
+use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW};
 
 const MAX_FRAMES_PER_PACKET: u64 = 1152;
 
@@ -392,11 +393,16 @@ impl<'s> CafReader<'s> {
         desc: &AudioDescription,
         codec_params: &mut AudioCodecParameters,
     ) -> Result<()> {
-        codec_params
-            .for_codec(desc.codec_id()?)
-            .with_sample_rate(desc.sample_rate as u32)
-            .with_bits_per_sample(desc.bits_per_channel)
-            .with_bits_per_coded_sample((desc.bytes_per_packet * 8) / desc.channels_per_frame);
+        let codec_id = desc.codec_id()?;
+
+        codec_params.for_codec(codec_id).with_sample_rate(desc.sample_rate as u32);
+
+        // A-law and mu-law have an implicit bit-width, which the stated width does not describe.
+        if codec_id != CODEC_ID_PCM_ALAW && codec_id != CODEC_ID_PCM_MULAW {
+            codec_params.with_bits_per_sample(desc.bits_per_channel).with_bits_per_coded_sample(
+                desc.bytes_per_packet.saturating_mul(8) / desc.channels_per_frame,
+            );
+        }
 
         // TODO: Bits per sample and bits per coded sample are wrong for compressed.
 

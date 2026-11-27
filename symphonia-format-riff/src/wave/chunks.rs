@@ -11,9 +11,10 @@ use symphonia_core::audio::AmbisonicBFormat;
 use symphonia_core::audio::{ChannelLabel, Channels, Position};
 use symphonia_core::codecs::audio::AudioCodecId;
 use symphonia_core::codecs::audio::well_known::{
-    CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_MP3, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_F32LE,
-    CODEC_ID_PCM_F64LE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE,
-    CODEC_ID_PCM_S32LE, CODEC_ID_PCM_U8,
+    CODEC_ID_AC3, CODEC_ID_ADPCM_G722, CODEC_ID_ADPCM_G726, CODEC_ID_ADPCM_IMA_WAV,
+    CODEC_ID_ADPCM_MS, CODEC_ID_ADPCM_YAMAHA, CODEC_ID_G723_1, CODEC_ID_MP3, CODEC_ID_PCM_ALAW,
+    CODEC_ID_PCM_F32LE, CODEC_ID_PCM_F64LE, CODEC_ID_PCM_MULAW, CODEC_ID_PCM_S16LE,
+    CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_PCM_U8,
 };
 use symphonia_core::errors::{Error, Result, decode_error, unsupported_error};
 use symphonia_core::formats::Track;
@@ -24,8 +25,8 @@ use symphonia_metadata::embedded::riff;
 
 use crate::common::{
     ByteOrder, ChunkParser, ChunksReader, FormatALaw, FormatAdpcm, FormatData, FormatExtensible,
-    FormatIeeeFloat, FormatMpeg, FormatMuLaw, FormatPcm, NullChunks, PacketInfo, ParseChunk,
-    ParseChunkTag,
+    FormatFramed, FormatIeeeFloat, FormatMpeg, FormatMuLaw, FormatPcm, NullChunks, PacketInfo,
+    ParseChunk, ParseChunkTag,
 };
 
 use log::info;
@@ -145,6 +146,24 @@ impl WaveFormatChunk {
             _ => (),
         }
         reader.ignore_bytes(extra_size)?;
+
+        let channels = map_wave_channel_count(num_channels)?;
+        Ok(FormatData::Adpcm(FormatAdpcm { block_align, bits_per_sample, channels, codec }))
+    }
+
+    fn read_stream_adpcm_fmt<B: ReadBytes>(
+        reader: &mut B,
+        block_align: u16,
+        bits_per_sample: u16,
+        num_channels: u16,
+        len: u32,
+        codec: AudioCodecId,
+    ) -> Result<FormatData> {
+        // WaveFormatEx with an optional extension data length field.
+        if len > 16 {
+            let extra_size = reader.read_u16()?;
+            reader.ignore_bytes(u64::from(extra_size))?;
+        }
 
         let channels = map_wave_channel_count(num_channels)?;
         Ok(FormatData::Adpcm(FormatAdpcm { block_align, bits_per_sample, channels, codec }))
@@ -417,6 +436,21 @@ impl WaveFormatChunk {
         Ok(FormatData::Mpeg(FormatMpeg { codec: CODEC_ID_MP3, channels }))
     }
 
+    fn read_framed_fmt<B: ReadBytes>(
+        reader: &mut B,
+        num_channels: u16,
+        len: u32,
+        codec: AudioCodecId,
+    ) -> Result<FormatData> {
+        // The channels and the sampling frequency are taken from the frames.
+        if len > 16 {
+            reader.ignore_bytes(u64::from(len - 16))?;
+        }
+
+        let channels = map_wave_channel_count(num_channels)?;
+        Ok(FormatData::Framed(FormatFramed { codec, channels }))
+    }
+
     pub(crate) fn packet_info(&self) -> Result<PacketInfo> {
         match &self.format_data {
             FormatData::Pcm(pcm) => pcm.make_packet_info(),
@@ -426,6 +460,7 @@ impl WaveFormatChunk {
             FormatData::MuLaw(mulaw) => mulaw.make_packet_info(),
             FormatData::Extensible(ext) => ext.make_packet_info(),
             FormatData::Mpeg(mpeg) => mpeg.make_packet_info(),
+            FormatData::Framed(framed) => framed.make_packet_info(),
         }
     }
 }
@@ -453,7 +488,13 @@ impl ParseChunk for WaveFormatChunk {
         const WAVE_FORMAT_ALAW: u16 = 0x0006;
         const WAVE_FORMAT_MULAW: u16 = 0x0007;
         const WAVE_FORMAT_ADPCM_IMA: u16 = 0x0011;
+        const WAVE_FORMAT_MPEG: u16 = 0x0050;
+        const WAVE_FORMAT_YAMAHA: u16 = 0x0020;
+        const WAVE_FORMAT_G722: u16 = 0x028f;
+        const WAVE_FORMAT_G726: u16 = 0x0045;
         const WAVE_FORMAT_MPEGLAYER3: u16 = 0x0055;
+        const WAVE_FORMAT_AC3: u16 = 0x2000;
+        const WAVE_FORMAT_MSG723: u16 = 0x0042;
         const WAVE_FORMAT_EXTENSIBLE: u16 = 0xfffe;
 
         let format_data = match format {
@@ -492,7 +533,47 @@ impl ParseChunk for WaveFormatChunk {
                 CODEC_ID_ADPCM_IMA_WAV,
             ),
             // The MPEG-1 Audio Layer III (MP3) Format.
-            WAVE_FORMAT_MPEGLAYER3 => Self::read_mpeg_fmt(reader, num_channels, len),
+            WAVE_FORMAT_MPEG | WAVE_FORMAT_MPEGLAYER3 => {
+                Self::read_mpeg_fmt(reader, num_channels, len)
+            }
+            // An AC-3 elementary stream.
+            WAVE_FORMAT_AC3 => Self::read_framed_fmt(reader, num_channels, len, CODEC_ID_AC3),
+            // ITU-T G.723.1
+            WAVE_FORMAT_MSG723 => Self::read_stream_adpcm_fmt(
+                reader,
+                block_align,
+                bits_per_sample,
+                num_channels,
+                len,
+                CODEC_ID_G723_1,
+            ),
+            // The Yamaha ADPCM Format
+            WAVE_FORMAT_YAMAHA => Self::read_stream_adpcm_fmt(
+                reader,
+                block_align,
+                bits_per_sample,
+                num_channels,
+                len,
+                CODEC_ID_ADPCM_YAMAHA,
+            ),
+            // The ITU-T G.722 Format
+            WAVE_FORMAT_G722 => Self::read_stream_adpcm_fmt(
+                reader,
+                block_align,
+                bits_per_sample,
+                num_channels,
+                len,
+                CODEC_ID_ADPCM_G722,
+            ),
+            // The ITU-T G.726 Format
+            WAVE_FORMAT_G726 => Self::read_stream_adpcm_fmt(
+                reader,
+                block_align,
+                bits_per_sample,
+                num_channels,
+                len,
+                CODEC_ID_ADPCM_G726,
+            ),
             // Unsupported format.
             _ => return unsupported_error("wav: unsupported wave format"),
         }?;
@@ -574,6 +655,11 @@ impl fmt::Display for WaveFormatChunk {
                 writeln!(f, "\tformat_data: MuLaw {{")?;
                 writeln!(f, "\t\tchannels: {},", mulaw.channels)?;
                 writeln!(f, "\t\tcodec: {},", mulaw.codec)?;
+            }
+            FormatData::Framed(ref framed) => {
+                writeln!(f, "\tformat_data: Framed {{")?;
+                writeln!(f, "\t\tchannels: {},", framed.channels)?;
+                writeln!(f, "\t\tcodec: {},", framed.codec)?;
             }
             FormatData::Mpeg(ref mpeg) => {
                 writeln!(f, "\tformat_data: Mpeg {{")?;
@@ -796,7 +882,8 @@ fn fix_wave_channel_mask(mut channel_mask: u32, num_channels: u16) -> u32 {
     if channel_diff > 0 {
         // Too few ones in mask so add extra ones above the most significant one
         let shift = 32 - (!channel_mask).leading_ones();
-        channel_mask |= ((1 << channel_diff) - 1) << shift;
+        let extra_ones = (1u64 << channel_diff.min(32)) - 1;
+        channel_mask |= (extra_ones << shift) as u32;
     }
     else {
         // Too many ones in mask so remove the most significant extra ones

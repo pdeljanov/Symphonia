@@ -26,7 +26,7 @@ use crate::header::{
     ChannelMapping, ChannelMappingTable, IdentificationHeader, OutputGain, SILENT_CHANNEL,
 };
 use crate::layout::Layout;
-use crate::routing::{OutputRouting, StreamPackets};
+use crate::routing::{OutputRouting, StreamPackets, vorbis_plane_map};
 use crate::sample_rate::SampleRate;
 use crate::stream::{MAX_PACKET_SAMPLES_48K, StreamDecoder};
 use crate::toc::FrameDuration;
@@ -205,8 +205,10 @@ pub struct OpusDecoder {
     scratch: [[f32; MAX_PACKET_SAMPLES_48K]; 2],
     coupled_count: usize,
     channel_mapping: Vec<u8>,
+    plane_map: Vec<usize>,
     pre_skip: u16,
     output_gain: OutputGain,
+    gapless: bool,
 }
 
 impl OpusDecoder {
@@ -240,7 +242,7 @@ impl OpusDecoder {
     ///   is present and violates [RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)
     ///   (invalid `OpusHead` magic, version `> 15`, invalid stream/coupled counts, out-of-range
     ///   mapping index, or channel count mismatch with `params.channels`).
-    pub fn try_new(params: &AudioCodecParameters, _options: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, options: &AudioDecoderOptions) -> Result<Self> {
         if params.codec != CODEC_ID_OPUS {
             return unsupported_error("opus: invalid codec");
         }
@@ -259,6 +261,8 @@ impl OpusDecoder {
             MAX_PACKET_SAMPLES_48K / format.sample_rate.downsample_from_48k(),
         );
 
+        let plane_map = vorbis_plane_map(&format.channels);
+
         // Report the effective output format through `codec_params`.
         let mut params = params.to_owned();
         params.with_sample_rate(format.sample_rate.hz()).with_channels(format.channels);
@@ -271,8 +275,10 @@ impl OpusDecoder {
             scratch: [[0.0; MAX_PACKET_SAMPLES_48K]; 2],
             coupled_count: layout.coupled_count,
             channel_mapping: layout.channel_mapping,
+            plane_map,
             pre_skip,
             output_gain,
+            gapless: options.gapless,
         });
     }
 
@@ -360,6 +366,7 @@ impl OpusDecoder {
 
         let routing = OutputRouting {
             channel_mapping: &self.channel_mapping,
+            plane_map: &self.plane_map,
             coupled_count: self.coupled_count,
             gain: self.output_gain.scale(),
         };
@@ -428,6 +435,7 @@ impl AudioDecoder for OpusDecoder {
 
         let routing = OutputRouting {
             channel_mapping: &self.channel_mapping,
+            plane_map: &self.plane_map,
             coupled_count: self.coupled_count,
             gain: self.output_gain.scale(),
         };
@@ -442,6 +450,12 @@ impl AudioDecoder for OpusDecoder {
             }
             stream.decode_packet(&stream_packet, &mut self.scratch)?;
             routing.route(i, total_samples, &self.scratch, &mut self.buffer)?;
+        }
+
+        if self.gapless {
+            let scale = self.sample_rate.downsample_from_48k() as u64;
+            let trim = |frames: u64| usize::try_from(frames / scale).unwrap_or(usize::MAX);
+            self.buffer.trim(trim(packet.trim_start.get()), trim(packet.trim_end.get()));
         }
 
         return Ok(self.buffer.as_generic_audio_buffer_ref());
@@ -571,7 +585,7 @@ mod tests {
         for recorded in &stream.packets {
             decode(dec, recorded.packet, stream.samples);
             for (c, plane) in recorded.planes.iter().enumerate() {
-                let output = dec.buffer.plane(c).unwrap();
+                let output = dec.buffer.plane(dec.plane_map[c]).unwrap();
                 assert_plane_matches_recorded(output, stream.samples, plane, 1e-4);
             }
         }
@@ -767,10 +781,10 @@ mod tests {
             MULTISTREAM_FAMILY_1.packets[0].packet,
         );
         gain_dec.decode_ref(&pkt0).unwrap();
-        let muted_plane = gain_dec.buffer.plane(1).unwrap();
+        let muted_plane = gain_dec.buffer.plane(gain_dec.plane_map[1]).unwrap();
         assert!(muted_plane.iter().all(|&s| s == 0.0));
         let expected_scale = 10.0_f32.powf(256.0 / (20.0 * 256.0));
-        let p0_scaled = gain_dec.buffer.plane(0).unwrap();
+        let p0_scaled = gain_dec.buffer.plane(gain_dec.plane_map[0]).unwrap();
         assert!(
             (p0_scaled[960 - 1]
                 - MULTISTREAM_FAMILY_1.packets[0].planes[0].tail[23] * expected_scale)

@@ -512,7 +512,7 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
         let depth = self.depth();
 
         // Read an EBML element header.
-        let header = EbmlElementHeader::read(&mut self.reader, depth, &self.schema)?;
+        let mut header = EbmlElementHeader::read(&mut self.reader, depth, &self.schema)?;
 
         // let indent = 2 * header.depth as usize;
         // log::trace!(
@@ -572,7 +572,14 @@ impl<R: ReadEbml, S: EbmlSchema> EbmlIterator<R, S> {
             // It is invalid for a child element's end position to exceed its parent's end position.
             // The element may be discarded in such cases.
             if let Some(child_end) = header.end() {
-                if child_end > parent_end {
+                if child_end > parent_end && self.stack.is_empty() {
+                    // A root element, the Segment, claims to be longer than the document. The
+                    // file is truncated, so treat the element as having an unknown size which
+                    // ends at the end of the document.
+                    log::debug!("root element exceeds the document, treating it as truncated");
+                    header.data_size = None;
+                }
+                else if child_end > parent_end {
                     // TODO: Maybe scan for other elements instead of skipping to the end of the
                     // parent?
                     log::debug!("element out-of-bounds, ignoring");

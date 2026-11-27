@@ -16,7 +16,7 @@
 
 <p>
     <strong>
-        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, ADPCM, AIFF, ALAC, CAF, DCA, FLAC, MKV, MP1, MP2, MP3, MP4, OGG, Vorbis, WAV, and WebM.
+        Symphonia is a pure Rust audio decoding and media demuxing library supporting AAC, AC-3, ADPCM, ADX, AIFF, ALAC, CAF, DCA, FLAC, FLV, MKV, MP1, MP2, MP3, MP4, MPEG-TS, OGG, Speex, Vorbis, WAV, and WebM.
     </strong>
 </p>
 
@@ -77,13 +77,21 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 | Format   | Status    | Gapless* | Feature Flag | Default | Crate                       |
 |----------|-----------|----------|--------------|---------|-----------------------------|
+| AC-3     | Good      | No       | `ac3`        | No      | `symphonia-codec-ac3`       |
+| ADX      | Great     | No       | `adx`        | No      | `symphonia-bundle-adx`      |
 | AIFF     | Great     | Yes      | `aiff`       | No      | [`symphonia-format-riff`]   |
+| APE      | Good      | No       | `mac`        | No      | `symphonia-bundle-ape`      |
 | CAF      | Good      | No       | `caf`        | No      | [`symphonia-format-caf`]    |
-| DCA      | Good      | No       | `dca`        | No      | `symphonia-codec-dca`       |
-| ISO/MP4  | Great     | No       | `isomp4`     | No      | [`symphonia-format-isomp4`] |
+| DTS      | Good         | No    | `dca`        | No      | `symphonia-codec-dca`       |
+| FLV      | Good      | No       | `flv`        | No      | `symphonia-format-flv`      |
+| ISO/MP4  | Great     | Yes      | `isomp4`     | No      | [`symphonia-format-isomp4`] |
 | MKV/WebM | Good      | No       | `mkv`        | Yes     | [`symphonia-format-mkv`]    |
 | OGG      | Great     | Yes      | `ogg`        | Yes     | [`symphonia-format-ogg`]    |
+| MPEG-TS  | Good      | No       | `ts`         | No      | `symphonia-format-ts`       |
+| TTA      | Great     | No       | `tta`        | No      | `symphonia-bundle-tta`      |
 | Wave     | Excellent | Yes      | `wav`        | Yes     | [`symphonia-format-riff`]   |
+| Wave64   | Good      | No       | `wav`        | Yes     | [`symphonia-format-riff`]   |
+| WavPack  | Great     | No       | `wavpack`    | Yes     | `symphonia-codec-wavpack`   |
 
 \* Gapless playback requires support from both the demuxer and decoder.
 
@@ -98,22 +106,28 @@ A status of *Excellent* is only assigned after the feature passes all compliance
 
 ### Codecs (Decoders)
 
-| Codec                        | Status    | Gapless | Feature Flag | Default | Crate                      |
-|------------------------------|-----------|---------|--------------|---------|----------------------------|
-| AAC-LC                       | Great     | No      | `aac`        | No      | [`symphonia-codec-aac`]    |
-| ADPCM                        | Good      | Yes     | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
-| ALAC                         | Great     | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
-| DCA                          | Good      | No      | `dca`        | No      | `symphonia-codec-dca`      |
-| HE-AAC (AAC+, aacPlus)       | -         | -       | `he-aac`     | No      | [`symphonia-codec-aac`]    |
-| HE-AACv2 (eAAC+, aacPlus v2) | -         | -       | `he-aac-v2`  | No      | [`symphonia-codec-aac`]    |
-| FLAC                         | Excellent | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
-| MP1                          | Great     | No      | `mp1`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
-| MP2                          | Great     | No      | `mp2`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
-| MP3                          | Excellent | Yes     | `mp3`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
-| Opus                         | -         | -       | `opus`       | Yes     | `symphonia-codec-opus`     |
-| PCM                          | Excellent | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
-| Vorbis                       | Excellent | Yes     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
-| WavPack                      | -         | -       | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
+| Codec                        | Status       | Gapless | Feature Flag | Default | Crate                      |
+|------------------------------|--------------|---------|--------------|---------|----------------------------|
+| AAC-LC, Main                 | Great        | Yes     | `aac`        | No      | [`symphonia-codec-aac`]    |
+| HE-AAC (AAC+, aacPlus)       | Great        | Yes     | `aac`        | No      | [`symphonia-codec-aac`]    |
+| HE-AACv2 (eAAC+, aacPlus v2) | Great        | Yes     | `aac`        | No      | [`symphonia-codec-aac`]    |
+| AC-3 (Dolby Digital)         | Great        | No      | `ac3`        | No      | `symphonia-codec-ac3`      |
+| E-AC-3 (Dolby Digital Plus)  | Good         | No      | `ac3`        | No      | `symphonia-codec-ac3`      |
+| ADPCM (MS, IMA, G.722, G.726, Yamaha, SWF)| Good | Yes | `adpcm`      | Yes     | [`symphonia-codec-adpcm`]  |
+| ADX (CRI ADPCM)              | Great        | No      | `adx`        | No      | `symphonia-bundle-adx`     |
+| ALAC                         | Great        | Yes     | `alac`       | No      | [`symphonia-codec-alac`]   |
+| DTS (core, ES 6.1)           | Great        | No      | `dca`        | No      | `symphonia-codec-dca`      |
+| FLAC                         | Excellent    | Yes     | `flac`       | Yes     | [`symphonia-bundle-flac`]  |
+| Monkey's Audio (APE)         | Great        | No      | `mac`        | No      | `symphonia-bundle-ape`     |
+| MP1                          | Great        | No      | `mp1`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| MP2                          | Great        | No      | `mp2`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| MP3                          | Excellent    | Yes     | `mp3`, `mpa` | No      | [`symphonia-bundle-mp3`]   |
+| Opus                         | Great        | Yes     | `opus`       | Yes     | `symphonia-codec-opus`     |
+| PCM                          | Excellent    | Yes     | `pcm`        | Yes     | [`symphonia-codec-pcm`]    |
+| Speex                        | Great        | No      | `speex`      | No      | `symphonia-codec-speex`    |
+| TTA                          | Excellent    | No      | `tta`        | No      | `symphonia-bundle-tta`     |
+| Vorbis                       | Excellent    | Yes     | `vorbis`     | Yes     | [`symphonia-codec-vorbis`] |
+| WavPack                      | Great        | No      | `wavpack`    | Yes     | `symphonia-codec-wavpack`  |
 
 A `symphonia-bundle-*` package is a combination of a decoder and a native demuxer.
 

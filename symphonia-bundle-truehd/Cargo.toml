@@ -1,0 +1,20 @@
+[package]
+name = "symphonia-bundle-truehd"
+description = "Pure Rust Dolby TrueHD and MLP decoder and demuxer (a part of project Symphonia)."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+readme = "README.md"
+categories = ["multimedia", "multimedia::audio", "multimedia::encoding"]
+keywords = ["audio", "codec", "decoder", "truehd", "mlp"]
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log = { workspace = true }
+symphonia-core = { version = "0.6.1", path = "../symphonia-core" }
+
+[lints]
+workspace = true

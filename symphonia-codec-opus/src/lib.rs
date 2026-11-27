@@ -134,6 +134,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 #![allow(clippy::needless_return)]
+#![allow(clippy::needless_range_loop)]
 #![allow(rustdoc::private_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 

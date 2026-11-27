@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{Channels, layouts};
+use symphonia_core::audio::{Channels, Position, layouts};
 use symphonia_core::codecs::CodecProfile;
 use symphonia_core::codecs::audio::well_known::profiles::*;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
@@ -220,6 +220,11 @@ pub struct AudioSpecificConfig {
     pub object_type: AudioObjectType,
     pub sample_rate: u32,
     pub channels: Option<Channels>,
+    /// The position of each channel in bitstream order, if the channels are defined by a program
+    /// config element.
+    pub channel_order: Option<Vec<Position>>,
+    /// The channel elements defined by a program config element.
+    pub channel_elements: Option<Vec<PceElement>>,
     pub samples: usize,
     pub sbr_ps_info: Option<(u32, Option<Channels>)>,
     pub sbr_present: bool,
@@ -293,7 +298,10 @@ impl AudioSpecificConfig {
                 let extension_flag = !truncated && bs.read_bool()?;
 
                 if asc.channels.is_none() {
-                    return unsupported_error("common (mp4a): program config element");
+                    let pce = ProgramConfig::read(&mut bs)?;
+                    asc.channels = Some(pce.channels);
+                    asc.channel_order = Some(pce.order);
+                    asc.channel_elements = Some(pce.elements);
                 }
 
                 if !truncated
@@ -478,6 +486,186 @@ impl AudioSpecificConfig {
     }
 }
 
+/// A channel element defined by a program config element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PceElement {
+    /// The syntactic element ID: 0 for a single channel element, 1 for a channel pair element, or
+    /// 3 for a low-frequency effects element.
+    pub id: u32,
+    /// The element instance tag.
+    pub tag: u32,
+    /// The index of the first channel of the element in the order of the channels.
+    pub first_channel: usize,
+    /// The group of the element: 0 for front, 1 for side, 2 for back, or 3 for LFE.
+    pub group: u8,
+}
+
+/// The channels defined by a program config element (ISO/IEC 14496-3, 4.4.1.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramConfig {
+    /// The set of channels.
+    pub channels: Channels,
+    /// The position of each channel in bitstream order.
+    pub order: Vec<Position>,
+    /// The elements, in the order the channels are listed.
+    pub elements: Vec<PceElement>,
+}
+
+impl ProgramConfig {
+    /// Read a program config element, starting at the element instance tag. Reads up to and
+    /// including the comment field, which leaves the reader byte-aligned.
+    pub fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<ProgramConfig> {
+        let _tag = bs.read_bits_leq32(4)?;
+        let _object_type = bs.read_bits_leq32(2)?;
+        let _sample_rate_index = bs.read_bits_leq32(4)?;
+
+        let num_front = bs.read_bits_leq32(4)?;
+        let num_side = bs.read_bits_leq32(4)?;
+        let num_back = bs.read_bits_leq32(4)?;
+        let num_lfe = bs.read_bits_leq32(2)?;
+        let num_assoc = bs.read_bits_leq32(3)?;
+        let num_cc = bs.read_bits_leq32(4)?;
+
+        // Mono mixdown, stereo mixdown, and matrix mixdown.
+        if bs.read_bool()? {
+            bs.ignore_bits(4)?;
+        }
+
+        if bs.read_bool()? {
+            bs.ignore_bits(4)?;
+        }
+
+        if bs.read_bool()? {
+            bs.ignore_bits(3)?;
+        }
+
+        let mut order = Vec::new();
+        let mut elements = Vec::new();
+        let mut front_pairs = 0;
+
+        let mut front = Vec::with_capacity(num_front as usize);
+
+        for _ in 0..num_front {
+            let is_cpe = bs.read_bool()?;
+            let tag = bs.read_bits_leq32(4)?;
+            front.push((is_cpe, tag));
+        }
+
+        let num_front_cpe = front.iter().filter(|(is_cpe, _)| *is_cpe).count();
+
+        // With a center channel and two channel pairs, the first pair is the one closest to the
+        // center, and the second is the outermost.
+        let (first_pair, second_pair) = if num_front == 3 {
+            (
+                [Position::FRONT_LEFT_CENTER, Position::FRONT_RIGHT_CENTER],
+                [Position::FRONT_LEFT, Position::FRONT_RIGHT],
+            )
+        }
+        else {
+            (
+                [Position::FRONT_LEFT, Position::FRONT_RIGHT],
+                [Position::FRONT_LEFT_CENTER, Position::FRONT_RIGHT_CENTER],
+            )
+        };
+
+        for (is_cpe, tag) in front {
+            elements.push(PceElement {
+                id: u32::from(is_cpe),
+                tag,
+                first_channel: order.len(),
+                group: 0,
+            });
+
+            match (is_cpe, front_pairs) {
+                (true, 0) => order.extend(first_pair),
+                (true, 1) => order.extend(second_pair),
+                // Two single channel elements are the left and right channels.
+                (false, _) if num_front == 2 && num_front_cpe == 0 => {
+                    order.push(if order.is_empty() {
+                        Position::FRONT_LEFT
+                    }
+                    else {
+                        Position::FRONT_RIGHT
+                    })
+                }
+                (false, _) if !order.contains(&Position::FRONT_CENTER) => {
+                    order.push(Position::FRONT_CENTER)
+                }
+                _ => return unsupported_error("common (mp4a): front channel element layout"),
+            }
+
+            front_pairs += u32::from(is_cpe);
+        }
+
+        for _ in 0..num_side {
+            let is_cpe = bs.read_bool()?;
+            let tag = bs.read_bits_leq32(4)?;
+            elements.push(PceElement {
+                id: u32::from(is_cpe),
+                tag,
+                first_channel: order.len(),
+                group: 1,
+            });
+
+            if !is_cpe || order.contains(&Position::SIDE_LEFT) {
+                return unsupported_error("common (mp4a): side channel element layout");
+            }
+
+            order.extend([Position::SIDE_LEFT, Position::SIDE_RIGHT]);
+        }
+
+        for _ in 0..num_back {
+            let is_cpe = bs.read_bool()?;
+            let tag = bs.read_bits_leq32(4)?;
+            elements.push(PceElement {
+                id: u32::from(is_cpe),
+                tag,
+                first_channel: order.len(),
+                group: 2,
+            });
+
+            match (is_cpe, order.contains(&Position::REAR_LEFT)) {
+                (true, false) => order.extend([Position::REAR_LEFT, Position::REAR_RIGHT]),
+                (false, _) if !order.contains(&Position::REAR_CENTER) => {
+                    order.push(Position::REAR_CENTER)
+                }
+                _ => return unsupported_error("common (mp4a): back channel element layout"),
+            }
+        }
+
+        for _ in 0..num_lfe {
+            let tag = bs.read_bits_leq32(4)?;
+            elements.push(PceElement { id: 3, tag, first_channel: order.len(), group: 3 });
+
+            if order.contains(&Position::LFE1) {
+                return unsupported_error("common (mp4a): multiple lfe channels");
+            }
+
+            order.push(Position::LFE1);
+        }
+
+        // Associated data and coupling channel elements carry no output channels.
+        bs.ignore_bits(num_assoc * 4)?;
+
+        for _ in 0..num_cc {
+            bs.ignore_bits(5)?;
+        }
+
+        bs.realign();
+
+        let comment_len = bs.read_bits_leq32(8)?;
+        bs.ignore_bits(comment_len * 8)?;
+
+        let channels = order.iter().fold(Position::empty(), |acc, &pos| acc | pos);
+
+        if order.is_empty() {
+            return decode_error("common (mp4a): program config element has no channels");
+        }
+
+        Ok(ProgramConfig { channels: Channels::Positioned(channels), order, elements })
+    }
+}
+
 pub fn get_audio_codec_profile(asc: &AudioSpecificConfig) -> Option<CodecProfile> {
     match asc.object_type {
         AudioObjectType::Main => Some(CODEC_PROFILE_AAC_MAIN),
@@ -521,5 +709,120 @@ mod tests {
         assert_eq!(asc.sample_rate, 44100);
         assert_eq!(asc.channels, Some(layouts::CHANNEL_LAYOUT_STEREO));
         assert_eq!(asc.samples, 1024);
+    }
+}
+
+#[cfg(test)]
+mod pce_tests {
+    use super::*;
+
+    /// Writes bits, most significant bit first.
+    #[derive(Default)]
+    struct BitWriter {
+        bytes: Vec<u8>,
+        bits: usize,
+    }
+
+    impl BitWriter {
+        fn put(&mut self, value: u32, count: usize) {
+            for i in (0..count).rev() {
+                if self.bits % 8 == 0 {
+                    self.bytes.push(0);
+                }
+                *self.bytes.last_mut().unwrap() |=
+                    (((value >> i) & 1) as u8) << (7 - self.bits % 8);
+                self.bits += 1;
+            }
+        }
+    }
+
+    /// Write a program config element with the given front, side, back, and LFE elements: for each
+    /// of the first three groups, a list of `(is_cpe, tag)`, and for the LFE group, a list of tags.
+    fn write_pce(
+        front: &[(bool, u32)],
+        side: &[(bool, u32)],
+        back: &[(bool, u32)],
+        lfe: &[u32],
+    ) -> Vec<u8> {
+        let mut w = BitWriter::default();
+
+        w.put(0, 4); // Element instance tag.
+        w.put(1, 2); // Object type.
+        w.put(4, 4); // Sampling frequency index.
+        w.put(front.len() as u32, 4);
+        w.put(side.len() as u32, 4);
+        w.put(back.len() as u32, 4);
+        w.put(lfe.len() as u32, 2);
+        w.put(0, 3); // Associated data elements.
+        w.put(0, 4); // Coupling channel elements.
+        w.put(0, 3); // Mixdown flags.
+
+        for &(is_cpe, tag) in front.iter().chain(side).chain(back) {
+            w.put(u32::from(is_cpe), 1);
+            w.put(tag, 4);
+        }
+
+        for &tag in lfe {
+            w.put(tag, 4);
+        }
+
+        w.bits = w.bytes.len() * 8;
+        w.put(0, 8); // Comment length.
+        w.bytes
+    }
+
+    fn read_pce(pce: &[u8]) -> Result<ProgramConfig> {
+        ProgramConfig::read(&mut BitReaderLtr::new(pce))
+    }
+
+    #[test]
+    fn verify_pce_stereo_and_surround() {
+        let pce = read_pce(&write_pce(&[(true, 0)], &[], &[], &[])).unwrap();
+        assert_eq!(pce.order, [Position::FRONT_LEFT, Position::FRONT_RIGHT]);
+
+        // 5.1: a center, a front pair, a back pair, and an LFE element.
+        let pce = read_pce(&write_pce(&[(false, 0), (true, 0)], &[], &[(true, 1)], &[0])).unwrap();
+        assert_eq!(
+            pce.order,
+            [
+                Position::FRONT_CENTER,
+                Position::FRONT_LEFT,
+                Position::FRONT_RIGHT,
+                Position::REAR_LEFT,
+                Position::REAR_RIGHT,
+                Position::LFE1,
+            ]
+        );
+
+        // The elements are identified by their syntactic element ID and instance tag.
+        let ids: Vec<_> = pce.elements.iter().map(|e| (e.id, e.tag, e.first_channel)).collect();
+        assert_eq!(ids, [(0, 0, 0), (1, 0, 1), (1, 1, 3), (3, 0, 5)]);
+    }
+
+    #[test]
+    fn verify_pce_front_pairs_around_a_center() {
+        // With a center, the first front pair is the one closest to the center.
+        let pce = read_pce(&write_pce(&[(false, 0), (true, 0), (true, 1)], &[], &[], &[])).unwrap();
+        assert_eq!(
+            pce.order,
+            [
+                Position::FRONT_CENTER,
+                Position::FRONT_LEFT_CENTER,
+                Position::FRONT_RIGHT_CENTER,
+                Position::FRONT_LEFT,
+                Position::FRONT_RIGHT,
+            ]
+        );
+    }
+
+    #[test]
+    fn verify_pce_dual_mono() {
+        let pce = read_pce(&write_pce(&[(false, 0), (false, 1)], &[], &[], &[])).unwrap();
+        assert_eq!(pce.order, [Position::FRONT_LEFT, Position::FRONT_RIGHT]);
+    }
+
+    #[test]
+    fn verify_pce_rejects_no_channels() {
+        assert!(read_pce(&write_pce(&[], &[], &[], &[])).is_err());
     }
 }

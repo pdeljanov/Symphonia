@@ -431,7 +431,7 @@ pub fn compute_patches(
 
             // At most one patch more than the limit is allowed before the last patch is possibly
             // removed below.
-            if patches.len() > MAX_PATCHES {
+            if patches.len() >= MAX_PATCHES {
                 return decode_error("sbr: too many patches");
             }
 

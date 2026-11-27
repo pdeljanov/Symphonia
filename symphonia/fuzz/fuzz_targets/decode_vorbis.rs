@@ -4,7 +4,7 @@ use symphonia::core::codecs::audio::{AudioCodecParameters, well_known::CODEC_ID_
 use symphonia::default::codecs::VorbisDecoder;
 use symphonia_fuzz::fuzz_audio_decoder;
 
-fuzz_target!(|data: Vec<u8>| {
+fuzz_target!(|data: &[u8]| {
     let mut codec_params = AudioCodecParameters::new();
     codec_params.for_codec(CODEC_ID_VORBIS);
 
@@ -19,7 +19,7 @@ fuzz_target!(|data: Vec<u8>| {
         return;
     }
 
-    codec_params.extra_data = Some(data.clone().into_boxed_slice());
+    codec_params.extra_data = Some(data.to_vec().into_boxed_slice());
 
     // If we successfully created a decoder (fuzzer guessed valid headers!),
     // we try to decode an empty packet or we could try to split the data.

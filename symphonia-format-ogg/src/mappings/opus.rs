@@ -17,6 +17,7 @@ use symphonia_core::errors::Result;
 use symphonia_core::formats::Track;
 use symphonia_core::io::{BufReader, ReadBytes};
 use symphonia_core::meta::MetadataBuilder;
+use symphonia_core::units::Timestamp;
 
 use symphonia_core::units::Duration;
 use symphonia_metadata::embedded::vorbis::{self, VORBIS_COMMENT_METADATA_INFO};
@@ -62,12 +63,21 @@ pub fn detect(serial: u32, buf: &[u8]) -> Result<Option<Box<dyn Mapper>>> {
         .with_delay(u32::from(opus_head.pre_skip));
 
     // Instantiate the Opus mapper.
-    let mapper = Box::new(OpusMapper { track, need_comment: true });
+    let pre_skip = u64::from(opus_head.pre_skip);
+    let mapper = Box::new(OpusMapper {
+        track,
+        parser: OpusPacketParser { pre_skip },
+        pre_skip,
+        need_comment: true,
+    });
 
     Ok(Some(mapper))
 }
 
-pub struct OpusPacketParser {}
+pub struct OpusPacketParser {
+    /// The remaining number of frames of encoder delay (pre-skip) to discard.
+    pre_skip: u64,
+}
 
 impl PacketParser for OpusPacketParser {
     fn parse_next_packet_dur(&mut self, packet: &[u8]) -> (Duration, Duration) {
@@ -126,12 +136,18 @@ impl PacketParser for OpusPacketParser {
             _ => unreachable!("masked 2 bits"),
         };
         // Look up the packet length and return it.
-        (Duration::new(frame_duration * num_frames), Duration::ZERO)
+        let dur = frame_duration * num_frames;
+        let discard = self.pre_skip.min(dur);
+        self.pre_skip -= discard;
+
+        (Duration::new(dur), Duration::new(discard))
     }
 }
 
 struct OpusMapper {
     track: Track,
+    parser: OpusPacketParser,
+    pre_skip: u64,
     need_comment: bool,
 }
 
@@ -141,7 +157,7 @@ impl Mapper for OpusMapper {
     }
 
     fn reset(&mut self) {
-        // Nothing to do.
+        self.parser.pre_skip = self.pre_skip;
     }
 
     fn track(&self) -> &Track {
@@ -152,13 +168,18 @@ impl Mapper for OpusMapper {
         &mut self.track
     }
 
+    fn absgp_to_ts(&self, absgp: u64) -> Timestamp {
+        // The granule position counts the frames of the pre-skip (RFC 7845, 4).
+        Timestamp::from((absgp as i64).saturating_sub(self.pre_skip as i64))
+    }
+
     fn make_parser(&self) -> Option<Box<dyn super::PacketParser>> {
-        Some(Box::new(OpusPacketParser {}))
+        Some(Box::new(OpusPacketParser { pre_skip: self.pre_skip }))
     }
 
     fn map_packet(&mut self, packet: &[u8]) -> Result<MapResult> {
         if !self.need_comment {
-            let (dur, discard) = OpusPacketParser {}.parse_next_packet_dur(packet);
+            let (dur, discard) = self.parser.parse_next_packet_dur(packet);
             Ok(MapResult::StreamData { dur, discard })
         }
         else {

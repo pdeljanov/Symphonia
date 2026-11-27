@@ -39,8 +39,9 @@ pub const MAX_ENVELOPES: usize = 5;
 pub const MAX_NOISE_FLOORS: usize = 2;
 /// Maximum number of noise floor bands, N_Q.
 pub const MAX_NOISE_BANDS: usize = 5;
-/// Maximum number of HF generation patches.
-pub const MAX_PATCHES: usize = 5;
+/// Maximum number of HF generation patches. The specification limits this to 5, but conformant
+/// streams with a wide SBR range are decoded by the reference decoder with up to 6 patches.
+pub const MAX_PATCHES: usize = 6;
 
 /// The 64-band QMF representation of one frame of one channel.
 ///

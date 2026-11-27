@@ -166,6 +166,10 @@ impl<'s> MkvReader<'s> {
             // All elements preceeding the element iterator's current position have already been
             // read and do not need to be revisited.
             seek_positions.retain(|sp| sp.1 >= it.pos());
+            // Elements of a truncated file may be positioned after its end.
+            if let Some(len) = total_len {
+                seek_positions.retain(|sp| segment_pos + sp.1 < len);
+            }
             // Make sure we don't jump backwards unnecessarily.
             seek_positions.sort_by_key(|sp| sp.1);
 

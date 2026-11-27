@@ -88,7 +88,7 @@ impl Pulse {
         for pno in 0..self.number_pulse {
             k += self.pulse_offset[pno] as usize;
 
-            if k >= 1024 {
+            if k >= bands[bands.len() - 1] {
                 return;
             }
 

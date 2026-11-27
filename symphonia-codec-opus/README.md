@@ -572,3 +572,5 @@ This README and the crate's rustdoc reproduce figures, tables and short passages
 - [RFC 8251](https://datatracker.ietf.org/doc/html/rfc8251), "Updates to the Opus Audio Codec", Copyright (c) 2017 IETF Trust and the persons identified as the document authors.
 
 Those excerpts are reproduced under the [IETF Trust Legal Provisions Relating to IETF Documents (TLP 5)](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/), Section 3.c, "Licenses for Use Outside the IETF Standards Process", which permit extracting and reproducing portions of IETF Documents provided that the IETF Trust and the document authors are attributed. The excerpts remain subject to the IETF Trust's terms and are not relicensed under the MPL 2.0; the surrounding text and all Rust source code in this crate are original work.
+
+The constant tables follow the reference implementation of RFC 6716 (libopus, Revised BSD license). Its notice is reproduced in the [`NOTICE`](NOTICE) file.

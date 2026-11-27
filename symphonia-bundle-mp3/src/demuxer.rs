@@ -501,8 +501,10 @@ impl<'s> MpaReader<'s> {
         // Get the length in bytes of the stream's audio data. It is not possible to coarsely seek
         // without knowing this.
         let audio_byte_len = match self.reader.byte_len() {
-            Some(byte_len) if byte_len > self.first_packet_pos=> u128::from(byte_len - self.first_packet_pos),
-            _=> return seek_error(SeekErrorKind::Unseekable),
+            Some(byte_len) if byte_len > self.first_packet_pos => {
+                u128::from(byte_len - self.first_packet_pos)
+            }
+            _ => return seek_error(SeekErrorKind::Unseekable),
         };
 
         // It is not possible to coarse seek without knowing both the upper and lower timestamp
@@ -1052,10 +1054,7 @@ mod tests {
     use std::io::Cursor;
 
     fn make_reader(data: Vec<u8>, first_packet_pos: u64) -> MpaReader<'static> {
-        let reader = MediaSourceStream::new(
-            Box::new(Cursor::new(data)),
-            Default::default(),
-        );
+        let reader = MediaSourceStream::new(Box::new(Cursor::new(data)), Default::default());
 
         let track = Track::new(0);
 
@@ -1134,11 +1133,8 @@ mod tests {
     fn test_preseek_coarse_rejects_zero_duration() {
         let mut reader = make_reader(vec![0], 0);
 
-        let result = reader.preseek_coarse(
-            Timestamp::from(0),
-            Timestamp::from(0),
-            Some(Timestamp::from(0)),
-        );
+        let result =
+            reader.preseek_coarse(Timestamp::from(0), Timestamp::from(0), Some(Timestamp::from(0)));
 
         assert!(result.is_err());
     }
@@ -1147,11 +1143,8 @@ mod tests {
     fn test_preseek_coarse_rejects_zero_audio_bytes() {
         let mut reader = make_reader(vec![], 0);
 
-        let result = reader.preseek_coarse(
-            Timestamp::from(0),
-            Timestamp::from(0),
-            Some(Timestamp::from(1)),
-        );
+        let result =
+            reader.preseek_coarse(Timestamp::from(0), Timestamp::from(0), Some(Timestamp::from(1)));
 
         assert!(result.is_err());
     }

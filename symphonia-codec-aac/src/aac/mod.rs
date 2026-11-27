@@ -11,29 +11,35 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use symphonia_core::audio::Position;
 use symphonia_core::audio::{
     AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
     layouts,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
+use symphonia_core::codecs::audio::well_known::profiles::CODEC_PROFILE_AAC_MAIN;
 use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
 use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
-use symphonia_core::errors::{Result, unsupported_error};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::{BitReaderLtr, FiniteBitStream, ReadBitsLtr};
 use symphonia_core::packet::PacketRef;
 use symphonia_core::{codec_profile, support_audio_codec};
 
-use symphonia_common::mpeg::audio::{AudioObjectType, AudioSpecificConfig};
+use symphonia_common::mpeg::audio::{
+    AudioObjectType, AudioSpecificConfig, PceElement, ProgramConfig,
+};
 
 use log::debug;
 
+mod cce;
 mod codebooks;
 mod common;
 mod cpe;
 mod dsp;
 mod ics;
+mod mdct;
 mod ps;
 mod sbr;
 mod window;
@@ -48,8 +54,9 @@ const EXT_SBR_DATA_CRC: u32 = 0xe;
 /// The maximum length, in bytes, of the extension payload of a fill element, cnt (Table 4.11).
 const MAX_FILL_PAYLOAD_LEN: usize = 15 + 255 - 1;
 
-/// The maximum number of core channels for which the SBR tool is used.
-const MAX_SBR_CHANNELS: usize = 2;
+/// The maximum number of core channels for which the SBR tool is used. Every channel pair and
+/// single channel element has its own SBR data, so there is no limit other than the channel count.
+const MAX_SBR_CHANNELS: usize = 8;
 
 /// The amplitude of the time-domain signal of the AAC core as specified, relative to the output of
 /// this decoder, which is normalized to the range [-1, 1].
@@ -76,6 +83,10 @@ struct M4AInfo {
     ps_present: bool,
     /// SBR downsampled mode: extension sample rate equals core sample rate.
     sbr_downsampled: bool,
+    /// The layout and bitstream channel order defined by a program config element.
+    pce: Option<(Channels, Vec<Position>)>,
+    /// The first channel of each element defined by a program config element.
+    pce_elements: Vec<PceElement>,
 }
 
 impl M4AInfo {
@@ -89,6 +100,8 @@ impl M4AInfo {
             sbr_present: false,
             ps_present: false,
             sbr_downsampled: false,
+            pce: None,
+            pce_elements: Vec::new(),
         }
     }
 
@@ -108,6 +121,8 @@ impl M4AInfo {
             ps_present: asc.ps_present,
             sbr_downsampled: sbr_ps_info
                 .is_some_and(|(srate, _)| srate > 0 && srate == asc.sample_rate),
+            pce: asc.channels.clone().zip(asc.channel_order.clone()),
+            pce_elements: asc.channel_elements.clone().unwrap_or_default(),
         }
     }
 
@@ -141,7 +156,7 @@ impl M4AInfo {
 
     /// The number of output frames per decoded frame.
     fn output_frames(&self) -> usize {
-        if self.use_sbr() { sbr::SBR_FRAME_LEN } else { self.samples }
+        if self.use_sbr() && !self.sbr_downsampled { sbr::SBR_FRAME_LEN } else { self.samples }
     }
 
     fn apply_container_hints(&mut self, params: &AudioCodecParameters) {
@@ -197,13 +212,77 @@ fn map_to_channels(num_channels: usize) -> Option<Channels> {
     Some(channels)
 }
 
+/// Get the output plane of each channel, in the order that the channels appear in the bitstream
+/// (ISO/IEC 14496-3, Table 1.19), for the default channel configuration of the channel count.
+fn element_plane_map(num_channels: usize, pce: Option<&(Channels, Vec<Position>)>) -> Vec<usize> {
+    if let Some((layout, order)) = pce {
+        return order
+            .iter()
+            .enumerate()
+            .map(|(i, pos)| layout.get_canonical_index_for_positioned_channel(*pos).unwrap_or(i))
+            .collect();
+    }
+
+    let Some(layout) = map_to_channels(num_channels)
+    else {
+        return (0..num_channels).collect();
+    };
+
+    let order: &[Position] = match num_channels {
+        1 | 2 => return (0..num_channels).collect(),
+        3 => &[Position::FRONT_CENTER, Position::FRONT_LEFT, Position::FRONT_RIGHT],
+        4 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_CENTER,
+        ],
+        5 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+        ],
+        6 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+            Position::LFE1,
+        ],
+        _ => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::FRONT_LEFT_CENTER,
+            Position::FRONT_RIGHT_CENTER,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+            Position::LFE1,
+        ],
+    };
+
+    order
+        .iter()
+        .enumerate()
+        .map(|(i, pos)| layout.get_canonical_index_for_positioned_channel(*pos).unwrap_or(i))
+        .collect()
+}
+
 /// Amend the codec parameters such that they describe the decoded output, and create an output
 /// buffer for it.
 fn configure_output(
     m4ainfo: &M4AInfo,
     params: &mut AudioCodecParameters,
 ) -> Result<AudioBuffer<f32>> {
-    let Some(channels) = map_to_channels(m4ainfo.output_channels())
+    let output_channels = m4ainfo.output_channels();
+
+    let pce_layout =
+        m4ainfo.pce.as_ref().map(|(layout, _)| layout).filter(|l| l.count() == output_channels);
+
+    let Some(channels) = pce_layout.cloned().or_else(|| map_to_channels(output_channels))
     else {
         return unsupported_error("aac: unsupported number of channels");
     };
@@ -224,11 +303,14 @@ struct SbrDecoding {
     core: Box<[[f32; sbr::CORE_FRAME_LEN]; 2]>,
     /// The SBR extension payload being decoded.
     payload: Box<[u8; MAX_FILL_PAYLOAD_LEN]>,
+    /// If the output is at the core sampling rate (downsampled SBR mode).
+    downsampled: bool,
 }
 
 impl SbrDecoding {
-    fn new() -> Self {
+    fn new(downsampled: bool) -> Self {
         SbrDecoding {
+            downsampled,
             elements: Vec::new(),
             core: Box::new([[0.0; sbr::CORE_FRAME_LEN]; 2]),
             payload: Box::new([0; MAX_FILL_PAYLOAD_LEN]),
@@ -242,7 +324,13 @@ impl SbrDecoding {
     fn add_elements(&mut self, pairs: &[cpe::ChannelPair], mono_core: bool) {
         for pair in pairs.iter().skip(self.elements.len()) {
             let num_channels = if pair.is_pair { 2 } else { 1 };
-            self.elements.push(sbr::SbrElement::new(num_channels, mono_core));
+            let element = sbr::SbrElement::new(num_channels, mono_core);
+            self.elements.push(if self.downsampled {
+                element.with_downsampled_synthesis()
+            }
+            else {
+                element
+            });
         }
     }
 }
@@ -258,12 +346,24 @@ pub struct AacDecoder {
     pairs: Vec<cpe::ChannelPair>,
     dsp: dsp::Dsp,
     sbinfo: GASubbandInfo,
+    plane_map: Vec<usize>,
+    /// If the element of each channel pair was decoded in the current frame.
+    pairs_present: Vec<bool>,
+    // Shared by all channels and persistent across frames, like the reference decoder's.
+    lcg: Lcg,
     params: AudioCodecParameters,
     /// The output buffer: 1024 frames per channel at the core sampling rate, or, if SBR is used,
     /// 2048 frames per channel at the SBR output sampling rate.
     buf: AudioBuffer<f32>,
     /// The SBR state, if SBR is used.
     sbr: Option<SbrDecoding>,
+    /// The state of the coupling channel of each element instance tag.
+    cce_ics: Vec<Option<ics::Ics>>,
+    /// The coupling channel elements of the current frame.
+    cces: Vec<cce::Cce>,
+    /// Whether the element is a channel pair element, the instance tag, and the index of the
+    /// channel pair state of each single channel and channel pair element of the current frame.
+    frame_elements: Vec<(bool, u32, usize)>,
 }
 
 impl AacDecoder {
@@ -283,7 +383,10 @@ impl AacDecoder {
         }
         else {
             // Otherwise, assume there is no ASC and use the codec parameters for ADTS.
-            m4ainfo.otype = AudioObjectType::Lc;
+            m4ainfo.otype = match params.profile {
+                Some(CODEC_PROFILE_AAC_MAIN) => AudioObjectType::Main,
+                _ => AudioObjectType::Lc,
+            };
             m4ainfo.samples = 1024;
 
             m4ainfo.srate = match params.sample_rate {
@@ -310,58 +413,96 @@ impl AacDecoder {
             m4ainfo.sbr_downsampled,
         );
 
-        if !matches!(m4ainfo.otype, AudioObjectType::Lc | AudioObjectType::ErAacLc) {
+        if !matches!(
+            m4ainfo.otype,
+            AudioObjectType::Lc | AudioObjectType::ErAacLc | AudioObjectType::Main
+        ) {
             return unsupported_error("aac: unsupported object type");
         }
 
-        // TODO: Support 960-sample frames.
-        if m4ainfo.samples != 1024 {
-            return unsupported_error("aac: unsupported frame length");
+        let Some(sbinfo) = GASubbandInfo::find_for(m4ainfo.srate, m4ainfo.samples)
+        else {
+            return unsupported_error("aac: unsupported frame length or sampling rate");
+        };
+
+        if m4ainfo.samples != 1024 && m4ainfo.use_sbr() {
+            return unsupported_error("aac: sbr with 960-sample frames is not supported");
         }
 
         // The core channels must map to a known channel layout.
-        if map_to_channels(m4ainfo.channels).is_none() {
+        if m4ainfo.pce.is_none() && map_to_channels(m4ainfo.channels).is_none() {
             return unsupported_error("aac: unsupported number of channels");
         }
-
-        // TODO: Support the downsampled SBR tool (4.6.18.4.3).
-        if m4ainfo.use_sbr() && m4ainfo.sbr_downsampled {
-            return unsupported_error("aac: downsampled sbr is not supported");
-        }
-
-        let sbinfo = GASubbandInfo::find(m4ainfo.srate);
 
         // Clone and amend the codec parameters with information from the extra data, and the
         // output of the SBR and PS tools.
         let mut params = params.clone();
         let buf = configure_output(&m4ainfo, &mut params)?;
 
-        let sbr = if m4ainfo.use_sbr() { Some(SbrDecoding::new()) } else { None };
+        // The downsampled synthesis is not aligned with the reference yet (a delay of 26 samples).
+        if m4ainfo.use_sbr() && m4ainfo.sbr_downsampled {
+            return unsupported_error("aac: downsampled sbr is not supported");
+        }
+
+        let sbr = m4ainfo.use_sbr().then(|| SbrDecoding::new(false));
+        let plane_map = element_plane_map(m4ainfo.channels, m4ainfo.pce.as_ref());
+
+        let dsp = dsp::Dsp::new(m4ainfo.samples);
 
         Ok(AacDecoder {
             m4ainfo,
             opts: *opts,
             pairs: Vec::new(),
-            dsp: dsp::Dsp::new(),
+            dsp,
             sbinfo,
+            plane_map,
+            pairs_present: Vec::new(),
+            lcg: Lcg::new(0x1f2e3d4c),
             params,
             buf,
             sbr,
+            cce_ics: (0..16).map(|_| None).collect(),
+            cces: Vec::new(),
+            frame_elements: Vec::new(),
         })
     }
 
-    fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
-        if self.pairs.len() <= pair_no {
-            self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
+    /// Get the index of the channel pair (or single channel) state of the element `id` with the
+    /// instance tag `tag`, which is the next element of the frame, creating it if it does not
+    /// exist.
+    ///
+    /// If a program config element defines the channels, the instance tag identifies the channels
+    /// of the element. Otherwise, the channels are assigned in the order the elements appear.
+    fn find_pair(&mut self, id: u32, tag: u32, pair: bool, next_ch: &mut usize) -> Result<usize> {
+        let channel = if self.m4ainfo.pce_elements.is_empty() {
+            *next_ch
         }
         else {
-            validate!(self.pairs[pair_no].channel == channel);
-            validate!(self.pairs[pair_no].is_pair == pair);
-        }
+            match self.m4ainfo.pce_elements.iter().find(|e| e.id == id && e.tag == tag) {
+                Some(element) => element.first_channel,
+                None => return decode_error("aac: element is not in the program config"),
+            }
+        };
+
+        *next_ch += if pair { 2 } else { 1 };
 
         validate!(if pair { channel + 1 } else { channel } < self.m4ainfo.channels);
 
-        Ok(())
+        let index = match self.pairs.iter().position(|p| p.channel == channel) {
+            Some(index) => {
+                validate!(self.pairs[index].is_pair == pair);
+                index
+            }
+            None => {
+                self.pairs.push(cpe::ChannelPair::new(pair, channel, self.sbinfo));
+                self.pairs.len() - 1
+            }
+        };
+
+        self.pairs_present.resize(self.pairs.len(), false);
+        self.pairs_present[index] = true;
+
+        Ok(index)
     }
 
     /// Start to use the SBR tool after SBR data was found in the bitstream (implicit signalling,
@@ -375,7 +516,7 @@ impl AacDecoder {
         match configure_output(&self.m4ainfo, &mut self.params) {
             Ok(buf) => {
                 self.buf = buf;
-                self.sbr = Some(SbrDecoding::new());
+                self.sbr = Some(SbrDecoding::new(false));
                 Ok(())
             }
             Err(err) => {
@@ -393,8 +534,10 @@ impl AacDecoder {
             }
         }
 
-        let mut cur_pair = 0;
         let mut cur_ch = 0;
+        self.pairs_present.fill(false);
+        self.cces.clear();
+        self.frame_elements.clear();
         // The SCE or CPE that an SBR extension payload belongs to. SBR fill elements follow the
         // element they belong to (4.5.2.8.2.2).
         let mut sbr_element = None;
@@ -405,36 +548,36 @@ impl AacDecoder {
             match id {
                 0 => {
                     // ID_SCE
-                    let _tag = bs.read_bits_leq32(4)?;
-                    self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
-                    sbr_element = Some(cur_pair);
-                    cur_pair += 1;
-                    cur_ch += 1;
+                    let tag = bs.read_bits_leq32(4)?;
+                    let pair = self.find_pair(id, tag, false, &mut cur_ch)?;
+                    self.pairs[pair].decode_ga_sce(bs, &mut self.lcg, self.m4ainfo.otype)?;
+                    self.frame_elements.push((false, tag, pair));
+                    sbr_element = Some(pair);
                 }
                 1 => {
                     // ID_CPE
-                    let _tag = bs.read_bits_leq32(4)?;
-                    self.set_pair(cur_pair, cur_ch, true)?;
-                    self.pairs[cur_pair].decode_ga_cpe(bs, self.m4ainfo.otype)?;
-                    sbr_element = Some(cur_pair);
-                    cur_pair += 1;
-                    cur_ch += 2;
+                    let tag = bs.read_bits_leq32(4)?;
+                    let pair = self.find_pair(id, tag, true, &mut cur_ch)?;
+                    self.pairs[pair].decode_ga_cpe(bs, &mut self.lcg, self.m4ainfo.otype)?;
+                    self.frame_elements.push((true, tag, pair));
+                    sbr_element = Some(pair);
                 }
                 2 => {
                     // ID_CCE
-                    return unsupported_error("aac: coupling channel element");
+                    let tag = bs.read_bits_leq32(4)? as usize;
+                    let sbinfo = self.sbinfo;
+                    let ics = self.cce_ics[tag].get_or_insert_with(|| ics::Ics::new(sbinfo));
+                    let cce = cce::Cce::read(bs, ics, &mut self.lcg, self.m4ainfo.otype, tag)?;
+                    self.cces.push(cce);
                 }
                 3 => {
                     // ID_LFE
                     //
                     // An LFE has no SBR data. With SBR, it is upsampled and delayed like the core
                     // signal of the other elements (4.5.2.8.2.2).
-                    let _tag = bs.read_bits_leq32(4)?;
-                    self.set_pair(cur_pair, cur_ch, false)?;
-                    self.pairs[cur_pair].decode_ga_sce(bs, self.m4ainfo.otype)?;
-                    cur_pair += 1;
-                    cur_ch += 1;
+                    let tag = bs.read_bits_leq32(4)?;
+                    let pair = self.find_pair(id, tag, false, &mut cur_ch)?;
+                    self.pairs[pair].decode_ga_sce(bs, &mut self.lcg, self.m4ainfo.otype)?;
                 }
                 4 => {
                     // ID_DSE
@@ -450,8 +593,9 @@ impl AacDecoder {
                     bs.ignore_bits(count * 8)?; // no SBR payload or such
                 }
                 5 => {
-                    // ID_PCE
-                    return unsupported_error("aac: program config");
+                    // ID_PCE. The channel layout was already determined from the stream
+                    // parameters.
+                    ProgramConfig::read(bs)?;
                 }
                 6 => {
                     // ID_FIL
@@ -465,9 +609,77 @@ impl AacDecoder {
             };
         }
 
-        self.synth_audio(cur_pair);
+        // Elements that were absent from the frame are silent.
+        for (pair, present) in self.pairs.iter_mut().zip(&self.pairs_present) {
+            if !present {
+                pair.clear_coefficients();
+            }
+        }
+
+        self.apply_coupling();
+        self.synth_audio(self.pairs.len());
 
         Ok(())
+    }
+
+    /// Hand the coupling channels of the frame to the channels they are coupled to. The
+    /// channels add them while they are synthesized (4.6.8.3).
+    fn apply_coupling(&mut self) {
+        let rate_idx = GASubbandInfo::find_idx(self.m4ainfo.srate);
+        let frame_len = self.m4ainfo.samples;
+        let cces = std::mem::take(&mut self.cces);
+
+        for cce in &cces {
+            let Some(coupling_ics) = self.cce_ics[cce.tag].as_mut()
+            else {
+                continue;
+            };
+
+            let mut signal = Vec::new();
+
+            let time = cce.ind_sw;
+            if time {
+                signal.resize(frame_len, 0.0);
+                coupling_ics.synth_channel(&mut self.dsp, rate_idx, &mut signal);
+            }
+            else {
+                coupling_ics.prepare_coupling_spectrum(rate_idx, cce.after_tns);
+                signal.extend_from_slice(&coupling_ics.coeffs[..frame_len]);
+            }
+
+            for (target, gain) in cce.targets.iter().zip(&cce.gains) {
+                let Some(channel) = target.channel
+                else {
+                    continue;
+                };
+
+                let element = self
+                    .frame_elements
+                    .iter()
+                    .find(|(is_cpe, tag, _)| *is_cpe == target.is_cpe && *tag == target.tag);
+
+                let Some(&(_, _, pair)) = element
+                else {
+                    continue;
+                };
+
+                let Some(target_ics) = self.pairs[pair].ics_mut(channel)
+                else {
+                    continue;
+                };
+
+                if time {
+                    target_ics.add_coupling_time(&signal, gain[0]);
+                }
+                else {
+                    let gains =
+                        if gain.len() == 1 { vec![gain[0]; frame_len] } else { gain.clone() };
+                    target_ics.add_coupling_spectrum(cce.after_tns, &signal, &gains);
+                }
+            }
+        }
+
+        self.cces = cces;
     }
 
     /// Read a fill element (Table 4.11), and decode the SBR extension payload it may carry.
@@ -496,8 +708,6 @@ impl AacDecoder {
         // The length of the extension payload following extension_type, in bits.
         let num_bits = 8 * count - 4;
 
-        // The SBR tool is only used for mono and stereo cores. Otherwise, SBR data is ignored and
-        // the core signal is output.
         if !matches!(ext_type, EXT_SBR_DATA | EXT_SBR_DATA_CRC)
             || self.m4ainfo.channels > MAX_SBR_CHANNELS
         {
@@ -513,7 +723,7 @@ impl AacDecoder {
             self.enable_sbr()?;
         }
 
-        let sbr = self.sbr.get_or_insert_with(SbrDecoding::new);
+        let sbr = self.sbr.get_or_insert_with(|| SbrDecoding::new(false));
 
         // Copy the payload, (count - 1) bytes followed by 4 bits, to a byte-aligned buffer.
         let payload = &mut sbr.payload[..count];
@@ -561,7 +771,7 @@ impl AacDecoder {
         else {
             // Without SBR, the core output is the output.
             for pair in pairs.iter_mut() {
-                pair.synth_audio(&mut self.dsp, &mut self.buf, rate_idx);
+                pair.synth_audio(&mut self.dsp, &mut self.buf, rate_idx, &self.plane_map);
             }
             return;
         };
@@ -586,10 +796,16 @@ impl AacDecoder {
             let core = &core[..num_channels.min(2)];
 
             // The output channels of the element start at the first core channel of the element.
-            let first = pair.channel;
+            let first = self.plane_map.get(pair.channel).copied().unwrap_or(pair.channel);
+            let second = if element.num_output_channels() > 1 && pair.is_pair {
+                self.plane_map.get(pair.channel + 1).copied().unwrap_or(pair.channel + 1)
+            }
+            else {
+                first + 1
+            };
 
             if element.num_output_channels() > 1 {
-                match self.buf.plane_pair_mut(first, first + 1) {
+                match self.buf.plane_pair_mut(first, second) {
                     Some((left, right)) => {
                         element.process(core, &mut [&mut *left, &mut *right]);
                         scale_from_spec_pcm(left);
@@ -618,7 +834,9 @@ impl AacDecoder {
 
         // Choose decode step based on the object type.
         match self.m4ainfo.otype {
-            AudioObjectType::Lc | AudioObjectType::ErAacLc => self.decode_ga(&mut bs)?,
+            AudioObjectType::Lc | AudioObjectType::ErAacLc | AudioObjectType::Main => {
+                self.decode_ga(&mut bs)?
+            }
             _ => return unsupported_error("aac: object type"),
         }
 
@@ -630,7 +848,8 @@ impl AacDecoder {
             // The trims are in units of the timebase of the track. If the packet duration is the
             // core frame length, the timebase is the core sampling rate, but the SBR output is at
             // twice the core sampling rate.
-            if self.sbr.is_some() && packet.block_dur().get() == self.m4ainfo.samples as u64 {
+            let core_dur = packet.block_dur().get() == self.m4ainfo.samples as u64;
+            if self.sbr.is_some() && !self.m4ainfo.sbr_downsampled && core_dur {
                 trim_start = trim_start.saturating_mul(2);
                 trim_end = trim_end.saturating_mul(2);
             }
@@ -1278,7 +1497,7 @@ mod tests {
         let dec = new_decoder_asc(&asc, None).unwrap();
         assert_output(&dec, 48000, 2, 0);
 
-        // SBR is not used for more than two core channels.
+        // SBR is used for every channel pair and single channel element of a multichannel stream.
         let mut asc = BitWriter::default();
         asc.put(5, 5); // audioObjectType = SBR
         asc.put(7, 4); // samplingFrequencyIndex = 22050 Hz
@@ -1287,8 +1506,8 @@ mod tests {
         asc.put(2, 5); // audioObjectType = AAC LC
         asc.put(0, 3); // GASpecificConfig()
         let dec = new_decoder_asc(&asc, None).unwrap();
-        assert_output(&dec, CORE_RATE, 6, 0);
-        assert!(dec.sbr.is_none());
+        assert_output(&dec, 2 * CORE_RATE, 6, 0);
+        assert!(dec.sbr.is_some());
 
         // An AAC LC stream with a container sampling rate of twice the core sampling rate uses
         // SBR from the start.
@@ -1396,7 +1615,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_more_than_two_channels_ignore_sbr() {
+    fn verify_more_than_two_channels_use_sbr() {
         let mut dec = new_decoder(layouts::CHANNEL_LAYOUT_AAC_3P0);
 
         let mut w = BitWriter::default();
@@ -1406,8 +1625,8 @@ mod tests {
         put_fill(&mut w, EXT_SBR_DATA, &sbr_cpe_payload(true));
         decode(&mut dec, &finish(w)).unwrap();
 
-        assert_output(&dec, CORE_RATE, 3, 1024);
-        assert!(dec.sbr.is_none());
+        assert_output(&dec, 2 * CORE_RATE, 3, 2048);
+        assert!(dec.sbr.is_some());
     }
 
     #[test]

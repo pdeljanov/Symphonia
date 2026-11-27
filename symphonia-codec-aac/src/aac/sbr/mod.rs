@@ -27,7 +27,7 @@ use symphonia_core::dsp::complex::Complex;
 use crate::aac::ps::PsDecoder;
 
 use channel::SbrChannelProcessor;
-use qmf::QmfSynthesis;
+use qmf::{QmfSynthesis, QmfSynthesisDown};
 use syntax::SbrBitstreamDecoder;
 use types::{PS_LOOKAHEAD, QMF_ANALYSIS_BANDS, QMF_BANDS, QMF_SLOTS, QmfFrame, QmfSlots, SbrFrame};
 
@@ -60,6 +60,8 @@ pub struct SbrElement {
     channels: Vec<SbrChannelProcessor>,
     /// The 64-band synthesis QMF bank of each output channel (4.6.18.4.2).
     synthesis: Vec<QmfSynthesis>,
+    /// The 32-band synthesis QMF bank of each output channel in the downsampled mode, or empty.
+    synthesis_down: Vec<QmfSynthesisDown>,
     /// The PS stage, for a single channel element with stereo output.
     ps: Option<Box<PsStage>>,
     /// X_input of each core channel (see [`QmfFrame`]).
@@ -87,6 +89,7 @@ impl SbrElement {
             bitstream: SbrBitstreamDecoder::new(num_channels == 2),
             channels: (0..num_channels).map(|_| SbrChannelProcessor::new()).collect(),
             synthesis: (0..num_outputs).map(|_| QmfSynthesis::new()).collect(),
+            synthesis_down: Vec::new(),
             ps: ps.then(|| {
                 Box::new(PsStage {
                     decoder: PsDecoder::new(),
@@ -97,6 +100,13 @@ impl SbrElement {
             frame: None,
             synced: false,
         }
+    }
+
+    /// Output the signal at the core sampling rate with a 32-band synthesis filterbank, using
+    /// only the lower half of the subbands (downsampled SBR mode, 4.6.18.4.2).
+    pub fn with_downsampled_synthesis(mut self) -> Self {
+        self.synthesis_down = (0..self.synthesis.len()).map(|_| QmfSynthesisDown::new()).collect();
+        self
     }
 
     /// The number of core channels of the element.
@@ -122,6 +132,9 @@ impl SbrElement {
             channel.reset();
         }
         for synthesis in self.synthesis.iter_mut() {
+            synthesis.reset();
+        }
+        for synthesis in self.synthesis_down.iter_mut() {
             synthesis.reset();
         }
         if let Some(ps) = self.ps.as_deref_mut() {
@@ -218,12 +231,17 @@ impl SbrElement {
         };
 
         // The 64-band QMF synthesis of each output channel (4.6.18.4.2).
-        for (i, synthesis) in self.synthesis.iter_mut().enumerate() {
+        for i in 0..self.synthesis.len() {
             let x = match ps_out {
                 Some(ps_out) => ps_out.get(i).map(|x| &x[..]),
                 None => self.qmf.get(i).map(|x| &x[..QMF_SLOTS]),
             };
-            synthesize(synthesis, x.unwrap_or_default(), out.get_mut(i));
+            let x = x.unwrap_or_default();
+
+            match self.synthesis_down.get_mut(i) {
+                Some(synthesis) => synthesize_down(synthesis, x, out.get_mut(i)),
+                None => synthesize(&mut self.synthesis[i], x, out.get_mut(i)),
+            }
         }
     }
 }
@@ -244,6 +262,24 @@ fn synthesize(
     // filterbank consistent.
     for (l, x) in x.iter().enumerate() {
         let dst = out.get_mut(l * QMF_BANDS..).unwrap_or_default();
+        synthesis.synthesize(x, dst);
+    }
+}
+
+/// Run the 32-band synthesis QMF bank of the downsampled mode over the QMF subsamples `x`, and
+/// write the time-domain output to `out`.
+fn synthesize_down(
+    synthesis: &mut QmfSynthesisDown,
+    x: &[[Complex<f32>; QMF_BANDS]],
+    out: Option<&mut &mut [f32]>,
+) {
+    let out: &mut [f32] = match out {
+        Some(out) => out,
+        None => &mut [],
+    };
+
+    for (l, x) in x.iter().enumerate() {
+        let dst = out.get_mut(l * QMF_ANALYSIS_BANDS..).unwrap_or_default();
         synthesis.synthesize(x, dst);
     }
 }

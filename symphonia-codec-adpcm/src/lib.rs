@@ -22,7 +22,8 @@ use symphonia_core::audio::{
     AsGenericAudioBufferRef, Audio, AudioBuffer, AudioMut, AudioSpec, GenericAudioBufferRef,
 };
 use symphonia_core::codecs::audio::well_known::{
-    CODEC_ID_ADPCM_IMA_QT, CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS,
+    CODEC_ID_ADPCM_G722, CODEC_ID_ADPCM_G726, CODEC_ID_ADPCM_G726LE, CODEC_ID_ADPCM_IMA_QT,
+    CODEC_ID_ADPCM_IMA_WAV, CODEC_ID_ADPCM_MS, CODEC_ID_ADPCM_YAMAHA,
 };
 use symphonia_core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
@@ -30,14 +31,20 @@ use symphonia_core::errors::{Result, decode_error, unsupported_error};
 use symphonia_core::io::ReadBytes;
 use symphonia_core::packet::PacketRef;
 
+mod codec_g722;
+mod codec_g726;
 mod codec_ima_qt;
 mod codec_ima_wav;
 mod codec_ms;
+mod codec_swf;
+mod codec_yamaha;
 mod common;
 mod common_ima;
+mod speech;
 
 fn is_supported_adpcm_codec(codec_id: AudioCodecId) -> bool {
     matches!(codec_id, CODEC_ID_ADPCM_MS | CODEC_ID_ADPCM_IMA_WAV | CODEC_ID_ADPCM_IMA_QT)
+        || speech::is_speech_codec(codec_id)
 }
 
 enum InnerDecoder {
@@ -51,7 +58,7 @@ impl InnerDecoder {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_mono,
             InnerDecoder::AdpcmIma => codec_ima_wav::decode_mono,
-            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_mono,
+            InnerDecoder::AdpcmImaQT => unreachable!("ima_qt blocks carry state"),
         }
     }
 
@@ -61,20 +68,25 @@ impl InnerDecoder {
         match *self {
             InnerDecoder::AdpcmMs => codec_ms::decode_stereo,
             InnerDecoder::AdpcmIma => codec_ima_wav::decode_stereo,
-            InnerDecoder::AdpcmImaQT => codec_ima_qt::decode_stereo,
+            InnerDecoder::AdpcmImaQT => unreachable!("ima_qt blocks carry state"),
         }
     }
 }
+
+pub use codec_swf::{SwfAdpcmDecoder, swf_adpcm_samples};
 
 /// Adaptive Differential Pulse Code Modulation (ADPCM) decoder.
 pub struct AdpcmDecoder {
     params: AudioCodecParameters,
     inner_decoder: InnerDecoder,
+    /// The predictor at the end of the previous block of each channel (IMA QuickTime).
+    qt_predictors: [i32; 2],
+    gapless: bool,
     buf: AudioBuffer<i32>,
 }
 
 impl AdpcmDecoder {
-    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+    pub fn try_new(params: &AudioCodecParameters, opts: &AudioDecoderOptions) -> Result<Self> {
         // This decoder only supports certain ADPCM codecs.
         if !is_supported_adpcm_codec(params.codec) {
             return unsupported_error("adpcm: invalid codec");
@@ -84,6 +96,13 @@ impl AdpcmDecoder {
             Some(frames) => frames as usize,
             _ => return unsupported_error("adpcm: maximum frames per packet is required"),
         };
+
+        if !symphonia_core::audio::is_reasonable_capacity(
+            frames,
+            params.channels.as_ref().map_or(1, |c| c.count()),
+        ) {
+            return unsupported_error("adpcm: maximum frames per packet is too large");
+        }
 
         if params.frames_per_block.is_none_or(|v| v == 0) {
             return unsupported_error("adpcm: valid frames per block is required");
@@ -122,6 +141,8 @@ impl AdpcmDecoder {
         Ok(AdpcmDecoder {
             params: params.clone(),
             inner_decoder,
+            qt_predictors: [0; 2],
+            gapless: opts.gapless,
             buf: AudioBuffer::new(spec, frames),
         })
     }
@@ -134,7 +155,9 @@ impl AdpcmDecoder {
             None => return decode_error("adpcm: missing frames_per_block"),
         };
 
-        let block_count = packet.block_dur().get() as usize / frames_per_block;
+        // The last packet of a stream may state fewer frames than a whole number of blocks.
+        let num_frames = packet.block_dur().get() as usize;
+        let block_count = num_frames.div_ceil(frames_per_block);
 
         self.buf.clear();
         self.buf.render_uninit(Some(block_count * frames_per_block));
@@ -146,12 +169,20 @@ impl AdpcmDecoder {
                     Some(b) => b,
                     None => return decode_error("adpcm: missing audio plane 0"),
                 };
-                let decode_mono = self.inner_decoder.decode_mono_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffer = &mut buffer[buffer_range];
-                    decode_mono(&mut stream, buffer, frames_per_block)?;
+                    if matches!(self.inner_decoder, InnerDecoder::AdpcmImaQT) {
+                        codec_ima_qt::decode_block(
+                            &mut stream,
+                            buffer,
+                            &mut self.qt_predictors[0],
+                        )?;
+                    }
+                    else {
+                        self.inner_decoder.decode_mono_fn()(&mut stream, buffer, frames_per_block)?;
+                    }
                 }
             }
             2 => {
@@ -159,16 +190,37 @@ impl AdpcmDecoder {
                     Some(b) => b,
                     None => return decode_error("adpcm: missing audio planes 0 and 1"),
                 };
-                let decode_stereo = self.inner_decoder.decode_stereo_fn();
                 for block_id in 0..block_count {
                     let offset = frames_per_block * block_id;
                     let buffer_range = offset..(offset + frames_per_block);
                     let buffers =
                         [&mut buffers.0[buffer_range.clone()], &mut buffers.1[buffer_range]];
-                    decode_stereo(&mut stream, buffers, frames_per_block)?;
+                    if matches!(self.inner_decoder, InnerDecoder::AdpcmImaQT) {
+                        let [left, right] = buffers;
+                        codec_ima_qt::decode_block(&mut stream, left, &mut self.qt_predictors[0])?;
+                        codec_ima_qt::decode_block(&mut stream, right, &mut self.qt_predictors[1])?;
+                    }
+                    else {
+                        self.inner_decoder.decode_stereo_fn()(
+                            &mut stream,
+                            buffers,
+                            frames_per_block,
+                        )?;
+                    }
                 }
             }
             _ => unreachable!(),
+        }
+
+        // Trim the unused frames of the last block, and the frames to skip when gapless.
+        let unused = block_count * frames_per_block - num_frames;
+
+        if self.gapless {
+            self.buf
+                .trim(packet.trim_start.get() as usize, packet.trim_end.get() as usize + unused);
+        }
+        else if unused > 0 {
+            self.buf.trim(0, unused);
         }
 
         Ok(())
@@ -177,7 +229,7 @@ impl AdpcmDecoder {
 
 impl AudioDecoder for AdpcmDecoder {
     fn reset(&mut self) {
-        // No state is stored between packets, therefore do nothing.
+        self.qt_predictors = [0; 2];
     }
 
     fn codec_info(&self) -> &CodecInfo {
@@ -220,6 +272,10 @@ impl RegisterableAudioDecoder for AdpcmDecoder {
     where
         Self: Sized,
     {
+        if speech::is_speech_codec(params.codec) {
+            return Ok(Box::new(speech::SpeechDecoder::try_new(params, opts)?));
+        }
+
         Ok(Box::new(AdpcmDecoder::try_new(params, opts)?))
     }
 
@@ -228,6 +284,14 @@ impl RegisterableAudioDecoder for AdpcmDecoder {
             support_audio_codec!(CODEC_ID_ADPCM_MS, "adpcm_ms", "Microsoft ADPCM"),
             support_audio_codec!(CODEC_ID_ADPCM_IMA_WAV, "adpcm_ima_wav", "ADPCM IMA WAV"),
             support_audio_codec!(CODEC_ID_ADPCM_IMA_QT, "adpcm_ima_qt", "ADPCM IMA QT"),
+            support_audio_codec!(CODEC_ID_ADPCM_YAMAHA, "adpcm_yamaha", "ADPCM Yamaha"),
+            support_audio_codec!(CODEC_ID_ADPCM_G722, "g722", "ITU-T G.722 ADPCM"),
+            support_audio_codec!(CODEC_ID_ADPCM_G726, "g726", "ITU-T G.726 ADPCM"),
+            support_audio_codec!(
+                CODEC_ID_ADPCM_G726LE,
+                "g726le",
+                "ITU-T G.726 ADPCM (little-endian)"
+            ),
         ]
     }
 }

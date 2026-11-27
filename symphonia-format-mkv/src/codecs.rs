@@ -69,7 +69,10 @@ fn make_audio_codec_params(
     codec_params.with_sample_rate(audio.sampling_frequency.round() as u32);
     codec_params.with_channels(Channels::Discrete(audio.channels.get() as u16));
 
-    let format = audio.bit_depth.and_then(|bits| match bits.get() {
+    // A-law and mu-law are coded with 8 bits, but decode to 16-bit samples.
+    let is_companded = matches!(id, CODEC_ID_PCM_ALAW | CODEC_ID_PCM_MULAW);
+
+    let format = audio.bit_depth.filter(|_| !is_companded).and_then(|bits| match bits.get() {
         8 => Some(SampleFormat::S8),
         16 => Some(SampleFormat::S16),
         24 => Some(SampleFormat::S24),
@@ -81,7 +84,7 @@ fn make_audio_codec_params(
         codec_params.with_sample_format(format);
     }
 
-    if let Some(bits) = audio.bit_depth {
+    if let Some(bits) = audio.bit_depth.filter(|_| !is_companded) {
         codec_params.with_bits_per_sample(bits.get() as u32);
     }
 
@@ -89,6 +92,9 @@ fn make_audio_codec_params(
         let extra_data = match id {
             CODEC_ID_VORBIS => vorbis_extra_data_from_codec_private(&codec_private)?,
             CODEC_ID_FLAC => flac_extra_data_from_codec_private(&codec_private)?,
+            // The codec private data of PCM in A_MS/ACM is a WAVEFORMATEX, which the PCM decoder
+            // does not use.
+            _ if is_companded => Box::default(),
             _ => codec_private,
         };
 
@@ -285,6 +291,7 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
             _ => return None,
         },
         "A_PCM/INT/LIT" => match bit_depth?.get() {
+            8 => CodecId::Audio(CODEC_ID_PCM_U8),
             16 => CodecId::Audio(CODEC_ID_PCM_S16LE),
             24 => CodecId::Audio(CODEC_ID_PCM_S24LE),
             32 => CodecId::Audio(CODEC_ID_PCM_S32LE),
@@ -295,7 +302,22 @@ fn get_codec_id(track: &TrackElement) -> Option<CodecId> {
             64 => CodecId::Audio(CODEC_ID_PCM_F64LE),
             _ => return None,
         },
-        // A_MS/ACM
+        "A_MS/ACM" => {
+            // The codec private data is a WAVEFORMATEX structure that starts with the format tag.
+            let tag = track.codec_private.as_deref().and_then(|data| data.get(..2))?;
+
+            match (u16::from_le_bytes([tag[0], tag[1]]), bit_depth.map(|b| b.get())) {
+                (0x0001, Some(8)) => CodecId::Audio(CODEC_ID_PCM_U8),
+                (0x0001, Some(16)) => CodecId::Audio(CODEC_ID_PCM_S16LE),
+                (0x0001, Some(24)) => CodecId::Audio(CODEC_ID_PCM_S24LE),
+                (0x0001, Some(32)) => CodecId::Audio(CODEC_ID_PCM_S32LE),
+                (0x0003, Some(32)) => CodecId::Audio(CODEC_ID_PCM_F32LE),
+                (0x0003, Some(64)) => CodecId::Audio(CODEC_ID_PCM_F64LE),
+                (0x0006, _) => CodecId::Audio(CODEC_ID_PCM_ALAW),
+                (0x0007, _) => CodecId::Audio(CODEC_ID_PCM_MULAW),
+                _ => return None,
+            }
+        }
         // A_QUICKTIME
         // A_QUICKTIME/QDMC
         // A_QUICKTIME/QDM2

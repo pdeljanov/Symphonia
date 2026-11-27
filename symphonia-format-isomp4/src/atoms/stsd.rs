@@ -8,7 +8,8 @@
 use core::str;
 
 use log::debug;
-use symphonia_core::audio::{Channels, Position};
+use symphonia_core::audio::{Channels, Position, layouts};
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ADPCM_IMA_QT;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE};
 use symphonia_core::codecs::audio::well_known::{CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE};
@@ -71,6 +72,7 @@ impl Atom for StsdAtom {
             | AtomType::AudioSampleEntryOpus
             | AtomType::AudioSampleEntryMp3
             | AtomType::AudioSampleEntryLpcm
+            | AtomType::AudioSampleEntryImaQt
             | AtomType::AudioSampleEntryQtWave
             | AtomType::AudioSampleEntryALaw
             | AtomType::AudioSampleEntryMuLaw
@@ -137,6 +139,9 @@ pub enum SampleEntry {
     Other,
 }
 
+/// The number of frames in a QuickTime IMA ADPCM block.
+const IMA_QT_FRAMES_PER_BLOCK: u64 = 64;
+
 /// Audio sample entry.
 #[derive(Debug, Default)]
 pub struct AudioSampleEntry {
@@ -148,6 +153,7 @@ pub struct AudioSampleEntry {
     pub bits_per_sample: Option<u32>,
     pub bits_per_coded_sample: Option<u32>,
     pub frames_per_packet: Option<u64>,
+    pub frames_per_block: Option<u64>,
     pub channels: Option<Channels>,
     pub verification_check: Option<VerificationCheck>,
     pub extra_data: Option<Box<[u8]>>,
@@ -163,6 +169,7 @@ impl AudioSampleEntry {
             bits_per_coded_sample: self.bits_per_coded_sample,
             channels: self.channels.clone(),
             max_frames_per_packet: self.frames_per_packet,
+            frames_per_block: self.frames_per_block,
             verification_check: self.verification_check,
             extra_data: self.extra_data.clone(),
             ..Default::default()
@@ -351,6 +358,15 @@ impl Atom for AudioSampleEntry {
             }
         }
 
+        // A QuickTime IMA ADPCM sample entry has no codec-specific atom. Each packet is a block of
+        // 64 frames.
+        if header.atom_type == AtomType::AudioSampleEntryImaQt {
+            entry.codec_id = CODEC_ID_ADPCM_IMA_QT;
+            entry.frames_per_packet = Some(IMA_QT_FRAMES_PER_BLOCK);
+            entry.frames_per_block = Some(IMA_QT_FRAMES_PER_BLOCK);
+            entry.channels = Some(pcm_channels(entry.num_channels)?);
+        }
+
         // A MP3 sample entry has no codec-specific atom.
         if header.atom_type == AtomType::AudioSampleEntryMp3 {
             entry.codec_id = CODEC_ID_MP3;
@@ -373,10 +389,10 @@ fn pcm_codec_id(atype: AtomType) -> AudioCodecId {
         AtomType::AudioSampleEntryU8 => CODEC_ID_PCM_U8,
         AtomType::AudioSampleEntryS16Le => CODEC_ID_PCM_S16LE,
         AtomType::AudioSampleEntryS16Be => CODEC_ID_PCM_S16BE,
-        AtomType::AudioSampleEntryS24 => CODEC_ID_PCM_S24LE,
-        AtomType::AudioSampleEntryS32 => CODEC_ID_PCM_S32LE,
-        AtomType::AudioSampleEntryF32 => CODEC_ID_PCM_F32LE,
-        AtomType::AudioSampleEntryF64 => CODEC_ID_PCM_F64LE,
+        AtomType::AudioSampleEntryS24 => CODEC_ID_PCM_S24BE,
+        AtomType::AudioSampleEntryS32 => CODEC_ID_PCM_S32BE,
+        AtomType::AudioSampleEntryF32 => CODEC_ID_PCM_F32BE,
+        AtomType::AudioSampleEntryF64 => CODEC_ID_PCM_F64BE,
         _ => CODEC_ID_NULL_AUDIO,
     }
 }
@@ -449,6 +465,13 @@ fn pcm_channels(num_channels: u32) -> Result<Channels> {
     match num_channels {
         1 => Ok(Channels::Positioned(Position::FRONT_LEFT)),
         2 => Ok(Channels::Positioned(Position::FRONT_LEFT | Position::FRONT_RIGHT)),
+        // The channel layout atom is not parsed, so assume the common default layouts.
+        3 => Ok(layouts::CHANNEL_LAYOUT_3P0),
+        4 => Ok(layouts::CHANNEL_LAYOUT_4P0),
+        5 => Ok(layouts::CHANNEL_LAYOUT_5P0),
+        6 => Ok(layouts::CHANNEL_LAYOUT_5P1),
+        7 => Ok(layouts::CHANNEL_LAYOUT_6P1),
+        8 => Ok(layouts::CHANNEL_LAYOUT_7P1),
         _ => decode_error("isomp4: invalid number of channels"),
     }
 }

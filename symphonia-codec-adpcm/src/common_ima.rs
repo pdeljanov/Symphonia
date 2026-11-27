@@ -35,6 +35,30 @@ pub(crate) struct AdpcmImaBlockStatus {
 }
 
 impl AdpcmImaBlockStatus {
+    /// Expand a nibble using the original IMA reference algorithm, where the difference is
+    /// accumulated bit-by-bit. This differs in rounding from `expand_nibble`.
+    pub(crate) fn expand_nibble_bitwise(&mut self, byte: u8, nibble: Nibble) -> i32 {
+        let nibble = nibble.get_nibble(byte);
+        let step = IMA_STEP_TABLE[self.step_index as usize];
+
+        let mut diff = step >> 3;
+        if nibble & 0x4 != 0 {
+            diff += step;
+        }
+        if nibble & 0x2 != 0 {
+            diff += step >> 1;
+        }
+        if nibble & 0x1 != 0 {
+            diff += step >> 2;
+        }
+
+        let predictor =
+            if nibble & 0x8 != 0 { self.predictor - diff } else { self.predictor + diff };
+        self.predictor = clamp_i16(predictor) as i32;
+        self.step_index = (self.step_index + IMA_INDEX_TABLE[nibble as usize]).clamp(0, 88);
+        from_i16_shift!(self.predictor)
+    }
+
     pub(crate) fn expand_nibble(&mut self, byte: u8, nibble: Nibble) -> i32 {
         let nibble = nibble.get_nibble(byte);
         let step = IMA_STEP_TABLE[self.step_index as usize];

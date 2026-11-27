@@ -13,13 +13,15 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![allow(clippy::needless_range_loop)]
 
-mod adpcm_table;
+mod bits;
 mod decoder;
 mod demuxer;
-mod hf_vq_table;
-mod tables;
-mod quant_tables;
+mod header;
+mod huffman;
+mod qmf;
+mod spec_tables;
 
 pub use decoder::DcaDecoder;
 pub use demuxer::DcaReader;

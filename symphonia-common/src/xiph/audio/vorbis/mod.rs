@@ -199,3 +199,86 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+/// Converts the codec private data of a Vorbis stream in a container (the extra data of Matroska
+/// or of an MP4 elementary stream descriptor), to the identification header followed by the setup
+/// header, which the Vorbis decoder expects.
+///
+/// The data holds the number of packets minus one, the Xiph coded lengths of all packets but the
+/// last, and the packets: the identification, comment, and setup header.
+pub fn extra_data_from_xiph_lacing(extra: &[u8]) -> Result<Box<[u8]>> {
+    const PACKET_TYPE_IDENTIFICATION: u8 = 1;
+    const PACKET_TYPE_SETUP: u8 = 5;
+
+    let Some((&count, mut rest)) = extra.split_first()
+    else {
+        return decode_error("vorbis: missing extra data");
+    };
+
+    let mut lengths = Vec::with_capacity(usize::from(count));
+    for _ in 0..count {
+        let mut length = 0usize;
+        loop {
+            let Some((&byte, tail)) = rest.split_first()
+            else {
+                return decode_error("vorbis: truncated extra data");
+            };
+            rest = tail;
+            length += usize::from(byte);
+            if byte != 255 {
+                break;
+            }
+        }
+        lengths.push(length);
+    }
+
+    let mut ident = None;
+    let mut setup = None;
+    for i in 0..=usize::from(count) {
+        let length = lengths.get(i).copied().unwrap_or(rest.len());
+        if length > rest.len() {
+            return decode_error("vorbis: truncated extra data");
+        }
+        let (packet, tail) = rest.split_at(length);
+        rest = tail;
+
+        match packet.first() {
+            Some(&PACKET_TYPE_IDENTIFICATION) => ident = Some(packet),
+            Some(&PACKET_TYPE_SETUP) => setup = Some(packet),
+            _ => (),
+        }
+    }
+
+    match (ident, setup) {
+        (Some(ident), Some(setup)) => Ok([ident, setup].concat().into_boxed_slice()),
+        _ => decode_error("vorbis: missing identification or setup header"),
+    }
+}
+
+#[cfg(test)]
+mod xiph_lacing_tests {
+    use super::*;
+
+    #[test]
+    fn converts_laced_headers() {
+        // An identification header of 3 bytes, a comment header of 258 bytes (a length that takes
+        // two bytes), and a setup header of 2 bytes.
+        let ident = [1u8, 0xa, 0xb];
+        let comment = [3u8; 258];
+        let setup = [5u8, 0xc];
+
+        let mut extra = vec![2, 3, 255, 3];
+        extra.extend_from_slice(&ident);
+        extra.extend_from_slice(&comment);
+        extra.extend_from_slice(&setup);
+
+        let data = extra_data_from_xiph_lacing(&extra).unwrap();
+        assert_eq!(&*data, [&ident[..], &setup[..]].concat());
+    }
+
+    #[test]
+    fn rejects_truncated_data() {
+        assert!(extra_data_from_xiph_lacing(&[]).is_err());
+        assert!(extra_data_from_xiph_lacing(&[2, 10, 10, 1, 2, 3]).is_err());
+    }
+}

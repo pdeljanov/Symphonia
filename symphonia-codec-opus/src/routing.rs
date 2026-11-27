@@ -13,7 +13,7 @@
 //! scaled by the Q7.8 dB `output_gain`
 //! ([RFC 7845 Section 5.1](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1>)).
 
-use symphonia_core::audio::{AudioBuffer, AudioMut};
+use symphonia_core::audio::{AudioBuffer, AudioMut, Channels, Position};
 use symphonia_core::errors::{Error as SymphoniaError, Result};
 
 use crate::packet::FramePacket;
@@ -62,6 +62,8 @@ impl<'a> Iterator for StreamPackets<'a> {
 pub(crate) struct OutputRouting<'a> {
     pub(crate) channel_mapping: &'a [u8],
     pub(crate) coupled_count: usize,
+    /// The output plane of each output channel.
+    pub(crate) plane_map: &'a [usize],
     /// Linear output gain, `None` when the `output_gain` field is zero.
     pub(crate) gain: Option<f32>,
 }
@@ -86,7 +88,7 @@ impl OutputRouting<'_> {
             };
             let src = &scratch[k][..total_samples];
             let dst = buffer
-                .plane_mut(ch)
+                .plane_mut(self.plane_map.get(ch).copied().unwrap_or(ch))
                 .ok_or(SymphoniaError::DecodeError("opus: missing output plane"))?;
             let dst = &mut dst[..total_samples];
             match self.gain {
@@ -96,4 +98,50 @@ impl OutputRouting<'_> {
         }
         return Ok(());
     }
+}
+
+/// The output plane of each channel of an `OpusHead` mapping family 1 stream (Vorbis channel
+/// order, [RFC 7845 Section 5.1.1.2](<https://datatracker.ietf.org/doc/html/rfc7845#section-5.1.1.2>)),
+/// given the canonical plane order of `channels`.
+pub(crate) fn vorbis_plane_map(channels: &Channels) -> Vec<usize> {
+    use Position as P;
+
+    let count = channels.count();
+    let order: &[Position] = match count {
+        3 => &[P::FRONT_LEFT, P::FRONT_CENTER, P::FRONT_RIGHT],
+        4 => &[P::FRONT_LEFT, P::FRONT_RIGHT, P::REAR_LEFT, P::REAR_RIGHT],
+        5 => &[P::FRONT_LEFT, P::FRONT_CENTER, P::FRONT_RIGHT, P::REAR_LEFT, P::REAR_RIGHT],
+        6 => {
+            &[P::FRONT_LEFT, P::FRONT_CENTER, P::FRONT_RIGHT, P::REAR_LEFT, P::REAR_RIGHT, P::LFE1]
+        }
+        7 => &[
+            P::FRONT_LEFT,
+            P::FRONT_CENTER,
+            P::FRONT_RIGHT,
+            P::SIDE_LEFT,
+            P::SIDE_RIGHT,
+            P::REAR_CENTER,
+            P::LFE1,
+        ],
+        8 => &[
+            P::FRONT_LEFT,
+            P::FRONT_CENTER,
+            P::FRONT_RIGHT,
+            P::SIDE_LEFT,
+            P::SIDE_RIGHT,
+            P::REAR_LEFT,
+            P::REAR_RIGHT,
+            P::LFE1,
+        ],
+        _ => &[],
+    };
+
+    if order.is_empty() {
+        return (0..count).collect();
+    }
+
+    let map: Option<Vec<usize>> =
+        order.iter().map(|&pos| channels.get_canonical_index_for_positioned_channel(pos)).collect();
+
+    map.unwrap_or_else(|| (0..count).collect())
 }

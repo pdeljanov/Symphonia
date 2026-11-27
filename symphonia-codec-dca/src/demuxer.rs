@@ -5,31 +5,34 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::errors::{Error, unsupported_error};
+use std::io::{Seek, SeekFrom};
+
+use symphonia_core::errors::{Error, SeekErrorKind, seek_error};
 use symphonia_core::support_format;
 
-use symphonia_core::audio::{Channels, layouts};
+use crate::header::{SYNC_14_BE, SYNC_14_LE, SYNC_16_BE, SYNC_16_LE, peek_header};
+
+use symphonia_core::audio::Channels;
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_DCA;
-use symphonia_core::errors::{Result, decode_error};
+use symphonia_core::errors::Result;
 use symphonia_core::formats::prelude::*;
 use symphonia_core::formats::probe::{ProbeFormatData, ProbeableFormat, Score, Scoreable};
-use symphonia_core::formats::FORMAT_ID_NULL;
+use symphonia_core::formats::well_known::FORMAT_ID_DCA;
 use symphonia_core::io::*;
 use symphonia_core::meta::{Metadata, MetadataLog};
 
-const DCA_FORMAT_INFO: FormatInfo = FormatInfo {
-    format: FORMAT_ID_NULL,
-    short_name: "dca",
-    long_name: "DTS Coherent Acoustics",
-};
+const DCA_FORMAT_INFO: FormatInfo =
+    FormatInfo { format: FORMAT_ID_DCA, short_name: "dca", long_name: "DTS Coherent Acoustics" };
 
 pub struct DcaReader<'s> {
     reader: MediaSourceStream<'s>,
+    media_info: MediaInfo,
     tracks: Vec<Track>,
     chapters: Option<ChapterGroup>,
     metadata: MetadataLog,
+    first_frame_pos: u64,
     next_packet_ts: Timestamp,
 }
 
@@ -39,22 +42,32 @@ impl<'s> DcaReader<'s> {
 
         // Rewind back to the start of the frame.
         mss.seek_buffered_rev(header.header_len as usize);
+        let first_frame_pos = mss.pos();
 
         let mut codec_params = AudioCodecParameters::new();
         codec_params.for_codec(CODEC_ID_DCA).with_sample_rate(header.sample_rate);
 
-        if let Some(channels) = header.channels {
-            codec_params.with_channels(channels);
-        }
+        codec_params.with_channels(header.channels.clone()).with_max_frames_per_packet(4096);
 
         let mut track = Track::new(0);
         track.with_codec_params(CodecParameters::Audio(codec_params));
 
+        if let Some(len) = mss.byte_len() {
+            let frames = len.saturating_sub(first_frame_pos) / u64::from(header.frame_len);
+            let num_frames = frames * u64::from(header.samples_per_frame);
+            track.with_num_frames(num_frames);
+            track.with_duration(Duration::from(num_frames));
+        }
+
+        let media_info = MediaInfo::from_track(&track);
+
         Ok(DcaReader {
             reader: mss,
+            media_info,
             tracks: vec![track],
             chapters: opts.external_data.chapters,
             metadata: opts.external_data.metadata.unwrap_or_default(),
+            first_frame_pos,
             next_packet_ts: Timestamp::new(0),
         })
     }
@@ -62,102 +75,73 @@ impl<'s> DcaReader<'s> {
 
 impl Scoreable for DcaReader<'_> {
     fn score(mut src: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-        let _ = DcaHeader::read(&mut src)?;
-        Ok(Score::Supported(127))
+        // A raw stream starts with a core frame, which is followed by another one unless extension
+        // data or padding is in between.
+        let mut first = [0u8; 4];
+        src.read_buf_exact(&mut first)?;
+        if !is_sync(u32::from_be_bytes(first)) {
+            return Ok(Score::Unsupported);
+        }
+        src.seek_buffered_rev(first.len());
+
+        let header = DcaHeader::read(&mut src)?;
+        src.seek_buffered_rev(header.header_len as usize);
+        src.ignore_bytes(u64::from(header.frame_len))?;
+
+        let mut next = [0u8; 4];
+        match src.read_buf_exact(&mut next) {
+            Ok(()) if is_sync(u32::from_be_bytes(next)) => Ok(Score::Supported(255)),
+            _ => Ok(Score::Supported(128)),
+        }
     }
 }
 
+fn is_sync(word: u32) -> bool {
+    matches!(word, SYNC_16_BE | SYNC_16_LE | SYNC_14_BE | SYNC_14_LE)
+}
+
+const HEADER_PEEK: usize = 16;
+
 pub struct DcaHeader {
     pub sample_rate: u32,
-    pub channels: Option<Channels>,
+    pub channels: Channels,
     pub frame_len: u32,
     pub header_len: u32,
     pub samples_per_frame: u32,
 }
 
-/// DCA core sync words. The four orderings cover 16-bit BE/LE and 14-bit BE/LE.
-/// FFmpeg `dca_syncwords.h` defines these as DCA_SYNCWORD_CORE_{BE,LE,14B_BE,14B_LE}.
-const SYNC_16_BE: u32 = 0x7FFE_8001; // most common (raw .dts and MKV)
-const SYNC_16_LE: u32 = 0xFE7F_0180;
-const SYNC_14_BE: u32 = 0x1FFF_E800;
-const SYNC_14_LE: u32 = 0xFF1F_00E8;
-
 impl DcaHeader {
     pub fn read<B: ReadBytes>(reader: &mut B) -> Result<Self> {
         let mut sync = 0u32;
 
-        // Resync to the next sync word, accepting any of the four DCA encodings.
-        // Currently only 16-bit BE is forwarded to the decoder verbatim — other
-        // orderings would need bitstream conversion (FFmpeg `dca_convert_bitstream`)
-        // which we do not yet implement; reject them rather than silently misdecoding.
         loop {
             sync = (sync << 8) | u32::from(reader.read_u8()?);
-            match sync {
-                SYNC_16_BE => break,
-                SYNC_16_LE | SYNC_14_BE | SYNC_14_LE => {
-                    return decode_error(
-                        "dca: 14-bit packed and little-endian sync words are not yet supported",
-                    );
-                }
-                _ => {}
+            if matches!(sync, SYNC_16_BE | SYNC_16_LE | SYNC_14_BE | SYNC_14_LE) {
+                break;
             }
         }
 
-        // Basic header parsing (minimal)
-        // NBLKS: 7 bits, FSIZE: 14 bits, AMODE: 6 bits, SFREQ: 4 bits, RATE: 5 bits
-        // We'll read the next 8 bytes to get some of these.
-        let mut buf = [0u8; 8];
-        reader.read_buf_exact(&mut buf)?;
+        let mut buf = [0u8; HEADER_PEEK];
+        buf[..4].copy_from_slice(&sync.to_be_bytes());
+        reader.read_buf_exact(&mut buf[4..])?;
 
-        let mut bs = BitReaderLtr::new(&buf);
-        
-        // Frame Type: 1 bit (ignored)
-        bs.ignore_bit()?;
-        // Deficit Samples: 5 bits (ignored)
-        bs.ignore_bits(5)?;
-        // CPF: 1 bit (ignored)
-        bs.ignore_bit()?;
-        // NBLKS: 7 bits
-        let nblks = bs.read_bits_leq32(7)?;
-        // FSIZE: 14 bits
-        let fsize = bs.read_bits_leq32(14)? + 1;
-        // AMODE: 6 bits
-        let amode = bs.read_bits_leq32(6)?;
-        // SFREQ: 4 bits
-        let sfreq_idx = bs.read_bits_leq32(4)?;
-
-        let sample_rate = match sfreq_idx {
-            1 => 8000,
-            2 => 16000,
-            3 => 32000,
-            6 => 11025,
-            7 => 22050,
-            8 => 44100,
-            11 => 12000,
-            12 => 24000,
-            13 => 48000,
-            _ => return decode_error("dca: invalid sample rate index"),
-        };
-
-        let channels = match amode {
-            0 => Some(layouts::CHANNEL_LAYOUT_MONO),
-            2 => Some(layouts::CHANNEL_LAYOUT_STEREO),
-            9 => Some(layouts::CHANNEL_LAYOUT_5P1), // L, C, R, LS, RS + LFE is handled separately
-            _ => None, // TODO: Add more layouts
-        };
+        let (hdr, stored_len) = peek_header(&buf)?;
 
         Ok(DcaHeader {
-            sample_rate,
-            channels,
-            frame_len: fsize,
-            header_len: 12, // Sync (4) + 8 bytes read
-            samples_per_frame: (nblks + 1) * 32,
+            sample_rate: hdr.sample_rate,
+            channels: hdr.channels()?,
+            frame_len: stored_len as u32,
+            header_len: HEADER_PEEK as u32,
+            samples_per_frame: hdr.samples_per_frame() as u32,
         })
     }
 }
 
 impl ProbeableFormat<'_> for DcaReader<'_> {
-    fn try_probe_new(mss: MediaSourceStream<'_>, opts: FormatOptions) -> Result<Box<dyn FormatReader + '_>> {
+    fn try_probe_new(
+        mss: MediaSourceStream<'_>,
+        opts: FormatOptions,
+    ) -> Result<Box<dyn FormatReader + '_>> {
         Ok(Box::new(DcaReader::try_new(mss, opts)?))
     }
 
@@ -175,10 +159,16 @@ impl FormatReader for DcaReader<'_> {
     fn format_info(&self) -> &FormatInfo {
         &DCA_FORMAT_INFO
     }
+    fn media_info(&self) -> &MediaInfo {
+        &self.media_info
+    }
+
     fn next_packet(&mut self) -> Result<Option<Packet>> {
         let header = match DcaHeader::read(&mut self.reader) {
             Ok(header) => header,
-            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(None);
+            }
             Err(err) => return Err(err),
         };
 
@@ -186,7 +176,7 @@ impl FormatReader for DcaReader<'_> {
         self.reader.seek_buffered_rev(header.header_len as usize);
 
         let ts = self.next_packet_ts;
-        let duration = Duration::from(u64::from(header.samples_per_frame)); 
+        let duration = Duration::from(u64::from(header.samples_per_frame));
 
         self.next_packet_ts = match self.next_packet_ts.checked_add(duration) {
             Some(ts) => ts,
@@ -213,8 +203,51 @@ impl FormatReader for DcaReader<'_> {
         &self.tracks
     }
 
-    fn seek(&mut self, _mode: SeekMode, _to: SeekTo) -> Result<SeekedTo> {
-        unsupported_error("dca: seek not implemented")
+    fn seek(&mut self, _mode: SeekMode, to: SeekTo) -> Result<SeekedTo> {
+        let required_ts = match to {
+            SeekTo::Timestamp { ts, .. } => ts,
+            SeekTo::Time { time, .. } => {
+                let tb =
+                    self.tracks[0].time_base.ok_or(Error::SeekError(SeekErrorKind::Unseekable))?;
+                tb.calc_timestamp(time).ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
+            }
+        };
+
+        if required_ts < self.next_packet_ts {
+            if !self.reader.is_seekable() {
+                return seek_error(SeekErrorKind::ForwardOnly);
+            }
+
+            let pos = self.reader.seek(SeekFrom::Start(self.first_frame_pos))?;
+            if pos != self.first_frame_pos {
+                return seek_error(SeekErrorKind::Unseekable);
+            }
+
+            self.next_packet_ts = Timestamp::from(0);
+        }
+
+        loop {
+            let header = match DcaHeader::read(&mut self.reader) {
+                Ok(header) => header,
+                Err(Error::IoError(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return seek_error(SeekErrorKind::OutOfRange);
+                }
+                Err(err) => return Err(err),
+            };
+            self.reader.seek_buffered_rev(header.header_len as usize);
+
+            let duration = Duration::from(u64::from(header.samples_per_frame));
+
+            match self.next_packet_ts.checked_add(duration) {
+                Some(ts) if ts <= required_ts => {
+                    self.reader.ignore_bytes(u64::from(header.frame_len))?;
+                    self.next_packet_ts = ts;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(SeekedTo { track_id: 0, required_ts, actual_ts: self.next_packet_ts })
     }
 
     fn into_inner<'s>(self: Box<Self>) -> MediaSourceStream<'s>

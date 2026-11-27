@@ -9,6 +9,7 @@ use std::io::{Seek, SeekFrom};
 
 use symphonia_core::codecs::CodecParameters;
 use symphonia_core::codecs::audio::AudioCodecParameters;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_PCM_S16LE;
 use symphonia_core::errors::{Error, Result, SeekErrorKind};
 use symphonia_core::errors::{decode_error, seek_error, unsupported_error};
 use symphonia_core::formats::prelude::*;
@@ -25,7 +26,8 @@ use crate::common::{
     ByteOrder, ChunksReader, FormatData, PacketInfo, append_data_params, append_format_params,
     next_packet,
 };
-mod chunks;
+pub(crate) mod chunks;
+mod framed;
 mod mpeg;
 use chunks::*;
 
@@ -75,6 +77,10 @@ pub struct WavReader<'s> {
     is_mpeg: bool,
     /// Running presentation timestamp (in samples) for the next MPEG packet.
     mpeg_ts: u64,
+    /// The kind of elementary stream (AC-3 or DTS) that the data chunk holds, which is framed from
+    /// the stream like MPEG audio.
+    framed: Option<framed::Kind>,
+    framed_ts: u64,
 }
 
 impl<'s> WavReader<'s> {
@@ -120,7 +126,9 @@ impl<'s> WavReader<'s> {
         let mut metadata: MetadataLog = Default::default();
         let mut packet_info = None;
         let mut fact = None;
+        let mut rf64_sizes = Rf64Sizes::default();
         let mut is_mpeg = false;
+        let mut framed = None;
 
         loop {
             let chunk = riff_chunks.next(&mut mss)?;
@@ -132,7 +140,7 @@ impl<'s> WavReader<'s> {
                 return unsupported_error("wav: missing data chunk");
             };
 
-            match chunk.unwrap() {
+            match chunk {
                 RiffWaveChunks::Ds64(ds64_parser) => {
                     let ds64 = ds64_parser.parse(&mut mss)?;
 
@@ -157,6 +165,10 @@ impl<'s> WavReader<'s> {
 
                     // MPEG audio in WAV is framed from the elementary stream, not by fixed blocks.
                     is_mpeg = matches!(format.format_data, FormatData::Mpeg(_));
+
+                    if matches!(format.format_data, FormatData::Framed(_)) {
+                        framed = Some(framed::Kind::Ac3);
+                    }
 
                     // The Format chunk contains the block_align field and possible additional
                     // information to handle packetization and seeking.
@@ -188,7 +200,16 @@ impl<'s> WavReader<'s> {
 
                     // Record the bounds of the data chunk.
                     let mut data_start_pos = mss.pos();
-                    let data_end_pos = data.len.map(|len| data_start_pos + u64::from(len));
+
+                    // Per EBU Tech 3306, ds64 values only replace the corresponding 32-bit
+                    // field when that field is set to -1 (0xFFFFFFFF). DataChunk.len is None
+                    // when the 32-bit value was 0xFFFFFFFF.
+                    let data_len = match data.len {
+                        Some(len) => Some(u64::from(len)),
+                        None => rf64_sizes.data_size,
+                    };
+
+                    let data_end_pos = data_len.and_then(|len| data_start_pos.checked_add(len));
 
                     // For MPEG audio the elementary stream is authoritative for the exact codec
                     // (Layer I/II/III) and sample rate, so refine the codec parameters from the
@@ -209,27 +230,60 @@ impl<'s> WavReader<'s> {
                         }
                     }
 
+                    // DTS CDs store the bit stream as 16-bit stereo PCM, so look at the data.
+                    if framed.is_none() && matches!(codec_params.codec, CODEC_ID_PCM_S16LE) {
+                        let mut head = [0u8; 16];
+                        if mss.read_buf_exact(&mut head).is_ok() {
+                            if framed::detect_dts(&head) {
+                                framed = Some(framed::Kind::Dts);
+                            }
+                            mss.seek_buffered_rev(head.len());
+                        }
+                    }
+
+                    if let Some(kind) = framed {
+                        if let Some((first, frame)) =
+                            framed::read_frame(&mut mss, data_end_pos.unwrap_or(u64::MAX), kind)?
+                        {
+                            codec_params
+                                .for_codec(first.codec)
+                                .with_sample_rate(first.sample_rate)
+                                .with_channels(first.channels.clone())
+                                .with_max_frames_per_packet(first.samples_per_frame);
+                            data_start_pos = mss.pos() - frame.len() as u64;
+                            if mss.seek_buffered(data_start_pos) != data_start_pos {
+                                return seek_error(SeekErrorKind::Unseekable);
+                            }
+                        }
+                    }
+
                     // Create the track.
                     let mut track = Track::new(0);
 
                     track.with_codec_params(CodecParameters::Audio(codec_params));
 
-                    let Some(packet_info) = packet_info else {
+                    let Some(packet_info) = packet_info
+                    else {
                         return decode_error("wav: missing format chunk");
                     };
-
-                    // Append Data chunk fields to track (sets num_frames from data length).
-                    if let Some(data_len) = data_len {
-                        append_data_params(&mut track, data_len, &packet_info);
-                    }
 
                     // Append Data chunk fields to track. For MPEG audio the block-based frame count
                     // would be meaningless (frames are variable-length), so leave the frame count
                     // unset rather than derive a bogus duration from the byte length.
-                    if let Some(data_len) = data.len {
-                        if !is_mpeg {
-                            append_data_params(&mut track, u64::from(data_len), &packet_info);
+                    if let Some(data_len) = data_len {
+                        if !is_mpeg && framed.is_none() {
+                            append_data_params(&mut track, data_len, &packet_info);
                         }
+                    }
+
+                    // For RF64 files, prefer the sample count from ds64 over the computed
+                    // value. For standard WAV, prefer fact chunk over computed value.
+                    // Applied after append_data_params so the authoritative value wins.
+                    if let Some(sample_count) = rf64_sizes.sample_count {
+                        track.with_num_frames(sample_count);
+                    }
+                    else if let Some(fact) = &fact {
+                        append_fact_params(&mut track, fact);
                     }
 
                     // Instantiate the reader.
@@ -244,6 +298,8 @@ impl<'s> WavReader<'s> {
                         data_end_pos,
                         is_mpeg,
                         mpeg_ts: 0,
+                        framed,
+                        framed_ts: 0,
                     });
                 }
             }
@@ -316,6 +372,15 @@ impl FormatReader for WavReader<'_> {
             );
         }
 
+        if let Some(kind) = self.framed {
+            return framed::next_packet(
+                &mut self.reader,
+                self.data_end_pos.unwrap_or(u64::MAX),
+                &mut self.framed_ts,
+                kind,
+            );
+        }
+
         next_packet(
             &mut self.reader,
             &self.packet_info,
@@ -372,6 +437,20 @@ impl FormatReader for WavReader<'_> {
 
         debug!("seeking to frame_ts={required_ts}");
 
+        if let Some(kind) = self.framed {
+            let actual_ts = framed::seek(
+                &mut self.reader,
+                self.data_end_pos.unwrap_or(u64::MAX),
+                self.data_start_pos,
+                &mut self.framed_ts,
+                required_ts.get() as u64,
+                kind,
+            )?;
+            let actual_ts = Timestamp::try_from(actual_ts)
+                .map_err(|_| Error::SeekError(SeekErrorKind::OutOfRange))?;
+            return Ok(SeekedTo { track_id: 0, actual_ts, required_ts });
+        }
+
         if self.is_mpeg {
             let actual_ts = mpeg::seek(
                 &mut self.reader,
@@ -394,8 +473,8 @@ impl FormatReader for WavReader<'_> {
         let actual_ts = self.packet_info.get_actual_ts(required_ts);
 
         // Calculate the absolute byte offset of the desired audio frame.
-        let seek_pos =
-            self.data_start_pos + (actual_ts.get() as u64 * self.packet_info.block_size.get());
+        let block_idx = actual_ts.get() as u64 / self.packet_info.frames_per_block;
+        let seek_pos = self.data_start_pos + block_idx * self.packet_info.block_size.get();
 
         // If the reader supports seeking we can seek directly to the frame's offset wherever it may
         // be.
@@ -433,6 +512,203 @@ impl FormatReader for WavReader<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use symphonia_core::io::ReadOnlySource;
+
+    /// Creates a minimal valid RF64 file in memory.
+    fn create_rf64_test_file(data_size: u64, sample_count: u64, pcm_data: &[u8]) -> Vec<u8> {
+        let mut file = Vec::new();
+
+        // RF64 header
+        file.extend_from_slice(b"RF64");
+        file.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // placeholder size
+        file.extend_from_slice(b"WAVE");
+
+        // ds64 chunk (28 bytes)
+        file.extend_from_slice(b"ds64");
+        file.extend_from_slice(&28u32.to_le_bytes()); // chunk size
+        let riff_size: u64 = 4 + 8 + 28 + 8 + 16 + 8 + data_size; // WAVE + ds64 + fmt + data
+        file.extend_from_slice(&riff_size.to_le_bytes()); // riffSize64
+        file.extend_from_slice(&data_size.to_le_bytes()); // dataSize64
+        file.extend_from_slice(&sample_count.to_le_bytes()); // sampleCount64
+        file.extend_from_slice(&0u32.to_le_bytes()); // tableLength
+
+        // fmt chunk (16 bytes, PCM format)
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // format = PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // channels = 1
+        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
+        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
+        file.extend_from_slice(&2u16.to_le_bytes()); // block align
+        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        let chunk_size = if data_size > u32::MAX as u64 { 0xFFFFFFFF } else { data_size as u32 };
+        file.extend_from_slice(&chunk_size.to_le_bytes());
+        file.extend_from_slice(pcm_data);
+
+        file
+    }
+
+    /// Creates a minimal valid standard WAV file in memory.
+    fn create_wav_test_file(pcm_data: &[u8]) -> Vec<u8> {
+        let mut file = Vec::new();
+        let data_len = pcm_data.len() as u32;
+
+        // RIFF header
+        file.extend_from_slice(b"RIFF");
+        let total_size = 4 + 8 + 16 + 8 + data_len; // WAVE + fmt chunk + data chunk
+        file.extend_from_slice(&total_size.to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // mono
+        file.extend_from_slice(&44100u32.to_le_bytes()); // sample rate
+        file.extend_from_slice(&88200u32.to_le_bytes()); // byte rate
+        file.extend_from_slice(&2u16.to_le_bytes()); // block align
+        file.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&data_len.to_le_bytes());
+        file.extend_from_slice(pcm_data);
+
+        file
+    }
+
+    #[test]
+    fn test_rf64_small_file() {
+        let pcm_data = vec![0u8; 1000]; // 500 samples at 16-bit mono
+        let rf64_file = create_rf64_test_file(1000, 500, &pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(rf64_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        assert_eq!(reader.tracks[0].num_frames, Some(500));
+    }
+
+    #[test]
+    fn test_rf64_large_data_size() {
+        let pcm_data = vec![0u8; 100];
+        let large_data_size: u64 = 5_000_000_000; // 5GB
+        let sample_count = large_data_size / 2; // 16-bit samples
+        let rf64_file = create_rf64_test_file(large_data_size, sample_count, &pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(rf64_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        assert_eq!(reader.tracks[0].num_frames, Some(sample_count));
+        // data_end_pos should use 64-bit size
+        let data_end = reader.data_end_pos.unwrap();
+        assert_eq!(data_end - reader.data_start_pos, large_data_size);
+    }
+
+    #[test]
+    fn test_standard_wav_unchanged() {
+        let pcm_data = vec![0u8; 100];
+        let wav_file = create_wav_test_file(&pcm_data);
+
+        let source = ReadOnlySource::new(Cursor::new(wav_file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        assert_eq!(reader.tracks.len(), 1);
+        let data_end = reader.data_end_pos.unwrap();
+        assert_eq!(data_end - reader.data_start_pos, 100);
+    }
+
+    #[test]
+    fn test_rf64_missing_ds64_uses_fallback() {
+        // RF64 file without ds64 chunk should still work using 32-bit sizes.
+        let mut file = Vec::new();
+
+        file.extend_from_slice(b"RF64");
+        let total_size = 4 + 8 + 16 + 8 + 100;
+        file.extend_from_slice(&(total_size as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        file.extend_from_slice(&1u16.to_le_bytes()); // mono
+        file.extend_from_slice(&44100u32.to_le_bytes());
+        file.extend_from_slice(&88200u32.to_le_bytes());
+        file.extend_from_slice(&2u16.to_le_bytes());
+        file.extend_from_slice(&16u16.to_le_bytes());
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&100u32.to_le_bytes());
+        file.extend_from_slice(&vec![0u8; 100]);
+
+        let source = ReadOnlySource::new(Cursor::new(file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+        let data_end = reader.data_end_pos.unwrap();
+        assert_eq!(data_end - reader.data_start_pos, 100);
+    }
+
+    #[test]
+    fn test_ds64_ignored_in_standard_wav() {
+        // Standard RIFF/WAV with a ds64 chunk should ignore it.
+        let mut file = Vec::new();
+
+        file.extend_from_slice(b"RIFF");
+        let total_size = 4 + 8 + 28 + 8 + 16 + 8 + 100; // includes ds64
+        file.extend_from_slice(&(total_size as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVE");
+
+        // ds64 chunk (should be ignored in standard WAV)
+        file.extend_from_slice(b"ds64");
+        file.extend_from_slice(&28u32.to_le_bytes());
+        file.extend_from_slice(&999999999u64.to_le_bytes()); // fake riff size
+        file.extend_from_slice(&888888888u64.to_le_bytes()); // fake data size (should NOT be used)
+        file.extend_from_slice(&777777777u64.to_le_bytes()); // fake sample count
+        file.extend_from_slice(&0u32.to_le_bytes());
+
+        // fmt chunk
+        file.extend_from_slice(b"fmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&44100u32.to_le_bytes());
+        file.extend_from_slice(&88200u32.to_le_bytes());
+        file.extend_from_slice(&2u16.to_le_bytes());
+        file.extend_from_slice(&16u16.to_le_bytes());
+
+        // data chunk
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&100u32.to_le_bytes());
+        file.extend_from_slice(&vec![0u8; 100]);
+
+        let source = ReadOnlySource::new(Cursor::new(file));
+        let mss = MediaSourceStream::new(Box::new(source), Default::default());
+
+        let reader = WavReader::try_new(mss, FormatOptions::default()).unwrap();
+
+        // Should use 32-bit size from data chunk, NOT 64-bit from ds64
+        let data_end = reader.data_end_pos.unwrap();
+        assert_eq!(data_end - reader.data_start_pos, 100);
+    }
+}
+
+#[cfg(test)]
+mod mpeg_tests {
     use std::io::Cursor;
 
     use symphonia_core::codecs::audio::well_known::CODEC_ID_MP3;

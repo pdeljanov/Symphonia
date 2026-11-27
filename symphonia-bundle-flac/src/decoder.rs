@@ -147,8 +147,8 @@ fn decorrelate_mid_side(mid: &mut [i32], side: Side<'_>) {
             for (m, s) in mid.iter_mut().zip(side) {
                 let mid = (*m << 1) | (*s & 1);
                 let side = *s;
-                *m = (mid + side) >> 1;
-                *s = (mid - side) >> 1;
+                *m = mid.wrapping_add(side) >> 1;
+                *s = mid.wrapping_sub(side) >> 1;
             }
         }
         Side::I64(side, out) => {
@@ -166,7 +166,7 @@ fn decorrelate_right_side(right: &[i32], side: Side<'_>) {
     match side {
         Side::I32(side) => {
             for (s, r) in side.iter_mut().zip(right) {
-                *s += *r;
+                *s = s.wrapping_add(*r);
             }
         }
         Side::I64(side, out) => {

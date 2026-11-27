@@ -61,7 +61,7 @@ fn map_channels(channels: &Channels) -> [u8; 8] {
         layouts::CHANNEL_LAYOUT_MPEG_4P0_B => [2, 0, 1, 3, 0, 0, 0, 0],
         layouts::CHANNEL_LAYOUT_MPEG_5P0_D => [2, 0, 1, 3, 4, 0, 0, 0],
         layouts::CHANNEL_LAYOUT_MPEG_5P1_D => [2, 0, 1, 4, 5, 3, 0, 0],
-        layouts::CHANNEL_LAYOUT_AAC_6P1 => [2, 0, 1, 5, 6, 4, 3, 0],
+        layouts::CHANNEL_LAYOUT_AAC_6P1 => [2, 0, 1, 4, 5, 6, 3, 0],
         layouts::CHANNEL_LAYOUT_MPEG_7P1_B => [2, 4, 5, 0, 1, 6, 7, 3],
         _ => unreachable!(),
     }

@@ -317,6 +317,85 @@ impl QmfSynthesis {
     }
 }
 
+/// The number of subbands of the synthesis filterbank of the downsampled SBR mode.
+const DOWN_BANDS: usize = QMF_ANALYSIS_BANDS;
+/// Length of the sample array v of the downsampled synthesis filterbank.
+const DOWN_SYNTHESIS_LEN: usize = 20 * DOWN_BANDS;
+
+/// The 32-band complex-valued synthesis QMF bank of the downsampled SBR mode (4.6.18.4.2).
+///
+/// It is the 64-band bank with every dimension halved and the window decimated by two, and is
+/// evaluated directly from its definition.
+pub struct QmfSynthesisDown {
+    /// The sample array v, v(0) first.
+    v: Box<[f32; DOWN_SYNTHESIS_LEN]>,
+    /// cos and sin of pi / 64 * (k + 0.5) * (2n - 63), scaled by 1 / 32, for 0 <= n < 64, 0 <= k < 32.
+    cos: Box<[[f32; DOWN_BANDS]; 2 * DOWN_BANDS]>,
+    sin: Box<[[f32; DOWN_BANDS]; 2 * DOWN_BANDS]>,
+}
+
+impl Default for QmfSynthesisDown {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl QmfSynthesisDown {
+    pub fn new() -> Self {
+        let angle = |n: usize, k: usize| PI / 64.0 * (k as f64 + 0.5) * (2.0 * n as f64 - 63.0);
+        let scale = 0.5 / DOWN_BANDS as f64;
+
+        QmfSynthesisDown {
+            v: Box::new([0.0; DOWN_SYNTHESIS_LEN]),
+            cos: Box::new(std::array::from_fn(|n| {
+                std::array::from_fn(|k| (angle(n, k).cos() * scale) as f32)
+            })),
+            sin: Box::new(std::array::from_fn(|n| {
+                std::array::from_fn(|k| (angle(n, k).sin() * scale) as f32)
+            })),
+        }
+    }
+
+    /// Reset the filterbank state to its initial (all zero) state.
+    pub fn reset(&mut self) {
+        self.v.fill(0.0);
+    }
+
+    /// Consume one QMF subsample, of which only the lowest 32 subbands are used, and produce 32
+    /// time-domain output samples.
+    ///
+    /// The output samples are written to the first 32 samples of `out` in chronological order. If
+    /// `out` is shorter, the remaining output samples are discarded.
+    pub fn synthesize(&mut self, input: &[Complex<f32>; QMF_BANDS], out: &mut [f32]) {
+        const N: usize = 2 * DOWN_BANDS;
+
+        self.v.copy_within(0..DOWN_SYNTHESIS_LEN - N, N);
+
+        for (n, v) in self.v[..N].iter_mut().enumerate() {
+            let mut acc = 0.0f32;
+            for (k, x) in input[..DOWN_BANDS].iter().enumerate() {
+                acc += x.re * self.cos[n][k] - x.im * self.sin[n][k];
+            }
+            *v = acc;
+        }
+
+        let mut samples = [0.0f32; DOWN_BANDS];
+        for n in 0..5 {
+            let lo = &self.v[4 * DOWN_BANDS * n..][..DOWN_BANDS];
+            let hi = &self.v[4 * DOWN_BANDS * n + 3 * DOWN_BANDS..][..DOWN_BANDS];
+            let c_lo = 2 * 2 * DOWN_BANDS * n;
+            let c_hi = 2 * (2 * DOWN_BANDS * n + DOWN_BANDS);
+
+            for (k, sample) in samples.iter_mut().enumerate() {
+                *sample += lo[k] * QMF_WINDOW[c_lo + 2 * k] + hi[k] * QMF_WINDOW[c_hi + 2 * k];
+            }
+        }
+
+        let len = out.len().min(DOWN_BANDS);
+        out[..len].copy_from_slice(&samples[..len]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f64::consts::PI;

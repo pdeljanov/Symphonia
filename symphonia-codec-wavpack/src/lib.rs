@@ -13,6 +13,7 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::manual_range_contains)]
+#![allow(clippy::needless_range_loop)]
 
 use std::io::{ErrorKind, Seek, SeekFrom};
 
@@ -196,7 +197,8 @@ impl WavPackBlockHeader {
 
         let total_samples = if total_samples_lo == u32::MAX {
             None
-        } else {
+        }
+        else {
             Some(u64::from(total_samples_lo) + (total_samples_hi << 32) - total_samples_hi)
         };
 
@@ -243,9 +245,11 @@ impl WavPackBlockHeader {
     fn output_channels_in_block(&self) -> usize {
         if self.flags & FALSE_STEREO != 0 {
             2
-        } else if self.flags & MONO_FLAG != 0 {
+        }
+        else if self.flags & MONO_FLAG != 0 {
             1
-        } else {
+        }
+        else {
             2
         }
     }
@@ -257,7 +261,8 @@ impl WavPackBlockHeader {
 
         if self.flags & FLOAT_DATA != 0 {
             Ok(SampleFormat::F32)
-        } else {
+        }
+        else {
             match self.bytes_per_sample() {
                 1 => Ok(SampleFormat::S8),
                 2 => Ok(SampleFormat::S16),
@@ -466,7 +471,8 @@ fn parse_channel_info(data: &[u8]) -> Result<Option<(u16, Option<u32>)>> {
     let (channels, mask_data) = if data.len() >= 6 {
         let channels = u16::from(data[0]) | (u16::from(data[2] & 0x0f) << 8);
         (channels + 1, &data[3..])
-    } else {
+    }
+    else {
         (u16::from(data[0]), &data[1..])
     };
 
@@ -482,7 +488,8 @@ fn parse_channel_info(data: &[u8]) -> Result<Option<(u16, Option<u32>)>> {
 fn make_channels(count: u16, mask: Option<u32>) -> Channels {
     if let Some(mask) = mask.and_then(symphonia_core::audio::Position::from_wave_channel_mask) {
         Channels::Positioned(mask)
-    } else {
+    }
+    else {
         Channels::Discrete(count)
     }
 }
@@ -816,7 +823,8 @@ impl<'a> DecodeBlock<'a> {
                 samples,
                 decorr_passes,
             )?;
-        } else {
+        }
+        else {
             samples.clear();
             samples.reserve(residuals.len());
             samples.extend(residuals.iter().map(|word| word.value));
@@ -895,10 +903,18 @@ fn parse_decorr_weights(data: &[u8], flags: u32, passes: &mut [DecorrPass]) -> R
     let mut weights = data.iter().copied();
 
     for pass in passes.iter_mut().rev().take(term_count) {
-        pass.weight_a = restore_weight(weights.next().unwrap() as i8);
+        let Some(weight_a) = weights.next()
+        else {
+            return decode_error("wavpack: invalid decorrelation weights");
+        };
+        pass.weight_a = restore_weight(weight_a as i8);
 
         if !is_mono(flags) {
-            pass.weight_b = restore_weight(weights.next().unwrap() as i8);
+            let Some(weight_b) = weights.next()
+            else {
+                return decode_error("wavpack: invalid decorrelation weights");
+            };
+            pass.weight_b = restore_weight(weight_b as i8);
         }
     }
 
@@ -960,10 +976,12 @@ fn parse_decorr_samples(
                 pass.samples_b[0] = read_wp_signed_log_value(&mut reader)?;
                 pass.samples_b[1] = read_wp_signed_log_value(&mut reader)?;
             }
-        } else if pass.term < 0 {
+        }
+        else if pass.term < 0 {
             pass.samples_a[0] = read_wp_signed_log_value(&mut reader)?;
             pass.samples_b[0] = read_wp_signed_log_value(&mut reader)?;
-        } else {
+        }
+        else {
             for sample in 0..pass.term as usize {
                 pass.samples_a[sample] = read_wp_signed_log_value(&mut reader)?;
 
@@ -1117,7 +1135,8 @@ fn restore_weight(weight: i8) -> i32 {
 fn apply_weight(weight: i32, sample: i32) -> i32 {
     if sample == i32::from(sample as i16) {
         weight.wrapping_mul(sample).wrapping_add(512) >> 10
-    } else {
+    }
+    else {
         let low = ((sample & 0xffff).wrapping_mul(weight)) >> 9;
         let high = ((sample & !0xffff) >> 9).wrapping_mul(weight);
         low.wrapping_add(high).wrapping_add(1) >> 1
@@ -1173,7 +1192,8 @@ fn apply_decorr_passes(
 
         if channels == 1 {
             decorr_mono_pass(&mut pass, samples);
-        } else {
+        }
+        else {
             decorr_stereo_pass(&mut pass, samples);
         }
     }
@@ -1187,8 +1207,8 @@ fn apply_decorr_passes(
 
 fn undo_joint_stereo(samples: &mut [i32]) {
     for frame in samples.chunks_exact_mut(2) {
-        frame[1] -= frame[0] >> 1;
-        frame[0] += frame[1];
+        frame[1] = frame[1].wrapping_sub(frame[0] >> 1);
+        frame[0] = frame[0].wrapping_add(frame[1]);
     }
 }
 
@@ -1230,7 +1250,8 @@ fn apply_hybrid_correction_into(
             m = (m + 1) & (MAX_TERM_USIZE - 1);
             samples.push(shape_hybrid_sample(flags, &mut shaping, 0, sample, word.correction));
         }
-    } else {
+    }
+    else {
         for frame in residuals.chunks_exact(2) {
             let mut left = frame[0].value;
             let mut right = frame[1].value;
@@ -1276,7 +1297,8 @@ fn apply_hybrid_correction_into(
             if flags & HYBRID_SHAPE != 0 {
                 left = shape_corrected_output(flags, &mut shaping, 0, left, left_c);
                 right = shape_corrected_output(flags, &mut shaping, 1, right, right_c);
-            } else {
+            }
+            else {
                 left = left_c;
                 right = right_c;
             }
@@ -1374,10 +1396,12 @@ fn decode_dsd_mode_fast_into(
                 let zcount = usize::from(code - max_probability);
                 let fill = zcount.min(table_len - out_idx);
                 out_idx += fill;
-            } else if code != 0 {
+            }
+            else if code != 0 {
                 probabilities[out_idx] = code;
                 out_idx += 1;
-            } else {
+            }
+            else {
                 break;
             }
         }
@@ -1390,7 +1414,8 @@ fn decode_dsd_mode_fast_into(
             }
             cursor += 1;
         }
-    } else {
+    }
+    else {
         if payload.len().saturating_sub(cursor) < table_len {
             return decode_error("wavpack: invalid dsd probability table size");
         }
@@ -1491,7 +1516,8 @@ fn decode_dsd_mode_fast_into(
 
         if mono {
             p0 = usize::from(code) & (history_bins - 1);
-        } else {
+        }
+        else {
             p0 = p1;
             p1 = usize::from(code) & (history_bins - 1);
         }
@@ -1596,7 +1622,8 @@ fn decode_dsd_mode_high_into(
                     high = split;
                     *pp += (UP - *pp) >> DECAY;
                     -1
-                } else {
+                }
+                else {
                     low = split.wrapping_add(1);
                     *pp += (DOWN - *pp) >> DECAY;
                     0
@@ -1679,7 +1706,8 @@ fn shape_corrected_output(
         }
 
         shaping.error[channel] = temp.wrapping_sub(correction);
-    } else {
+    }
+    else {
         shaping.error[channel] = correction.wrapping_neg();
     }
 
@@ -1690,13 +1718,15 @@ fn decorr_mono_sample(pass: &mut DecorrPass, residual: i32, m: usize) -> i32 {
     let (sam, k) = if pass.term > MAX_TERM {
         let sam = if pass.term & 1 != 0 {
             predict_term_17(pass.samples_a[0], pass.samples_a[1])
-        } else {
+        }
+        else {
             predict_term_18(pass.samples_a[0], pass.samples_a[1])
         };
 
         pass.samples_a[1] = pass.samples_a[0];
         (sam, 0)
-    } else {
+    }
+    else {
         (pass.samples_a[m], (m + pass.term as usize) & (MAX_TERM_USIZE - 1))
     };
 
@@ -1719,27 +1749,32 @@ fn preview_corrected_stereo_sample(
                     predict_term_17(pass.samples_a[0], pass.samples_a[1]),
                     predict_term_17(pass.samples_b[0], pass.samples_b[1]),
                 )
-            } else {
+            }
+            else {
                 (
                     predict_term_18(pass.samples_a[0], pass.samples_a[1]),
                     predict_term_18(pass.samples_b[0], pass.samples_b[1]),
                 )
             }
-        } else {
+        }
+        else {
             (pass.samples_a[m], pass.samples_b[m])
         };
 
         left = left.wrapping_add(apply_weight(pass.weight_a, sam_a));
         right = right.wrapping_add(apply_weight(pass.weight_b, sam_b));
-    } else if pass.term == -1 {
+    }
+    else if pass.term == -1 {
         left = left.wrapping_add(apply_weight(pass.weight_a, pass.samples_a[0]));
         right = right.wrapping_add(apply_weight(pass.weight_b, left));
-    } else {
+    }
+    else {
         right = right.wrapping_add(apply_weight(pass.weight_b, pass.samples_b[0]));
 
         if pass.term == -3 {
             left = left.wrapping_add(apply_weight(pass.weight_a, pass.samples_a[0]));
-        } else {
+        }
+        else {
             left = left.wrapping_add(apply_weight(pass.weight_a, right));
         }
     }
@@ -1760,7 +1795,8 @@ fn decorr_stereo_sample(
                     predict_term_17(pass.samples_a[0], pass.samples_a[1]),
                     predict_term_17(pass.samples_b[0], pass.samples_b[1]),
                 )
-            } else {
+            }
+            else {
                 (
                     predict_term_18(pass.samples_a[0], pass.samples_a[1]),
                     predict_term_18(pass.samples_b[0], pass.samples_b[1]),
@@ -1770,7 +1806,8 @@ fn decorr_stereo_sample(
             pass.samples_a[1] = pass.samples_a[0];
             pass.samples_b[1] = pass.samples_b[0];
             (sam_a, sam_b, 0)
-        } else {
+        }
+        else {
             (pass.samples_a[m], pass.samples_b[m], (m + pass.term as usize) & (MAX_TERM_USIZE - 1))
         };
 
@@ -1784,7 +1821,8 @@ fn decorr_stereo_sample(
         pass.samples_b[k] = right2;
         left = left2;
         right = right2;
-    } else if pass.term == -1 {
+    }
+    else if pass.term == -1 {
         let left2 = left.wrapping_add(apply_weight(pass.weight_a, pass.samples_a[0]));
         update_weight_clip(&mut pass.weight_a, pass.delta, pass.samples_a[0], left);
         left = left2;
@@ -1793,7 +1831,8 @@ fn decorr_stereo_sample(
         update_weight_clip(&mut pass.weight_b, pass.delta, left2, right);
         pass.samples_a[0] = right2;
         right = right2;
-    } else {
+    }
+    else {
         let mut right2 = right.wrapping_add(apply_weight(pass.weight_b, pass.samples_b[0]));
         update_weight_clip(&mut pass.weight_b, pass.delta, pass.samples_b[0], right);
         right = right2;
@@ -1835,7 +1874,8 @@ fn fixup_samples(
 
         if let Some(wvx_bitstream) = wvx_bitstream {
             restore_int32_low_bits(samples, info, wvx_bitstream, wvx_new_bitstream)?;
-        } else if info.sent_bits == 0 && (info.zeros + info.ones + info.dups) != 0 {
+        }
+        else if info.sent_bits == 0 && (info.zeros + info.ones + info.dups) != 0 {
             let mut zeros = info.zeros;
             let mut ones = info.ones;
             let mut dups = info.dups;
@@ -1843,11 +1883,14 @@ fn fixup_samples(
             while lossy && flags & BYTES_STORED == 3 && shift < 8 {
                 if zeros != 0 {
                     zeros -= 1;
-                } else if ones != 0 {
+                }
+                else if ones != 0 {
                     ones -= 1;
-                } else if dups != 0 {
+                }
+                else if dups != 0 {
                     dups -= 1;
-                } else {
+                }
+                else {
                     break;
                 }
 
@@ -1857,7 +1900,8 @@ fn fixup_samples(
             for sample in samples.iter_mut() {
                 apply_int32_redundancy(sample, zeros, ones, dups);
             }
-        } else {
+        }
+        else {
             shift += info.zeros + info.sent_bits + info.ones + info.dups;
         }
     }
@@ -1877,13 +1921,16 @@ fn fixup_samples(
         for sample in samples {
             if *sample < min_value {
                 *sample = min_shifted;
-            } else if *sample > max_value {
+            }
+            else if *sample > max_value {
                 *sample = max_shifted;
-            } else {
+            }
+            else {
                 *sample = ((*sample as u32) << shift) as i32;
             }
         }
-    } else if shift != 0 {
+    }
+    else if shift != 0 {
         for sample in samples {
             *sample = ((*sample as u32) << shift) as i32;
         }
@@ -1931,10 +1978,12 @@ fn restore_int32_low_bits(
                     *sample = (((*sample as u32) << bits_to_read) | data)
                         .wrapping_shl(info.sent_bits - bits_to_read)
                         as i32;
-                } else {
+                }
+                else {
                     *sample = ((*sample as u32) << info.sent_bits) as i32;
                 }
-            } else {
+            }
+            else {
                 let data = bits.read_bits(info.sent_bits)? & mask;
                 *sample = (((*sample as u32) << info.sent_bits) | data) as i32;
             }
@@ -1949,9 +1998,11 @@ fn restore_int32_low_bits(
 fn apply_int32_redundancy(sample: &mut i32, zeros: u32, ones: u32, dups: u32) {
     if zeros != 0 {
         *sample = ((*sample as u32) << zeros) as i32;
-    } else if ones != 0 {
+    }
+    else if ones != 0 {
         *sample = (((*sample).wrapping_add(1) as u32) << ones).wrapping_sub(1) as i32;
-    } else if dups != 0 {
+    }
+    else if dups != 0 {
         let low_bit = *sample & 1;
         *sample =
             (((*sample).wrapping_add(low_bit) as u32) << dups).wrapping_sub(low_bit as u32) as i32;
@@ -1966,7 +2017,8 @@ fn restore_float_values(
 ) -> Result<()> {
     if let Some(wvx_bitstream) = wvx_bitstream {
         restore_float_values_wvx(samples, info, wvx_bitstream, wvx_new_bitstream)
-    } else {
+    }
+    else {
         restore_float_values_nowvx(samples, info);
         Ok(())
     }
@@ -1994,7 +2046,8 @@ fn restore_float_values_nowvx(samples: &mut [i32], info: FloatInfo) {
                     mag >>= 1;
                     exp = exp.wrapping_add(1);
                 }
-            } else if exp != 0 {
+            }
+            else if exp != 0 {
                 while mag & 0x800000 == 0 && exp != 0 {
                     exp = exp.wrapping_sub(1);
                     if exp == 0 {
@@ -2027,7 +2080,8 @@ fn restore_float_values_wvx(
     let mut bits = WavPackBitReader::new(wvx_bitstream);
     let (min_shifted_zeros, max_shifted_ones) = if wvx_new_bitstream {
         (bits.read_bits(5)? & 0x1f, bits.read_bits(5)? & 0x1f)
-    } else {
+    }
+    else {
         (0, 0)
     };
 
@@ -2047,11 +2101,13 @@ fn restore_float_values_wvx(
                     }
 
                     out |= (bits.read_bit()? & 1) << 31;
-                } else if info.flags & FLOAT_NEG_ZEROS != 0 {
+                }
+                else if info.flags & FLOAT_NEG_ZEROS != 0 {
                     out |= (bits.read_bit()? & 1) << 31;
                 }
             }
-        } else {
+        }
+        else {
             value = ((value as u32) << (u32::from(info.shift) & 0x1f)) as i32;
 
             if value < 0 {
@@ -2067,7 +2123,8 @@ fn restore_float_values_wvx(
                 }
 
                 exp = 255;
-            } else {
+            }
+            else {
                 let mut shift_count = 0;
 
                 if exp != 0 {
@@ -2088,7 +2145,8 @@ fn restore_float_values_wvx(
                         || (info.flags & FLOAT_SHIFT_SAME != 0 && bits.read_bit()? != 0)
                     {
                         mag |= (1u32 << shift_count) - 1;
-                    } else if info.flags & FLOAT_SHIFT_SENT != 0 {
+                    }
+                    else if info.flags & FLOAT_SHIFT_SENT != 0 {
                         let mask = (1u32 << shift_count) - 1;
                         let mut num_zeros = 0;
 
@@ -2099,7 +2157,8 @@ fn restore_float_values_wvx(
                         if min_shifted_zeros > num_zeros {
                             num_zeros = if min_shifted_zeros > shift_count {
                                 shift_count
-                            } else {
+                            }
+                            else {
                                 min_shifted_zeros
                             };
                         }
@@ -2129,7 +2188,8 @@ fn prepare_output_buffer(buf: &mut GenericAudioBuffer, frames: usize) -> Result<
     if buf.is_empty() {
         buf.grow_capacity(frames);
         buf.resize_uninit(frames);
-    } else if buf.frames() != frames {
+    }
+    else if buf.frames() != frames {
         return decode_error("wavpack: packet block duration mismatch");
     }
 
@@ -2393,11 +2453,15 @@ fn wp_log2(mut value: u32) -> i32 {
     if value < (1 << 8) {
         let dbits = if value == 0 { 0 } else { 32 - value.leading_zeros() };
         (dbits << 8) as i32 + i32::from(LOG2_TABLE[((value << (9 - dbits)) & 0xff) as usize])
-    } else {
+    }
+    else {
         let dbits = 32 - value.leading_zeros();
         (dbits << 8) as i32 + i32::from(LOG2_TABLE[((value >> (dbits - 9)) & 0xff) as usize])
     }
 }
+
+/// The largest number of bits of a zero run length.
+const MAX_ZERO_RUN_BITS: u32 = 33;
 
 struct WavPackBitReader<'a> {
     data: &'a [u8],
@@ -2411,12 +2475,25 @@ impl<'a> WavPackBitReader<'a> {
         WavPackBitReader { data, pos: 0, sr: 0, bc: 0 }
     }
 
+    /// Returns the next byte. Like the reference decoder, a few bytes past the end of the
+    /// bitstream read as zeros, since the encoder does not pad the last word.
+    fn next_byte(&mut self) -> Result<u8> {
+        const MAX_OVERRUN: usize = 4;
+
+        let byte = match self.data.get(self.pos) {
+            Some(&byte) => byte,
+            None if self.pos < self.data.len() + MAX_OVERRUN => 0,
+            None => return Err(Error::DecodeError("wavpack: bitstream eof")),
+        };
+
+        self.pos += 1;
+        Ok(byte)
+    }
+
     fn read_bit(&mut self) -> Result<u32> {
         if self.bc == 0 {
-            let byte =
-                self.data.get(self.pos).ok_or(Error::DecodeError("wavpack: bitstream eof"))?;
-            self.pos += 1;
-            self.sr = u32::from(*byte);
+            let byte = self.next_byte()?;
+            self.sr = u32::from(byte);
             self.bc = 8;
         }
 
@@ -2428,10 +2505,8 @@ impl<'a> WavPackBitReader<'a> {
 
     fn ensure_bits(&mut self, nbits: u32) -> Result<()> {
         while self.bc < nbits {
-            let byte =
-                self.data.get(self.pos).ok_or(Error::DecodeError("wavpack: bitstream eof"))?;
-            self.pos += 1;
-            self.sr |= u32::from(*byte) << self.bc;
+            let byte = self.next_byte()?;
+            self.sr |= u32::from(byte) << self.bc;
             self.bc += 8;
         }
 
@@ -2463,11 +2538,27 @@ impl<'a> WavPackBitReader<'a> {
         if low_bits >= extras {
             let high_bit = self.read_bit()?;
             Ok((low_bits << 1) - extras + high_bit)
-        } else {
+        }
+        else {
             bitcount -= 1;
             debug_assert_eq!(bitcount, 32 - maxcode.leading_zeros() - 1);
             Ok(low_bits)
         }
+    }
+
+    /// Reads a unary code of at most `limit` ones with no escape code.
+    fn read_unary(&mut self, limit: u32) -> Result<u32> {
+        let mut ones = 0;
+
+        while ones < limit && self.read_bit()? != 0 {
+            ones += 1;
+        }
+
+        if ones == limit {
+            return decode_error("wavpack: invalid zero run length");
+        }
+
+        Ok(ones)
     }
 
     fn read_limited_ones(&mut self) -> Result<u32> {
@@ -2486,7 +2577,8 @@ impl<'a> WavPackBitReader<'a> {
 
             ones = if cbits < 2 {
                 cbits
-            } else {
+            }
+            else {
                 let mut mask = 1;
                 let mut value = 0;
 
@@ -2545,7 +2637,9 @@ impl WordsDecoder {
             _ => DIV2,
         };
 
-        self.entropy.median[chan][med] += ((self.entropy.median[chan][med] + div) / div) * 5;
+        let median = self.entropy.median[chan][med];
+        self.entropy.median[chan][med] =
+            median.wrapping_add((median.wrapping_add(div) / div).wrapping_mul(5));
     }
 
     fn dec_med(&mut self, chan: usize, med: usize) {
@@ -2576,11 +2670,12 @@ impl WordsDecoder {
             return Ok(self.zeros_acc != 0);
         }
 
-        let cbits = bs.read_limited_ones()?;
+        let cbits = bs.read_unary(MAX_ZERO_RUN_BITS)?;
 
         self.zeros_acc = if cbits < 2 {
             cbits
-        } else {
+        }
+        else {
             let mut mask = 1;
             let mut value = 0;
 
@@ -2604,7 +2699,8 @@ impl WordsDecoder {
     }
 
     fn update_error_limit(&mut self) {
-        let Some(hybrid) = self.hybrid.as_mut() else {
+        let Some(hybrid) = self.hybrid.as_mut()
+        else {
             return;
         };
 
@@ -2616,13 +2712,16 @@ impl WordsDecoder {
                 let slow_log_0 = ((hybrid.slow_level[0] + SLO) >> SLS) as i32;
                 if slow_log_0 - bitrate_0 > -0x100 {
                     wp_exp2s(slow_log_0 - bitrate_0 + 0x100) as u32
-                } else {
+                }
+                else {
                     0
                 }
-            } else {
+            }
+            else {
                 wp_exp2s(bitrate_0) as u32
             };
-        } else {
+        }
+        else {
             hybrid.bitrate_acc[1] = hybrid.bitrate_acc[1].wrapping_add(hybrid.bitrate_delta[1]);
             let mut bitrate_1 = (hybrid.bitrate_acc[1] >> 16) as i32;
 
@@ -2636,10 +2735,12 @@ impl WordsDecoder {
                     if balance > bitrate_0 {
                         bitrate_1 = bitrate_0 * 2;
                         bitrate_0 = 0;
-                    } else if -balance > bitrate_0 {
+                    }
+                    else if -balance > bitrate_0 {
                         bitrate_0 *= 2;
                         bitrate_1 = 0;
-                    } else {
+                    }
+                    else {
                         bitrate_1 = bitrate_0 + balance;
                         bitrate_0 -= balance;
                     }
@@ -2647,16 +2748,19 @@ impl WordsDecoder {
 
                 self.error_limit[0] = if slow_log_0 - bitrate_0 > -0x100 {
                     wp_exp2s(slow_log_0 - bitrate_0 + 0x100) as u32
-                } else {
+                }
+                else {
                     0
                 };
 
                 self.error_limit[1] = if slow_log_1 - bitrate_1 > -0x100 {
                     wp_exp2s(slow_log_1 - bitrate_1 + 0x100) as u32
-                } else {
+                }
+                else {
                     0
                 };
-            } else {
+            }
+            else {
                 self.error_limit[0] = wp_exp2s(bitrate_0) as u32;
                 self.error_limit[1] = wp_exp2s(bitrate_1) as u32;
             }
@@ -2681,13 +2785,15 @@ impl WordsDecoder {
 
             if self.error_limit[chan] == 0 {
                 low += bs.read_code(high - low)?;
-            } else {
+            }
+            else {
                 let mut mid = (high + low + 1) >> 1;
 
                 while high - low > self.error_limit[chan] {
                     if bs.read_bit()? != 0 {
                         low = mid;
-                    } else {
+                    }
+                    else {
                         high = mid - 1;
                     }
 
@@ -2703,10 +2809,12 @@ impl WordsDecoder {
                 if self.error_limit[chan] != 0 {
                     let value = correction_bits.read_code(high - low)? + low;
                     if sign != 0 { low as i32 - value as i32 } else { value as i32 - low as i32 }
-                } else {
+                }
+                else {
                     0
                 }
-            } else {
+            }
+            else {
                 0
             };
 
@@ -2743,7 +2851,8 @@ impl WordsDecoder {
             let high = self.get_med(chan, 0) - 1;
             self.dec_med(chan, 0);
             (0, high)
-        } else {
+        }
+        else {
             let mut low = self.get_med(chan, 0);
             self.inc_med(chan, 0);
 
@@ -2751,7 +2860,8 @@ impl WordsDecoder {
                 let high = low + self.get_med(chan, 1) - 1;
                 self.dec_med(chan, 1);
                 (low, high)
-            } else {
+            }
+            else {
                 low += self.get_med(chan, 1);
                 self.inc_med(chan, 1);
                 ones_count -= 2;
@@ -2760,7 +2870,8 @@ impl WordsDecoder {
                     let high = low + self.get_med(chan, 2) - 1;
                     self.dec_med(chan, 2);
                     (low, high)
-                } else {
+                }
+                else {
                     low += ones_count * self.get_med(chan, 2);
                     let high = low + self.get_med(chan, 2) - 1;
                     self.inc_med(chan, 2);
@@ -2781,11 +2892,13 @@ impl WordsDecoder {
 
         if self.error_limit[chan] == 0 {
             mid = bs.read_code(high - low)? + low;
-        } else {
+        }
+        else {
             while high - low > self.error_limit[chan] {
                 if bs.read_bit()? != 0 {
                     low = mid;
-                } else {
+                }
+                else {
                     high = mid - 1;
                 }
 
@@ -2798,10 +2911,12 @@ impl WordsDecoder {
             if self.error_limit[chan] != 0 {
                 let value = correction_bits.read_code(high - low)? + low;
                 if sign != 0 { mid as i32 - value as i32 } else { value as i32 - mid as i32 }
-            } else {
+            }
+            else {
                 0
             }
-        } else {
+        }
+        else {
             0
         };
 
@@ -2893,7 +3008,8 @@ impl<'s> WavPackReader<'s> {
     fn next_block(&mut self) -> Result<Option<WavPackBlock>> {
         if let Some(block) = self.pending.take() {
             Ok(Some(block))
-        } else {
+        }
+        else {
             read_block(&mut self.reader)
         }
     }
@@ -2917,7 +3033,8 @@ impl<'s> WavPackReader<'s> {
             }
         }
 
-        let Some(first) = self.next_audio_block()? else {
+        let Some(first) = self.next_audio_block()?
+        else {
             return Ok(None);
         };
 
@@ -2931,7 +3048,8 @@ impl<'s> WavPackReader<'s> {
         }
 
         while !saw_final {
-            let Some(block) = self.next_audio_block()? else {
+            let Some(block) = self.next_audio_block()?
+            else {
                 return decode_error("wavpack: unterminated multichannel packet");
             };
 
@@ -2980,7 +3098,8 @@ impl<'s> WavPackReader<'s> {
             if header.block_samples != 0 && header.flags & INITIAL_BLOCK != 0 {
                 if packet_ts <= required_ts {
                     best_before = Some((block_offset, packet_ts));
-                } else if first_after.is_none() {
+                }
+                else if first_after.is_none() {
                     first_after = Some((block_offset, packet_ts));
                     if mode == SeekMode::Coarse {
                         break;
@@ -3063,7 +3182,8 @@ impl FormatReader for WavPackReader<'_> {
 
         let (offset, actual_ts) = if required_ts == Timestamp::new(0) {
             (0, Timestamp::new(0))
-        } else {
+        }
+        else {
             self.scan_seek_target(required_ts, mode)?
                 .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
         };
@@ -3128,7 +3248,8 @@ fn expand_matroska_packet(data: &[u8], version: u16) -> Result<Vec<u8>> {
             }
 
             reader.read_u32()? as usize
-        } else {
+        }
+        else {
             data.len() - reader.pos() as usize
         };
 
@@ -3136,7 +3257,10 @@ fn expand_matroska_packet(data: &[u8], version: u16) -> Result<Vec<u8>> {
             return decode_error("wavpack: matroska block overruns packet");
         }
 
-        let block_samples = block_samples.unwrap();
+        let Some(block_samples) = block_samples
+        else {
+            return decode_error("wavpack: missing matroska block samples");
+        };
         let ck_size = WAVPACK_MIN_CK_SIZE + block_size as u32;
 
         out.extend_from_slice(&WAVPACK_MARKER);
@@ -3184,6 +3308,13 @@ impl WavPackDecoder {
             params.channels.clone().ok_or(Error::Unsupported("wavpack: channels are required"))?;
         let sample_format = params.sample_format.unwrap_or(SampleFormat::S32);
         let capacity = params.max_frames_per_packet.unwrap_or(0) as usize;
+
+        if !symphonia_core::audio::is_reasonable_capacity(
+            capacity,
+            params.channels.as_ref().map_or(1, |c| c.count()),
+        ) {
+            return Err(Error::Unsupported("wavpack: maximum frames per packet is too large"));
+        }
         let matroska_version = params
             .extra_data
             .as_deref()
@@ -3229,10 +3360,12 @@ impl WavPackDecoder {
         let expanded;
         let data = if packet.data.starts_with(&WAVPACK_MARKER) {
             packet.data
-        } else if let Some(version) = self.matroska_version {
+        }
+        else if let Some(version) = self.matroska_version {
             expanded = expand_matroska_packet(packet.data, version)?;
             &expanded
-        } else {
+        }
+        else {
             return decode_error("wavpack: headerless packet without version");
         };
 
@@ -3321,7 +3454,8 @@ impl AudioDecoder for WavPackDecoder {
         if let Err(e) = self.decode_inner(packet) {
             self.buf.clear();
             Err(e)
-        } else {
+        }
+        else {
             Ok(self.buf.as_generic_audio_buffer_ref())
         }
     }

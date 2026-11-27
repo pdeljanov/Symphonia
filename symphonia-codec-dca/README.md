@@ -8,7 +8,21 @@ DTS Coherent Acoustics (DCA) decoder for Project Symphonia.
 
 ## Support
 
-This decoder implements the DTS core profile as defined in ETSI TS 102 114.
+The decoder follows the DTS core profile of ETSI TS 102 114. It matches `ffmpeg` to within rounding on every file of the conformance corpus (`tools/corpus`), including real 5.1 and 6.1 (DTS-ES) streams.
+
+| Feature | Status |
+|---------|--------|
+| Sample rates | 8, 11.025, 12, 16, 22.05, 24, 32, 44.1 and 48 kHz (no resampling to the hardware rates) |
+| Channel arrangements | AMODE 0 to 9 (mono to 5.0), the LFE channel, and the extra centre surround channel (XCh) of DTS-ES, decoded as 6.1 |
+| Bit stream packing | 16-bit and 14-bit words, big and little endian |
+| Coding tools | Huffman, block and plain quantization, joint intensity coding, sum/difference stereo, transient scale factors, perfect and non-perfect reconstruction filter banks, 64x and 128x LFE interpolation |
+| Not supported | Subband ADPCM prediction and high frequency vector quantization (see Provenance), AMODE 10 to 15, the extensions XXCH, X96, XBR and LBR (the core is decoded), dynamic range control, termination frames, downmixing |
+
+The decoder does not check the optional CRCs.
+
+## Provenance
+
+The decoder is written from ETSI TS 102 114, and its tables are extracted from the text of the specification by script. The two vector quantization codebooks of annex D.10 (the ADPCM prediction coefficients and the high frequency subbands) are omitted from the specification. They exist in FFmpeg (`libavcodec/dcadata.c`, LGPL), which cannot be used here, so a stream that uses subband ADPCM prediction or high frequency vector quantization is rejected with an unsupported error.
 
 ## License
 

@@ -152,7 +152,8 @@ impl Tns {
         info: &IcsInfo,
         bands: &[usize],
         rate_idx: usize,
-        coeffs: &mut [f32; 1024],
+        win_len: usize,
+        coeffs: &mut [f32],
     ) {
         let tns_max_bands = (if info.long_win {
             TNS_MAX_LONG_BANDS[rate_idx]
@@ -176,8 +177,8 @@ impl Tns {
                     continue;
                 }
 
-                let start = w * 128 + bands[bottom.min(tns_max_bands)];
-                let end = w * 128 + bands[top.min(tns_max_bands)];
+                let start = w * win_len + bands[bottom.min(tns_max_bands)];
+                let end = w * win_len + bands[top.min(tns_max_bands)];
 
                 let mut local_lpc = [0.0f32; TNS_MAX_ORDER];
                 local_lpc[..order].copy_from_slice(&self.coeffs[w][f].coef[..order]);
